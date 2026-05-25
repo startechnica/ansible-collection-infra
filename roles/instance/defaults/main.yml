@@ -233,10 +233,16 @@ instance_init_type: ignition
 ##
 ## Three independent inventory knobs:
 ##
-##   container_engine  [default: docker]  The selected runtime that
+##   container_engine  [default: podman]  The selected runtime that
 ##                                         mongodb / patroni dispatch
 ##                                         against. Allowed: docker,
-##                                         podman.
+##                                         podman. NB: the default is
+##                                         tuned for the
+##                                         ignition / FCOS path; cloud-init
+##                                         inventories must override to
+##                                         `docker` (and flip
+##                                         docker_install: true /
+##                                         podman_enabled: false).
 ##   docker_install    [default: false]   Install docker-ce.
 ##   podman_enabled    [default: false]   Enable podman (Quadlet path).
 ##                                         Podman ships preinstalled on
@@ -274,7 +280,9 @@ instance_init_type: ignition
 ## path) because Quadlets are the modern, systemd-native way to run
 ## containers on FCOS.
 ##
-## @param container_engine [default: docker] Selected runtime.
+## @param container_engine [default: podman] Selected runtime. Default
+##                                         assumes ignition / FCOS; flip
+##                                         to `docker` on cloud-init.
 ## @param docker_install [default: false] Install docker-ce on the host.
 ##                                         Required for `container_engine: docker`.
 ## @param podman_enabled [default: false] Enable podman + Quadlets.

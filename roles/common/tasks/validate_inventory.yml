@@ -65,6 +65,15 @@
     success_msg: >-
       Container runtime: {{ _ce }}{%- if _ce == 'podman' %} (systemd Quadlets){%- else %} (docker-compose){%- endif %} [docker_install={{ _docker }}, podman_enabled={{ _podman }}]{%-
       if _skip_all %} — selected engine's toggle is off, mongodb / patroni will skip{%- endif %}
+  # Skip when the active tag set doesn't include a stage that uses a
+  # container runtime. `--tags provision` (VM creation only) doesn't
+  # need a valid container_engine selection — those VMs may eventually
+  # be deployed against, but provision-only runs shouldn't fail on
+  # runtime-config mismatches between instance_init_type and
+  # container_engine. 'all' = no --tags filter = full run.
+  when:
+    - ('all' in ansible_run_tags)
+      or (ansible_run_tags | intersect(['docker', 'mongodb', 'patroni', 'validate']) | length > 0)
 
 - name: Warn when selected container_engine has its install/enable toggle off
   ansible.builtin.debug:
@@ -78,6 +87,9 @@
     - (container_engine | default('docker')) == 'docker' and not (docker_install | default(false) | bool) or (container_engine | default('docker')) == 'podman' and not
       (podman_enabled | default(false) | bool)
     - (mongodb_enabled | default(true) | bool) or (patroni_enabled | default(true) | bool)
+    # Same gate as the assert above — skip the warning on provision-only runs.
+    - ('all' in ansible_run_tags)
+      or (ansible_run_tags | intersect(['docker', 'mongodb', 'patroni', 'validate']) | length > 0)
 
 # ── Network defaults (instance_networks) ──
 # Per-NIC defaults merged into each entry of every VM's `networks:` list.
