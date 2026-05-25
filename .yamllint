@@ -22,3 +22,6 @@ ignore: |
   .github/
   playbooks/artifacts/
   artifacts/
+  # Vendored standalone role reinstalled by `ansible-galaxy role install`
+  # in CI — not our code to lint.
+  roles/geerlingguy.docker/
