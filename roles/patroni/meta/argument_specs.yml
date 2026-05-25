@@ -3,12 +3,9 @@ argument_specs:
   main:
     short_description: Deploy and manage Patroni HA PostgreSQL with etcd, HAProxy, PgBouncer
     description:
-      - Bootstraps an etcd cluster + Patroni-managed PostgreSQL with HAProxy
-        r/w routing, PgBouncer connection pooling, and a floating VIP via
-        vip-manager or keepalived.
+      - Bootstraps an etcd cluster + Patroni-managed PostgreSQL with HAProxy r/w routing, PgBouncer connection pooling, and a floating VIP via vip-manager or keepalived.
       - TLS everywhere (etcd, Patroni API, PostgreSQL, replication, HAProxy).
-      - Integrated WAL-G backups (when S3 is configured), PITR, rolling
-        restart, cert rotation, password rotation, and scale-up/down flows.
+      - Integrated WAL-G backups (when S3 is configured), PITR, rolling restart, cert rotation, password rotation, and scale-up/down flows.
     options:
       debug:
         type: bool

@@ -27,17 +27,8 @@
 - name: Detect firewall backend
   ansible.builtin.set_fact:
     _firewall_backend: >-
-      {%- if (firewall_backend) != 'auto' -%}
-      {{ firewall_backend }}
-      {%- elif ansible_os_family == 'Debian' -%}
-      ufw
-      {%- elif ansible_pkg_mgr | default('') in ['atomic_container', 'atomic'] -%}
-      nftables
-      {%- elif ansible_os_family == 'RedHat' -%}
-      firewalld
-      {%- else -%}
-      unsupported
-      {%- endif -%}
+      {%- if (firewall_backend) != 'auto' -%} {{ firewall_backend }}{%- elif ansible_os_family == 'Debian' -%} ufw{%- elif ansible_pkg_mgr | default('') in ['atomic_container', 'atomic']
+      -%} nftables{%- elif ansible_os_family == 'RedHat' -%} firewalld{%- else -%} unsupported{%- endif -%}
 
 # Trusted-sources fact is computed FIRST because firewall_service_source_map
 # (and the per-rule expansion below) reference it for the SSH entry.

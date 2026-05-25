@@ -15,5 +15,5 @@
           - "'Status: active' in _ufw.stdout"
           - "'9100/tcp' in _ufw.stdout"
           - "'3000/tcp' in _ufw.stdout"
-          - "'22/tcp' in _ufw.stdout"   # SSH auto-allowed
+          - "'22/tcp' in _ufw.stdout" # SSH auto-allowed
         success_msg: UFW enabled and declared rules applied

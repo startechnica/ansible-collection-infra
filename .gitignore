@@ -6,6 +6,8 @@
 .cache
 __pycache__
 
+.ansible/
+
 inventory/*/
 !inventory/default/
 

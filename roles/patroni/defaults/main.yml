@@ -66,7 +66,7 @@ walg_build_local: true
 
 # Passwords (auto-generated if empty)
 postgresql_postgres_password: ""
-postgresql_replication_password: ""  # empty = TLS cert auth for replication
+postgresql_replication_password: "" # empty = TLS cert auth for replication
 
 # Dedicated PostgreSQL role used by PgBouncer for auth_query lookups.
 # A LOGIN-only role; no other privileges. Auto-generated if empty and
@@ -89,7 +89,6 @@ pgbouncer_stats_password: ""
 #   postgresql_admin_cidrs:
 #     - 10.99.0.0/24    # ops VPN
 postgresql_admin_cidrs: []
-
 # Service ports
 pgbouncer_port: 6543
 haproxy_primary_port: 5432
@@ -230,7 +229,6 @@ patroni_extensions:
 #             - { privs: "CONNECT", on: "database" }
 #             - { privs: "SELECT", on: "all-tables" }
 patroni_databases: []
-
 # Monitoring — postgres_exporter (optional)
 postgres_exporter_enabled: false
 postgres_exporter_image: "prometheuscommunity/postgres-exporter:v0.19.1"
@@ -254,7 +252,6 @@ tls_signature_digest: sha384
 # (e.g. ['patroni', 'haproxy', 'pgbouncer']). Empty (default) skips the
 # inspection loop; pass via `-e` for a targeted renew.
 patroni_certs_to_inspect: []
-
 # Local artifacts (on the Ansible controller)
 # artifacts_dir is set by playbooks/patroni/_setup.yml on localhost only,
 # because add_host nodes have inventory_file == None.

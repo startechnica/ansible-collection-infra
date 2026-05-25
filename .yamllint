@@ -12,10 +12,13 @@ rules:
     min-spaces-from-content: 1
   comments-indentation: disable
   truthy:
-    allowed-values: ['true', 'false', 'yes', 'no']
+    allowed-values: ["true", "false", "yes", "no"]
   braces:
     max-spaces-inside: 1
   document-start: disable
+  octal-values:
+    forbid-implicit-octal: true
+    forbid-explicit-octal: true
 
 ignore: |
   .cache/

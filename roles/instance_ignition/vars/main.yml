@@ -34,7 +34,7 @@ ignition_flavour_map:
     default_channel: stable
     channels: [stable, testing, next]
     metadata_url: "https://builds.coreos.fedoraproject.org/streams/{channel}.json"
-    ova_url: ""   # derived from stream metadata at runtime
+    ova_url: "" # derived from stream metadata at runtime
 
   flatcar:
     butane_variant: flatcar
@@ -53,9 +53,9 @@ ignition_flavour_map:
     butane_template: rhcos.bu.j2
     template_prefix: rhcos
     instance_user_name: core
-    default_channel: "4.16"          # tracks OpenShift minor version
-    channels: []                     # Red Hat customer portal; not a public list
-    metadata_url: ""                 # gated — manual OVA download + import
+    default_channel: "4.16" # tracks OpenShift minor version
+    channels: [] # Red Hat customer portal; not a public list
+    metadata_url: "" # gated — manual OVA download + import
     ova_url: ""
 
   opensuse:
@@ -66,5 +66,5 @@ ignition_flavour_map:
     instance_user_name: root
     default_channel: tumbleweed
     channels: [tumbleweed]
-    metadata_url: ""                 # no JSON stream API; manual import
+    metadata_url: "" # no JSON stream API; manual import
     ova_url: ""

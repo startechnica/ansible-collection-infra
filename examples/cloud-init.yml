@@ -1,3 +1,4 @@
+---
 # =============================================================================
 # Example: Cloud-Init based VM provisioning (Ubuntu, Debian)
 # =============================================================================
@@ -40,12 +41,12 @@ all:
         localhost:
       vars:
         # ── vCenter / cluster ────────────────────────────────────────────
-        instance_cluster_name: MyCluster          # vCenter cluster name
+        instance_cluster_name: MyCluster # vCenter cluster name
         # instance_datacenter: Datacenter         # only needed if vCenter has >1 DC
         # instance_domain_name: example.internal  # appended to VM hostname
 
         # ── Network ──────────────────────────────────────────────────────
-        portgroup_name: pg-app                   # distributed port group name
+        portgroup_name: pg-app # distributed port group name
         portgroup_dvswitch_name: DSwitch01
         # Standalone ESXi (no DVS) — comment out portgroup_dvswitch_name, use:
         # portgroup_vswitch_name: vSwitch0

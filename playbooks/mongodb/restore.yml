@@ -12,14 +12,16 @@
   hosts: localhost
   gather_facts: false
   tasks:
-    - ansible.builtin.include_tasks: _setup.yml
+    - name: Build host group from instances
+      ansible.builtin.include_tasks: _setup.yml
 
 - name: MongoDB restore
   hosts: mongodb_nodes
   become: true
   gather_facts: true
   pre_tasks:
-    - ansible.builtin.include_role:
+    - name: Inherit localhost vars
+      ansible.builtin.include_role:
         name: common
         tasks_from: inherit_localhost_vars
   roles:

@@ -40,7 +40,6 @@ instance_packages: [curl]
 instance_runcmds: []
 instance_extra_users: []
 instance_post_commands: []
-
 fixture_instances:
   - hostname: simple-vm
     name: simple-vm

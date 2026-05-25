@@ -68,12 +68,8 @@
 - name: Build scope filter fragment
   ansible.builtin.set_fact:
     _nb_cluster_filter: >-
-      {%- if (_nb_cluster_match | default({}) | length) > 0 -%}
-      &cluster_id={{ _nb_cluster_match.id }}
-      {%- elif instance_folder | default('') | length > 0 -%}
-      &cf_vcenter_folder={{ instance_folder | urlencode }}
-      {%- else -%}
-      {%- endif -%}
+      {%- if (_nb_cluster_match | default({}) | length) > 0 -%} &cluster_id={{ _nb_cluster_match.id }}{%- elif instance_folder | default('') | length > 0 -%} &cf_vcenter_folder={{ instance_folder
+      | urlencode }}{%- else -%} {%- endif -%}
   when: _instances_need_ip | length > 0
 
 - name: Query NetBox for VMs needing enrichment
@@ -194,8 +190,8 @@
       and have an IP assigned on interface '{{ netbox_lookup_interface }}'.
   when:
     - _instances_need_ip | length > 0
-    - (_instances_enriched | rejectattr('ipv4', 'defined') | list | length > 0)
-      or (_instances_enriched | selectattr('ipv4', 'defined') | selectattr('ipv4', 'equalto', '') | list | length > 0)
+    - (_instances_enriched | rejectattr('ipv4', 'defined') | list | length > 0) or (_instances_enriched | selectattr('ipv4', 'defined') | selectattr('ipv4', 'equalto', '') | list |
+      length > 0)
 
 - name: Merge enriched VMs back into instances list
   ansible.builtin.set_fact:

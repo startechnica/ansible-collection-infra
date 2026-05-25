@@ -106,11 +106,11 @@
               ansible.builtin.get_url:
                 url: https://download.docker.com/linux/fedora/docker-ce.repo
                 dest: /etc/yum.repos.d/docker-ce.repo
-                owner: '0'
-                group: '0'
-                mode: '0644'
+                owner: "0"
+                group: "0"
+                mode: "0644"
 
-            - name: rpm-ostree override remove moby-engine and install docker-ce
+            - name: Rpm-ostree override remove moby-engine and install docker-ce
               ansible.builtin.command: >-
                 rpm-ostree override remove moby-engine containerd runc docker-cli
                 --install docker-ce --install docker-ce-cli --install containerd.io

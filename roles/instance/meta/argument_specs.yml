@@ -83,7 +83,7 @@ argument_specs:
       #    defaults docstring for the migration path to per-network keying. ──
       instance_networks:
         type: dict
-        default: {mtu: 1500}
+        default: { mtu: 1500 }
         description: >-
           Defaults merged into every NIC entry. Keys: gateway4 (str),
           gateway6 (str), mtu (int). gateway4 is required if any NIC
@@ -102,7 +102,7 @@ argument_specs:
       #    effectively gets `[instance_disks]` — one disk using these defaults. ──
       instance_disks:
         type: dict
-        default: {size_gb: 40, type: thin}
+        default: { size_gb: 40, type: thin }
         description: >-
           Defaults merged into every disk entry. Keys: size_gb (int),
           type (thin/thick/eagerzeroedthick), datastore (str), controller_type
@@ -273,7 +273,6 @@ argument_specs:
               disk_mode:
                 type: str
                 choices: [persistent, independent_persistent, independent_nonpersistent]
-
           # ── First-boot / post-provision ──
           post_commands:
             type: list

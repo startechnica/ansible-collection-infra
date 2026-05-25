@@ -176,9 +176,7 @@
 - name: Validate network input parameters
   ansible.builtin.assert:
     that:
-      - (instance_cluster_name is defined and instance_cluster_name | length > 0)
-        or
-        (vsphere_esxi_hostname is defined and vsphere_esxi_hostname | length > 0)
+      - (instance_cluster_name is defined and instance_cluster_name | length > 0) or (vsphere_esxi_hostname is defined and vsphere_esxi_hostname | length > 0)
       # `portgroup_name` is only required when at least one NIC omits its
       # `name:` (and therefore needs the role-level fallback).
       - >-

@@ -26,25 +26,25 @@
 # build the image AND render the Quadlet for whichever VIP backend is
 # active, so we skip both entirely when patroni_vip_enabled=false.
 
-- name: vip-manager (etcd-aware) — build image + render Quadlet
+- name: Vip-manager (etcd-aware) — build image + render Quadlet
   ansible.builtin.include_tasks: vip_manager.yml
   when:
     - patroni_vip_enabled
     - use_vip_manager
 
-- name: keepalived (VRRP fallback) — build image + render Quadlet
+- name: Keepalived (VRRP fallback) — build image + render Quadlet
   ansible.builtin.include_tasks: keepalived.yml
   when:
     - patroni_vip_enabled
     - not use_vip_manager
 
-- name: wal-g — build local image (no upstream container published)
+- name: Wal-g — build local image (no upstream container published)
   ansible.builtin.include_tasks: walg.yml
   when:
     - walg_enabled
     - walg_build_local
 
-- name: wal-g — pull prebuilt image
+- name: Wal-g — pull prebuilt image
   containers.podman.podman_image:
     name: "{{ walg_image }}"
     pull: true

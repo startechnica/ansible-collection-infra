@@ -20,7 +20,7 @@
 # Output: each rendered file at /tmp/render-test/<host>-<kind>.yml — kept
 # on success so a developer can inspect; cleaned on next run.
 
-- name: "render-test :: cloud-init"
+- name: "Render-test :: cloud-init"
   hosts: localhost
   gather_facts: false
   connection: local
@@ -32,7 +32,7 @@
     _render_dir: /tmp/render-test/cloud-init
 
   tasks:
-    - name: "ci :: clean and create render dir"
+    - name: "Ci :: clean and create render dir"
       ansible.builtin.file:
         path: "{{ _render_dir }}"
         state: "{{ ci_state }}"
@@ -40,7 +40,7 @@
       loop_control:
         loop_var: ci_state
 
-    - name: "ci :: render cloudinit-metadata.yml.j2 per fixture VM"
+    - name: "Ci :: render cloudinit-metadata.yml.j2 per fixture VM"
       ansible.builtin.template:
         src: ../roles/instance_cloud_init/templates/cloudinit-metadata.yml.j2
         dest: "{{ _render_dir }}/{{ item.hostname }}-metadata.yml"
@@ -48,7 +48,7 @@
       loop_control:
         label: "{{ item.hostname }}"
 
-    - name: "ci :: render cloudinit-user-data.yml.j2 per fixture VM"
+    - name: "Ci :: render cloudinit-user-data.yml.j2 per fixture VM"
       ansible.builtin.template:
         src: ../roles/instance_cloud_init/templates/cloudinit-user-data.yml.j2
         dest: "{{ _render_dir }}/{{ item.hostname }}-user-data.yml"
@@ -56,7 +56,7 @@
       loop_control:
         label: "{{ item.hostname }}"
 
-    - name: "ci :: assert every rendered file is parseable YAML"
+    - name: "Ci :: assert every rendered file is parseable YAML"
       ansible.builtin.command:
         argv:
           - python3
@@ -77,7 +77,7 @@
         }}
 
 # ── Ignition (Butane) — repeat per flavour to catch flavour-specific bugs.
-- name: "render-test :: ignition Butane (fcos)"
+- name: "Render-test :: ignition Butane (fcos)"
   hosts: localhost
   gather_facts: false
   connection: local
@@ -91,7 +91,7 @@
     _render_dir: /tmp/render-test/ignition
 
   tasks:
-    - name: "ig :: clean and create render dir"
+    - name: "Ig :: clean and create render dir"
       ansible.builtin.file:
         path: "{{ _render_dir }}"
         state: "{{ ig_state }}"
@@ -102,7 +102,7 @@
     # One render per (flavour × instance). Default loop_var (item) is the
     # FLAVOUR; the inner loop var that the Butane template expects is named
     # `instance` (matches production render_ignition.yml).
-    - name: "ig :: render Butane templates for each flavour × fixture instance"
+    - name: "Ig :: render Butane templates for each flavour × fixture instance"
       ansible.builtin.template:
         src: "../roles/instance_ignition/templates/{{ ignition_flavour_map[ignition_flavour].butane_template }}"
         dest: "{{ _render_dir }}/{{ ignition_flavour }}-{{ instance.hostname }}.bu"
@@ -114,7 +114,7 @@
         loop_var: _pair
         label: "{{ _pair.0 }}/{{ _pair.1.hostname }}"
 
-    - name: "ig :: assert every rendered Butane file is parseable YAML"
+    - name: "Ig :: assert every rendered Butane file is parseable YAML"
       ansible.builtin.command:
         argv:
           - python3

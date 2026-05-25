@@ -8,7 +8,7 @@
 #   post_provision.yml   — run per-VM shell commands via VMware Tools
 #   cleanup.yml          — clear guestinfo after successful boot
 
-- name: "instance_cloud_init has no default entrypoint"
+- name: "Instance_cloud_init has no default entrypoint"
   ansible.builtin.fail:
     msg: >-
       Do not invoke instance_cloud_init via `roles:` directly.

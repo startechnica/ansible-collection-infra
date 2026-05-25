@@ -7,8 +7,7 @@
   ansible.builtin.assert:
     that:
       - instance_user_name | default('') | length > 0
-      - (instance_user_password | default('') | length > 0)
-        or (instance_user_ssh_private_key | default('') | length > 0)
+      - (instance_user_password | default('') | length > 0) or (instance_user_ssh_private_key | default('') | length > 0)
     fail_msg: >-
       instance_user_name must be set, plus one of instance_user_password
       or instance_user_ssh_private_key.
@@ -64,12 +63,8 @@
           mongodb / patroni to actually run; otherwise the role
           end_roles itself (skip all).
     success_msg: >-
-      Container runtime: {{ _ce }}
-      {%- if _ce == 'podman' %} (systemd Quadlets)
-      {%- else %} (docker-compose)
-      {%- endif %}
-      [docker_install={{ _docker }}, podman_enabled={{ _podman }}]
-      {%- if _skip_all %} — selected engine's toggle is off, mongodb / patroni will skip{%- endif %}
+      Container runtime: {{ _ce }}{%- if _ce == 'podman' %} (systemd Quadlets){%- else %} (docker-compose){%- endif %} [docker_install={{ _docker }}, podman_enabled={{ _podman }}]{%-
+      if _skip_all %} — selected engine's toggle is off, mongodb / patroni will skip{%- endif %}
 
 - name: Warn when selected container_engine has its install/enable toggle off
   ansible.builtin.debug:
@@ -80,8 +75,8 @@
       Set the matching toggle to true, or flip container_engine to the
       one that's enabled.
   when:
-    - (container_engine | default('docker')) == 'docker' and not (docker_install | default(false) | bool)
-      or (container_engine | default('docker')) == 'podman' and not (podman_enabled | default(false) | bool)
+    - (container_engine | default('docker')) == 'docker' and not (docker_install | default(false) | bool) or (container_engine | default('docker')) == 'podman' and not
+      (podman_enabled | default(false) | bool)
     - (mongodb_enabled | default(true) | bool) or (patroni_enabled | default(true) | bool)
 
 # ── Network defaults (instance_networks) ──
@@ -300,16 +295,11 @@
       - "Inventory: {{ inventory_file | basename }}"
       - "Init mode: {{ _init_mode }}{{ _init_flavour_note }}"
       - >-
-        Container engine: {{ _ce }}
-        {%- if _ce == 'podman' %} (systemd Quadlets){%- else %} (docker-compose){%- endif %}
-        [docker_install={{ docker_install | default(false) }}, podman_enabled={{ podman_enabled | default(false) }}]
-        {%- if not _engine_active %} — selected engine inactive, mongodb / patroni will skip{%- endif %}
+        Container engine: {{ _ce }}{%- if _ce == 'podman' %} (systemd Quadlets){%- else %} (docker-compose){%- endif %} [docker_install={{ docker_install | default(false) }}, podman_enabled={{
+        podman_enabled | default(false) }}]{%- if not _engine_active %} — selected engine inactive, mongodb / patroni will skip{%- endif %}
       - >-
-        Docker install:
-        {%- if not (docker_install | default(false) | bool) %} disabled (docker_install=false)
-        {%- elif instance_init_type | default('ignition') == 'ignition' %} rpm-ostree layer (Ignition fcos-bootstrap)
-        {%- else %} geerlingguy.docker (cloud-init)
-        {%- endif %}
+        Docker install:{%- if not (docker_install | default(false) | bool) %} disabled (docker_install=false){%- elif instance_init_type | default('ignition') == 'ignition' %} rpm-ostree
+        layer (Ignition fcos-bootstrap){%- else %} geerlingguy.docker (cloud-init){%- endif %}
       - "VMs declared: {{ instances | default([]) | length }}"
       - "NetBox enrichment: {{ 'on' if netbox_enabled | default(false) | bool else 'off' }}"
       - "Cluster scope: {{ instance_cluster_name | default('(instance_folder: ' ~ (instance_folder | default('(unscoped)')) ~ ')') }}"

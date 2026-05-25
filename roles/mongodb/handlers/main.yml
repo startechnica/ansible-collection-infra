@@ -1,14 +1,14 @@
 ---
-- name: restart docker
+- name: Restart docker
   ansible.builtin.systemd:
     name: docker
     state: restarted
     daemon_reload: true
 
-- name: reload sysctl
+- name: Reload sysctl
   ansible.builtin.command: sysctl --system
 
-- name: reload systemd
+- name: Reload systemd
   ansible.builtin.systemd:
     daemon_reload: true
 
@@ -22,7 +22,7 @@
 # podman-system-generator. Restart goes through systemctl, not `podman
 # compose`, so the host's normal service supervision applies.
 
-- name: restart mongodb (docker)
+- name: Restart mongodb (docker)
   listen: restart mongodb
   community.docker.docker_compose_v2:
     project_src: "{{ mongodb_root_dir }}"
@@ -30,7 +30,7 @@
     recreate: always
   when: container_engine | default('docker') == 'docker'
 
-- name: restart mongodb (podman, systemd-managed)
+- name: Restart mongodb (podman, systemd-managed)
   listen: restart mongodb
   ansible.builtin.systemd:
     name: "{{ item }}"

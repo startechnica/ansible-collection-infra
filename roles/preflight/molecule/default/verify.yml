@@ -15,7 +15,7 @@
           - _docker_info.host_info.ServerVersion | length > 0
         fail_msg: "Docker host info missing — preflight didn't detect a running daemon."
 
-    - name: docker compose available
+    - name: Docker compose available
       ansible.builtin.command: docker compose version --short
       changed_when: false
       register: _compose

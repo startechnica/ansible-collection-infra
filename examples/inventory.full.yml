@@ -1,3 +1,4 @@
+---
 # Production-shaped inventory — NetBox IPAM, S3 backups, firewall, RouterOS,
 # Patroni with VIP, vault-backed secrets.
 #
@@ -48,7 +49,6 @@ all:
       type: thin
       datastore: vsanDatastore
     instance_dns_servers: [10.147.1.1, 10.147.1.2]
-
     # NetBox scope for enrichment — resolves missing ipv4 from NetBox records.
     netbox_vrf: production
     netbox_lookup_enabled: true
@@ -65,7 +65,7 @@ all:
       - hostname: host1-lin-db
         networks:
           - ipv4: 10.147.8.56/24
-      - hostname: host2-lin-db   # ipv4 enriched from NetBox into networks[0]
+      - hostname: host2-lin-db # ipv4 enriched from NetBox into networks[0]
       - hostname: host3-lin-db
 
     instance_tags:
@@ -83,10 +83,10 @@ all:
             roles: [readWrite]
 
     # ── Patroni ─────────────────────────────────────────────────────────────
-    patroni_scope: <your-project>-pg         # must be unique per etcd DCS
+    patroni_scope: <your-project>-pg # must be unique per etcd DCS
     postgresql_postgres_password: "{{ vault_postgres_password }}"
     pgversion: 16
-    vip_manager: vip-manager              # keepalived | none | vip-manager
+    vip_manager: vip-manager # keepalived | none | vip-manager
     patroni_vip_address: 10.147.8.60
     # patroni_vip_mask + patroni_vip_iface inferred from instance_networks + node IP
 
@@ -107,13 +107,13 @@ all:
     s3_secret_key: "{{ vault_s3_secret_key }}"
     s3_region: us-east-1
     s3_prefix: <your-project>
-    walg_retention: 14                    # keep 14 full Patroni backups
-    mongodb_backup_retain_days: 14                # keep 14 days of MongoDB dumps
+    walg_retention: 14 # keep 14 full Patroni backups
+    mongodb_backup_retain_days: 14 # keep 14 days of MongoDB dumps
 
     # ── Host firewall (UFW / firewalld) ─────────────────────────────────────
     firewall_enabled: true
     firewall_trusted_sources:
-      - 10.147.0.0/16                     # jump-hosts + monitoring net
+      - 10.147.0.0/16 # jump-hosts + monitoring net
     # DB ports auto-included from mongodb_services / patroni_services facts.
     # Add anything else (e.g. node_exporter on 9100) below:
     firewall_rules:
@@ -127,7 +127,7 @@ all:
     routeros_tls: true
     routeros_validate_certs: false
     routeros_address_list: db-<your-project>
-    routeros_prune_stale: true            # remove entries when instances shrinks
+    routeros_prune_stale: true # remove entries when instances shrinks
 
     # ── Optional: kernel modules beyond the Docker baseline ─────────────────
     service_kernel_modules:

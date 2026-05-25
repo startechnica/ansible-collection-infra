@@ -5,9 +5,9 @@
 #   postgresql_dir              – PostgreSQL data directory (used for I/O scheduler detection)
 #   ansible_memtotal_mb – auto-gathered Ansible fact (total RAM in MiB)
 
-###############################################################################
+# ##############################################################################
 # 1. Compute derived values
-###############################################################################
+# ##############################################################################
 - name: Gather page size
   ansible.builtin.command: getconf PAGE_SIZE
   register: _page_size_raw

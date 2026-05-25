@@ -22,7 +22,8 @@
   hosts: localhost
   gather_facts: false
   tasks:
-    - ansible.builtin.include_tasks: _setup.yml
+    - name: Build host group from instances
+      ansible.builtin.include_tasks: _setup.yml
 
 - name: Validate scale-up inputs
   hosts: localhost
@@ -44,18 +45,22 @@
   become: true
   gather_facts: true
   pre_tasks:
-    - ansible.builtin.include_role:
+    - name: Inherit localhost vars
+      ansible.builtin.include_role:
         name: common
         tasks_from: inherit_localhost_vars
   roles:
     - role: mongodb
 
 - name: Register new members in replica set
-  hosts: "{{ (groups['mongodb_nodes'] | default([]))[0] }}"
+  # default('localhost') keeps ansible-lint's syntax-check happy when
+  # mongodb_nodes hasn't been built yet (lint time, before _setup.yml runs).
+  hosts: "{{ (groups['mongodb_nodes'] | default([]) | first) | default('localhost') }}"
   become: true
   gather_facts: false
   pre_tasks:
-    - ansible.builtin.include_role:
+    - name: Inherit localhost vars
+      ansible.builtin.include_role:
         name: common
         tasks_from: inherit_localhost_vars
   tasks:

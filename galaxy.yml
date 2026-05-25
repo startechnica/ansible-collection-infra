@@ -39,6 +39,9 @@ build_ignore:
   - .git
   - .gitignore
   - .claude
+  - .github
+  - .vscode
+  - .yamllint
   - ansible.cfg
   - requirements.yml
   - inventories

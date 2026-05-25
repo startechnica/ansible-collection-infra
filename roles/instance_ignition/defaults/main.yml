@@ -25,7 +25,6 @@ fcos_zincati_enabled: false
 #     - 10.147.8.1
 #     - ntp.internal.lan
 chrony_servers: []
-
 # NetworkManager: interfaces NM should NOT touch. Defaults cover the
 # common Kubernetes / container-runtime exclusion set so kubelet-managed
 # pod networking isn't disrupted by NM events. Patterns that don't match
@@ -37,31 +36,31 @@ chrony_servers: []
 #   tun*, tap*
 nm_unmanaged_devices:
   # ── Generic CNI / container plumbing ──
-  - "interface-name:cni*"           # generic CNI bridges (cni0, cnivxlan*)
-  - "interface-name:veth*"          # container-side veth pairs
-  - "interface-name:dummy*"         # kube-vip, MetalLB BGP, etc.
+  - "interface-name:cni*" # generic CNI bridges (cni0, cnivxlan*)
+  - "interface-name:veth*" # container-side veth pairs
+  - "interface-name:dummy*" # kube-vip, MetalLB BGP, etc.
   # ── Calico ──
-  - "interface-name:cali*"            # Calico workload veth
-  - "interface-name:tunl*"            # Calico IP-in-IP tunnel
-  - "interface-name:vxlan.calico"     # Calico VXLAN (v4)
-  - "interface-name:vxlan-v6.calico"  # Calico VXLAN (v6)
-  - "interface-name:wireguard.cali"   # Calico WireGuard (v4)
-  - "interface-name:wg-v6.cali"       # Calico WireGuard (v6)
-  - "interface-name:bpf*.cali"        # Calico eBPF dataplane (bpfin.cali, bpfout.cali)
+  - "interface-name:cali*" # Calico workload veth
+  - "interface-name:tunl*" # Calico IP-in-IP tunnel
+  - "interface-name:vxlan.calico" # Calico VXLAN (v4)
+  - "interface-name:vxlan-v6.calico" # Calico VXLAN (v6)
+  - "interface-name:wireguard.cali" # Calico WireGuard (v4)
+  - "interface-name:wg-v6.cali" # Calico WireGuard (v6)
+  - "interface-name:bpf*.cali" # Calico eBPF dataplane (bpfin.cali, bpfout.cali)
   # ── Other CNIs ──
-  - "interface-name:flannel*"       # Flannel (flannel.1)
-  - "interface-name:cilium_*"       # Cilium (cilium_host, cilium_net, cilium_vxlan)
-  - "interface-name:lxc*"           # Cilium endpoint veth (legacy naming)
-  - "interface-name:weave"          # Weave Net
-  - "interface-name:antrea-*"       # Antrea
-  - "interface-name:genev_sys_*"    # Geneve overlay (Antrea, others)
-  - "interface-name:ovs-system"     # Open vSwitch internal
-  - "interface-name:kube-*"         # kube-bridge, kube-ipvs0, etc.
-  - "interface-name:nodelocaldns"   # k8s NodeLocal DNS dummy iface
+  - "interface-name:flannel*" # Flannel (flannel.1)
+  - "interface-name:cilium_*" # Cilium (cilium_host, cilium_net, cilium_vxlan)
+  - "interface-name:lxc*" # Cilium endpoint veth (legacy naming)
+  - "interface-name:weave" # Weave Net
+  - "interface-name:antrea-*" # Antrea
+  - "interface-name:genev_sys_*" # Geneve overlay (Antrea, others)
+  - "interface-name:ovs-system" # Open vSwitch internal
+  - "interface-name:kube-*" # kube-bridge, kube-ipvs0, etc.
+  - "interface-name:nodelocaldns" # k8s NodeLocal DNS dummy iface
   # ── Docker / Podman ──
-  - "interface-name:docker*"        # docker0, docker_gwbridge
-  - "interface-name:br-*"           # Docker user-defined bridges (br-<id>)
-  - "interface-name:cni-podman*"    # rootless podman CNI bridges
+  - "interface-name:docker*" # docker0, docker_gwbridge
+  - "interface-name:br-*" # Docker user-defined bridges (br-<id>)
+  - "interface-name:cni-podman*" # rootless podman CNI bridges
   # ── libvirt (mixed virt + k8s hosts) ──
-  - "interface-name:virbr*"         # libvirt bridges
-  - "interface-name:vnet*"          # libvirt guest tap devices
+  - "interface-name:virbr*" # libvirt bridges
+  - "interface-name:vnet*" # libvirt guest tap devices

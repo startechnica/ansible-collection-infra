@@ -73,7 +73,6 @@ argument_specs:
       netbox_query_custom_fields:
         type: dict
         default: {}
-
       netbox_lookup_set_instances:
         type: bool
         default: true

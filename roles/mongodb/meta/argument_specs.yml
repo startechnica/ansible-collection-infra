@@ -3,9 +3,8 @@ argument_specs:
   main:
     short_description: Deploy and manage a Docker-based MongoDB cluster
     description:
-      - Installs a sharded or replicaset MongoDB cluster with TLS (X.509 auth),
-        Prometheus exporter, backups (local + optional S3), and day-2 ops
-        (rolling restart, upgrade, PITR, add/remove node).
+      - Installs a sharded or replicaset MongoDB cluster with TLS (X.509 auth), Prometheus exporter, backups (local + optional S3), and day-2 ops (rolling restart, upgrade, PITR,
+        add/remove node).
       - Dispatches on the `mongodb_action` variable; default is full provisioning.
     options:
       debug:
@@ -38,20 +37,15 @@ argument_specs:
         type: str
         default: "6.19"
         description:
-          - Kernel version string at-or-above which MongoDB is known to be
-            incompatible. Preflight refuses to install when the host kernel
-            is >= this value.
-          - Bump only after verifying a later MongoDB release supports your
-            kernel (see https://jira.mongodb.org/browse/SERVER-121912).
+          - Kernel version string at-or-above which MongoDB is known to be incompatible. Preflight refuses to install when the host kernel is >= this value.
+          - Bump only after verifying a later MongoDB release supports your kernel (see https://jira.mongodb.org/browse/SERVER-121912).
 
       mongodb_skip_kernel_check:
         type: bool
         default: false
         description:
-          - Bypass the kernel-compatibility check. Use only when you have
-            verified MongoDB runs on your kernel — running with this set on
-            an actually-incompatible kernel causes containers to crash in a
-            restart loop.
+          - Bypass the kernel-compatibility check. Use only when you have verified MongoDB runs on your kernel — running with this set on an actually-incompatible kernel causes
+            containers to crash in a restart loop.
 
       mongodb_image_registry:
         type: str
@@ -161,7 +155,6 @@ argument_specs:
         type: str
         default: preferTLS
         choices: [requireTLS, preferTLS, allowTLS, disabled]
-
       # ── Replica set names ──
       mongodb_shard_replset:
         type: str

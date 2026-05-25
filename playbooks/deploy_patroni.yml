@@ -55,7 +55,8 @@
   gather_facts: false
   tags: [patroni]
   tasks:
-    - ansible.builtin.include_tasks: patroni/_setup.yml
+    - name: Build host group from instances
+      ansible.builtin.include_tasks: patroni/_setup.yml
 
 # ── Stage 4: Install Docker ──────────────────────────────────────────────────
 

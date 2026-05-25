@@ -53,17 +53,15 @@ netbox_query_status: ""
 ## e.g. ["production", "docker"]
 ##
 netbox_query_tags: []
-
-## @param netbox_query_custom_fields [default: {}] Filter by custom field values.
-## e.g. { "environment": "production" }
-##
+# # @param netbox_query_custom_fields [default: {}] Filter by custom field values.
+# # e.g. { "environment": "production" }
+# #
 netbox_query_custom_fields: {}
+# # @section Output Configuration
+# # @description Controls how the fetched data maps to the `instances` list.
 
-## @section Output Configuration
-## @description Controls how the fetched data maps to the `instances` list.
-
-## @param netbox_lookup_interface [default: ens192] Interface name to read IP from.
-##
+# # @param netbox_lookup_interface [default: ens192] Interface name to read IP from.
+# #
 netbox_lookup_interface: "ens192"
 
 ## @param netbox_vrf [default: ""] Filter IP addresses by VRF name when looking up

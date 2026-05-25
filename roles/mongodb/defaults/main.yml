@@ -72,7 +72,7 @@ mongos_tls_mode: preferTLS
 
 # ── Admin user ──
 mongodb_admin_user: admin
-mongodb_admin_password: ""  # Set in group_vars or vault
+mongodb_admin_password: "" # Set in group_vars or vault
 
 # ── Healthcheck user (x509 cert auth, no password needed) ──
 mongodb_healthcheck_x509_subject: "CN={{ mongodb_healthcheck_cn }},OU={{ mongodb_pki_client_ou }},O={{ mongodb_pki_o }}"
@@ -105,7 +105,6 @@ mongodb_exporter_x509_subject: "CN={{ mongodb_exporter_cn }},OU={{ mongodb_pki_c
 #           - { role: read, db: myapp }
 #
 mongodb_databases: []
-
 # ── Backup ──
 mongodb_backup_dir: "{{ mongodb_root_dir }}/backups"
 mongodb_backup_retain_days: 7

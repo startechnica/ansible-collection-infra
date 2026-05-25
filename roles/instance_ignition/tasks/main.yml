@@ -9,7 +9,7 @@
 #   poweron.yml      — per-VM loop: power on
 #   cleanup.yml      — per-VM loop: clear guestinfo after successful boot
 
-- name: "instance_ignition has no default entrypoint"
+- name: "Instance_ignition has no default entrypoint"
   ansible.builtin.fail:
     msg: >-
       Do not invoke instance_ignition via `roles:` directly.

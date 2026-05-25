@@ -1,9 +1,9 @@
 ---
-## @section Debug and Validation Parameters
-## @description Control debug output and validation-only mode.
+# # @section Debug and Validation Parameters
+# # @description Control debug output and validation-only mode.
 
-## @param debug [default: false] Enable verbose debug output for all tasks.
-##
+# # @param debug [default: false] Enable verbose debug output for all tasks.
+# #
 debug: false
 
 ## @param debug_validation [default: false] Enable debug output specifically for validation steps.
@@ -328,33 +328,30 @@ instance_user_password: ""
 ##     ClientAliveInterval: 300
 ##
 instance_ssh_configs: {}
+# # @section First-Boot Parameters
+# # @description Packages and commands to run on first boot. Used by both cloud-init and ignition.
+# # For cloud-init: packages are installed via apt/dnf, instance_runcmds run as shell commands.
+# # For ignition/FCOS: packages are installed via rpm-ostree, instance_runcmds run as a oneshot systemd unit.
 
-## @section First-Boot Parameters
-## @description Packages and commands to run on first boot. Used by both cloud-init and ignition.
-## For cloud-init: packages are installed via apt/dnf, instance_runcmds run as shell commands.
-## For ignition/FCOS: packages are installed via rpm-ostree, instance_runcmds run as a oneshot systemd unit.
-
-## @param instance_packages [default: []] Packages installed on all VMs on first boot.
-## Merged with per-VM packages (cloud_init.packages or ignition.packages).
-## e.g. [curl, git, htop]
-##
+# # @param instance_packages [default: []] Packages installed on all VMs on first boot.
+# # Merged with per-VM packages (cloud_init.packages or ignition.packages).
+# # e.g. [curl, git, htop]
+# #
 instance_packages: []
-
-## @param instance_runcmds [default: []] Shell commands run on first boot on all VMs.
-## Merged with per-VM instance_runcmds (cloud_init.runcmd or ignition.instance_runcmds).
-## e.g. ["systemctl enable docker", "echo ready > /etc/motd"]
-##
+# # @param instance_runcmds [default: []] Shell commands run on first boot on all VMs.
+# # Merged with per-VM instance_runcmds (cloud_init.runcmd or ignition.instance_runcmds).
+# # e.g. ["systemctl enable docker", "echo ready > /etc/motd"]
+# #
 instance_runcmds: []
-
-## @section Cloud-init Parameters
-## @description Cloud-init specific settings. Only used when instance_init_type is "cloud-init".
-## NOTE: per-VM `cloud_init:` dict (under each entry of `instances`) is a DIFFERENT
-## namespace — it holds per-VM users / packages / runcmd overrides and stays
-## nested. These flat `cloud_init_*` keys are the role-level defaults.
-##
-## @param cloud_init_package_update [default: true] Run apt-get update on first boot.
-## @param cloud_init_package_upgrade [default: true] Run apt-get upgrade on first boot.
-##
+# # @section Cloud-init Parameters
+# # @description Cloud-init specific settings. Only used when instance_init_type is "cloud-init".
+# # NOTE: per-VM `cloud_init:` dict (under each entry of `instances`) is a DIFFERENT
+# # namespace — it holds per-VM users / packages / runcmd overrides and stays
+# # nested. These flat `cloud_init_*` keys are the role-level defaults.
+# #
+# # @param cloud_init_package_update [default: true] Run apt-get update on first boot.
+# # @param cloud_init_package_upgrade [default: true] Run apt-get upgrade on first boot.
+# #
 cloud_init_package_update: true
 cloud_init_package_upgrade: true
 
@@ -373,25 +370,23 @@ cloud_init_package_upgrade: true
 ##         - "ssh-ed25519 AAAAC3... deploy@ci"
 ##
 instance_extra_users: []
+# # @section Post-Provision Parameters
+# # @description Shell commands executed on the VM after successful deployment.
 
-## @section Post-Provision Parameters
-## @description Shell commands executed on the VM after successful deployment.
-
-## @param instance_post_commands [default: []] List of shell commands to run after the VM is provisioned.
-## Commands are executed via VMware Tools (vmware_vm_shell) as the default_user.
-## No SSH connection required. Per-VM override: set `instance_post_commands` on the VM entry.
-## e.g. ["apt-get update", "systemctl enable docker"]
-##
+# # @param instance_post_commands [default: []] List of shell commands to run after the VM is provisioned.
+# # Commands are executed via VMware Tools (vmware_vm_shell) as the default_user.
+# # No SSH connection required. Per-VM override: set `instance_post_commands` on the VM entry.
+# # e.g. ["apt-get update", "systemctl enable docker"]
+# #
 instance_post_commands: []
+# # @section Destroy Parameters
+# # @description Safety knobs for `tasks/destroy.yml`. Both default false.
+# # Pass via `-e` for unattended/CI runs.
 
-## @section Destroy Parameters
-## @description Safety knobs for `tasks/destroy.yml`. Both default false.
-## Pass via `-e` for unattended/CI runs.
-
-## @param instance_destroy_skip_confirm [default: false] Skip the interactive
-## "type 'destroy' to continue" confirmation prompt. CI / scripted teardowns
-## should set this to true.
-##
+# # @param instance_destroy_skip_confirm [default: false] Skip the interactive
+# # "type 'destroy' to continue" confirmation prompt. CI / scripted teardowns
+# # should set this to true.
+# #
 instance_destroy_skip_confirm: false
 
 ## @param instance_destroy_prune [default: false] Also delete VM data disks
@@ -430,7 +425,6 @@ vcenter_principal_is_group: false
 vcenter_permission_enabled: false
 vcenter_permission_role: ""
 vcenter_permission_propagate: false
-
 
 ## @section Ignition Parameters (when instance_init_type: ignition)
 ## @description Configuration for Ignition-based guest initialization.
@@ -475,7 +469,7 @@ ignition_tmp_dir: /tmp
 ##
 ignition_fcos_stream: stable
 ignition_fcos_arch: x86_64
-ignition_fcos_stream_metadata_url: ""  # auto-generated from ignition_fcos_stream if empty
+ignition_fcos_stream_metadata_url: "" # auto-generated from ignition_fcos_stream if empty
 
 ## @section VM Definitions
 ## @description List of VMs to provision. See README.md for per-VM override options.

@@ -38,7 +38,7 @@
   delegate_to: localhost
   register: _floppy_remove
   changed_when: "'removed' in (_floppy_remove.stdout | default(''))"
-  no_log: false  # stdout has VM names only — no secrets — keep visible
+  no_log: false # stdout has VM names only — no secrets — keep visible
 
 - name: "Floppy removal result for {{ item.name }}"
   ansible.builtin.debug:
