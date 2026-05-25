@@ -22,6 +22,10 @@ venv/
 
 playbooks/artifacts/
 
+# Standalone Galaxy roles installed via `ansible-galaxy role install -r requirements.yml`.
+# Pinned in requirements.yml; CI reinstalls fresh, so a vendored copy just drifts.
+roles/geerlingguy.docker/
+
 # Ansible Vault — decrypted secret files should never be committed.
 # Only *.vault.yml (encrypted by ansible-vault) goes into git.
 # Anything matching these patterns is assumed plaintext and ignored:
