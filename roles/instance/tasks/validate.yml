@@ -2,6 +2,11 @@
 # Orchestrator for the vCenter-infra validation suite. Runs AFTER the
 # pure-data check (validate/input.yml) and the existing-VMs check
 # (validate/vms.yml) — both are invoked separately from main.yml.
-- import_tasks: validate/template.yml
-- import_tasks: validate/datastore.yml
-- import_tasks: validate/network.yml
+- name: Validate content-library template
+  ansible.builtin.import_tasks: validate/template.yml
+
+- name: Validate datastore availability
+  ansible.builtin.import_tasks: validate/datastore.yml
+
+- name: Validate network / portgroup
+  ansible.builtin.import_tasks: validate/network.yml

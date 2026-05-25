@@ -73,14 +73,18 @@
     - name: "Reset instances fact for this play"
       ansible.builtin.set_fact:
         instances: "{{ _fixture_instances }}"
-    - block:
-        - ansible.builtin.import_role:
+    - name: Run validation under negative fixture
+      block:
+        - name: Invoke validate/input.yml (expect failure)
+          ansible.builtin.import_role:
             name: instance
             tasks_from: validate/input.yml
-        - ansible.builtin.fail:
+        - name: Force test failure if validation passed
+          ansible.builtin.fail:
             msg: "Validation should have rejected memory_mb=1023 but didn't"
       rescue:
-        - ansible.builtin.assert:
+        - name: Verify rescue caught the expected error
+          ansible.builtin.assert:
             that: (ansible_failed_result | to_json) is search('multiple of 4')
             fail_msg: "Wrong failure message: {{ ansible_failed_result.msg }}"
             success_msg: "Correctly rejected memory_mb=1023"
@@ -99,14 +103,18 @@
     - name: "Reset instances fact for this play"
       ansible.builtin.set_fact:
         instances: "{{ _fixture_instances }}"
-    - block:
-        - ansible.builtin.import_role:
+    - name: Run validation under negative fixture
+      block:
+        - name: Invoke validate/input.yml (expect failure)
+          ansible.builtin.import_role:
             name: instance
             tasks_from: validate/input.yml
-        - ansible.builtin.fail:
+        - name: Force test failure if validation passed
+          ansible.builtin.fail:
             msg: "Validation should have rejected ipv4='not-a-cidr' but didn't"
       rescue:
-        - ansible.builtin.assert:
+        - name: Verify rescue caught the expected error
+          ansible.builtin.assert:
             that: (ansible_failed_result | to_json) is search('Invalid NIC')
             fail_msg: "Wrong failure message: {{ ansible_failed_result.msg }}"
             success_msg: "Correctly rejected invalid IPv4 CIDR"
@@ -125,14 +133,18 @@
     - name: "Reset instances fact for this play"
       ansible.builtin.set_fact:
         instances: "{{ _fixture_instances }}"
-    - block:
-        - ansible.builtin.import_role:
+    - name: Run validation under negative fixture
+      block:
+        - name: Invoke validate/input.yml (expect failure)
+          ansible.builtin.import_role:
             name: instance
             tasks_from: validate/input.yml
-        - ansible.builtin.fail:
+        - name: Force test failure if validation passed
+          ansible.builtin.fail:
             msg: "Validation should have rejected an addressless NIC but didn't"
       rescue:
-        - ansible.builtin.assert:
+        - name: Verify rescue caught the expected error
+          ansible.builtin.assert:
             that: (ansible_failed_result | to_json) is search('Invalid NIC')
             fail_msg: "Wrong failure message: {{ ansible_failed_result.msg }}"
             success_msg: "Correctly rejected NIC with no ipv4/ipv6"
@@ -156,14 +168,18 @@
     - name: "Reset instances fact for this play"
       ansible.builtin.set_fact:
         instances: "{{ _fixture_instances }}"
-    - block:
-        - ansible.builtin.import_role:
+    - name: Run validation under negative fixture
+      block:
+        - name: Invoke validate/input.yml (expect failure)
+          ansible.builtin.import_role:
             name: instance
             tasks_from: validate/input.yml
-        - ansible.builtin.fail:
+        - name: Force test failure if validation passed
+          ansible.builtin.fail:
             msg: "Validation should have rejected size_gb=0 but didn't"
       rescue:
-        - ansible.builtin.assert:
+        - name: Verify rescue caught the expected error
+          ansible.builtin.assert:
             that: (ansible_failed_result | to_json) is search('positive size_gb')
             fail_msg: "Wrong failure message: {{ ansible_failed_result.msg }}"
             success_msg: "Correctly rejected size_gb=0"
@@ -183,14 +199,18 @@
     - name: "Reset instances fact for this play"
       ansible.builtin.set_fact:
         instances: "{{ _fixture_instances }}"
-    - block:
-        - ansible.builtin.import_role:
+    - name: Run validation under negative fixture
+      block:
+        - name: Invoke validate/input.yml (expect failure)
+          ansible.builtin.import_role:
             name: instance
             tasks_from: validate/input.yml
-        - ansible.builtin.fail:
+        - name: Force test failure if validation passed
+          ansible.builtin.fail:
             msg: "Validation should have required portgroup_name fallback but didn't"
       rescue:
-        - ansible.builtin.assert:
+        - name: Verify rescue caught the expected error
+          ansible.builtin.assert:
             that: (ansible_failed_result | to_json) is search('portgroup_name is required')
             fail_msg: "Wrong failure message: {{ ansible_failed_result.msg }}"
             success_msg: "Correctly required portgroup_name fallback"

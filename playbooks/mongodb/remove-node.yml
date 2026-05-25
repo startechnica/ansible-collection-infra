@@ -102,7 +102,8 @@
         name: common
         tasks_from: inherit_localhost_vars
   tasks:
-    - ansible.builtin.import_role:
+    - name: Run mongodb uninstall tasks
+      ansible.builtin.import_role:
         name: mongodb
       vars:
         mongodb_action: uninstall

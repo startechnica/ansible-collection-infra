@@ -31,7 +31,7 @@
 
 # ── Phase 1: probe initial state ──
 
-- name: Probe docker.service state
+- name: Probe docker.service state  # noqa: command-instead-of-module
   ansible.builtin.command: systemctl is-active docker.service
   register: _docker_active_initial
   changed_when: false
@@ -49,7 +49,7 @@
 - name: "Recovery: docker.service not yet active"
   when: _docker_active_initial.stdout != 'active'
   block:
-    - name: Probe docker-ce package presence
+    - name: Probe docker-ce package presence  # noqa: command-instead-of-module
       ansible.builtin.command: rpm -q docker-ce
       register: _docker_ce_pkg
       changed_when: false
@@ -78,7 +78,7 @@
         # should now be in a terminal state (failed, or post-reboot
         # inactive because ConditionPathExists skipped it). Empty stdout
         # means the unit isn't loaded at all (also terminal).
-        - name: Wait for rpm-ostree-install-docker-ce.service to settle
+        - name: Wait for rpm-ostree-install-docker-ce.service to settle  # noqa: command-instead-of-module
           ansible.builtin.command: systemctl is-active rpm-ostree-install-docker-ce.service
           register: _bootstrap_state
           changed_when: false
@@ -87,7 +87,7 @@
           delay: 5
           until: _bootstrap_state.stdout in ['inactive', 'failed', 'unknown', '']
 
-        - name: Re-probe docker-ce package after bootstrap settled
+        - name: Re-probe docker-ce package after bootstrap settled  # noqa: command-instead-of-module
           ansible.builtin.command: rpm -q docker-ce
           register: _docker_ce_pkg_after
           changed_when: false
@@ -130,7 +130,7 @@
 
 # ── Phase 4: final verification (always runs) ──
 
-- name: Wait for docker.service to be active
+- name: Wait for docker.service to be active  # noqa: command-instead-of-module
   ansible.builtin.command: systemctl is-active docker.service
   register: _docker_active
   changed_when: false
@@ -190,7 +190,7 @@
 #   ~/.docker/cli-plugins. Failure here despite the rpm being installed
 #   means the binary landed somewhere unexpected — usually a packaging
 #   regression. fail_msg points at the diagnostic commands.
-- name: Probe docker-compose-plugin RPM
+- name: Probe docker-compose-plugin RPM  # noqa: command-instead-of-module
   ansible.builtin.command: rpm -q docker-compose-plugin
   register: _compose_pkg
   changed_when: false
@@ -223,7 +223,7 @@
   # whether to add a symlink or extend Docker's search path.
   ignore_errors: true
 
-- name: Locate compose plugin if docker can't find it
+- name: Locate compose plugin if docker can't find it  # noqa: command-instead-of-module
   ansible.builtin.command: rpm -ql docker-compose-plugin
   register: _compose_files
   changed_when: false

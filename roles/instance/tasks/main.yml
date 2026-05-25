@@ -89,7 +89,8 @@
           ensured{{ ', bootstrap=ready confirmed' if instance_init_type == 'ignition' else '' }},
           skipping create / inject / configure phases.
 
-    - meta: end_role
+    - name: End role early when all VMs already exist
+      ansible.builtin.meta: end_role
 
 # For ignition + auto-import flows, fcos_prepare must run BEFORE validate.yml:
 # it's what populates `content_library_template` (the OVA name to import) by

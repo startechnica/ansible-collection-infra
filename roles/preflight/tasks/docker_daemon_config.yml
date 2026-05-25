@@ -46,7 +46,9 @@
             name: docker.service
             state: restarted
 
-        - name: Re-wait for docker.service after restart
+        - name: Re-wait for docker.service after restart  # noqa: command-instead-of-module
+          # ansible.builtin.systemd doesn't expose ActiveState string the
+          # way `systemctl is-active` does for retry/until loops.
           ansible.builtin.command: systemctl is-active docker.service
           register: _docker_active_post_restart
           changed_when: false
