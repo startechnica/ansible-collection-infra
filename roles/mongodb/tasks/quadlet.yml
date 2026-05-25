@@ -130,10 +130,10 @@
     name: "{{ item.svc }}"
     state: restarted
   loop:
-    - { svc: mongodb-mongod.service,    changed: "{{ _q_mongod.changed }}" }
+    - { svc: mongodb-mongod.service, changed: "{{ _q_mongod.changed }}" }
     - { svc: mongodb-configsvr.service, changed: "{{ _q_configsvr.changed | default(false) }}" }
-    - { svc: mongodb-mongos.service,    changed: "{{ _q_mongos.changed | default(false) }}" }
-    - { svc: mongodb-exporter.service,  changed: "{{ _q_exporter.changed | default(false) }}" }
+    - { svc: mongodb-mongos.service, changed: "{{ _q_mongos.changed | default(false) }}" }
+    - { svc: mongodb-exporter.service, changed: "{{ _q_exporter.changed | default(false) }}" }
   loop_control:
     label: "{{ item.svc }}"
   when:

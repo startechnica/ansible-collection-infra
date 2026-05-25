@@ -205,10 +205,10 @@
 
 - name: Show cluster status
   ansible.builtin.include_tasks: status.yml
-  when: 
+  when:
     - mongodb_action | default('provision') == 'status'
 
 - name: Uninstall MongoDB cluster
   ansible.builtin.include_tasks: uninstall.yml
-  when: 
+  when:
     - mongodb_action | default('provision') == 'uninstall'

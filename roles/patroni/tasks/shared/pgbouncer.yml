@@ -13,7 +13,7 @@
     mode: "{{ item.mode }}"
   loop:
     - { src: pgbouncer.ini.j2, name: pgbouncer.ini, mode: "0640" }
-    - { src: userlist.txt.j2,  name: userlist.txt,  mode: "0600" }
+    - { src: userlist.txt.j2, name: userlist.txt, mode: "0600" }
   loop_control:
     label: "{{ item.name }}"
   notify: restart pgbouncer

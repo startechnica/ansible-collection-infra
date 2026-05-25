@@ -111,14 +111,14 @@
 - name: Define leaf certificate specs
   ansible.builtin.set_fact:
     _cert_specs:
-      - { name: etcd-server,      cn: etcd-server,      dir: etcd,        server: true,  client: true,  san: true  }
-      - { name: etcd-peer,        cn: etcd-peer,        dir: etcd,        server: true,  client: true,  san: true  }
-      - { name: etcd-healthcheck, cn: etcd-healthcheck,  dir: etcd,       server: false, client: true,  san: false }
-      - { name: patroni,          cn: patroni,          dir: patroni,     server: true,  client: true,  san: true  }
-      - { name: replicator,       cn: replicator,       dir: patroni,     server: false, client: true,  san: false }
-      - { name: haproxy,          cn: haproxy,          dir: haproxy,     server: false, client: true,  san: false }
-      - { name: pgbouncer,        cn: pgbouncer,        dir: pgbouncer,   server: true,  client: true,  san: true  }
-      - { name: vip-manager,      cn: vip-manager,      dir: vip-manager, server: false, client: true,  san: false }
+      - { name: etcd-server, cn: etcd-server, dir: etcd, server: true, client: true, san: true }
+      - { name: etcd-peer, cn: etcd-peer, dir: etcd, server: true, client: true, san: true }
+      - { name: etcd-healthcheck, cn: etcd-healthcheck, dir: etcd, server: false, client: true, san: false }
+      - { name: patroni, cn: patroni, dir: patroni, server: true, client: true, san: true }
+      - { name: replicator, cn: replicator, dir: patroni, server: false, client: true, san: false }
+      - { name: haproxy, cn: haproxy, dir: haproxy, server: false, client: true, san: false }
+      - { name: pgbouncer, cn: pgbouncer, dir: pgbouncer, server: true, client: true, san: true }
+      - { name: vip-manager, cn: vip-manager, dir: vip-manager, server: false, client: true, san: false }
   run_once: true
 
 ###############################################################################
@@ -217,11 +217,11 @@
 - name: Define per-service certificate map
   ansible.builtin.set_fact:
     _cert_services:
-      - { dir: "{{ etcd_certs_dir }}",        owner: "{{ etcd_uid }}",      group: "{{ etcd_gid }}",      leaves: [etcd-server, etcd-peer, etcd-healthcheck] }
-      - { dir: "{{ patroni_certs_dir }}",     owner: "{{ patroni_uid }}",   group: "{{ patroni_gid }}",   leaves: [patroni, replicator] }
-      - { dir: "{{ haproxy_certs_dir }}",     owner: "{{ haproxy_uid }}",   group: "{{ haproxy_gid }}",   leaves: [haproxy] }
-      - { dir: "{{ pgbouncer_certs_dir }}",   owner: "{{ pgbouncer_uid }}", group: "{{ pgbouncer_gid }}", leaves: [pgbouncer] }
-      - { dir: "{{ vip_manager_certs_dir }}", owner: root,                  group: root,                  leaves: [vip-manager] }
+      - { dir: "{{ etcd_certs_dir }}", owner: "{{ etcd_uid }}", group: "{{ etcd_gid }}", leaves: [etcd-server, etcd-peer, etcd-healthcheck] }
+      - { dir: "{{ patroni_certs_dir }}", owner: "{{ patroni_uid }}", group: "{{ patroni_gid }}", leaves: [patroni, replicator] }
+      - { dir: "{{ haproxy_certs_dir }}", owner: "{{ haproxy_uid }}", group: "{{ haproxy_gid }}", leaves: [haproxy] }
+      - { dir: "{{ pgbouncer_certs_dir }}", owner: "{{ pgbouncer_uid }}", group: "{{ pgbouncer_gid }}", leaves: [pgbouncer] }
+      - { dir: "{{ vip_manager_certs_dir }}", owner: root, group: root, leaves: [vip-manager] }
 
 ###############################################################################
 # 6. Create remote certificate directories with correct per-service ownership

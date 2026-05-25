@@ -201,14 +201,14 @@
     name: "{{ item.svc }}"
     state: restarted
   loop:
-    - { svc: etcd.service,              changed: "{{ _q_etcd.changed }}" }
-    - { svc: walg-init.service,         changed: "{{ _q_walg_init.changed | default(false) }}" }
-    - { svc: patroni.service,           changed: "{{ _q_patroni.changed }}" }
-    - { svc: haproxy.service,           changed: "{{ _q_haproxy.changed }}" }
-    - { svc: pgbouncer.service,         changed: "{{ _q_pgbouncer.changed }}" }
+    - { svc: etcd.service, changed: "{{ _q_etcd.changed }}" }
+    - { svc: walg-init.service, changed: "{{ _q_walg_init.changed | default(false) }}" }
+    - { svc: patroni.service, changed: "{{ _q_patroni.changed }}" }
+    - { svc: haproxy.service, changed: "{{ _q_haproxy.changed }}" }
+    - { svc: pgbouncer.service, changed: "{{ _q_pgbouncer.changed }}" }
     - { svc: postgres-exporter.service, changed: "{{ _q_pg_exporter.changed | default(false) }}" }
-    - { svc: vip-manager.service,       changed: "{{ _q_vip_manager.changed | default(false) }}" }
-    - { svc: keepalived.service,        changed: "{{ _q_keepalived.changed | default(false) }}" }
+    - { svc: vip-manager.service, changed: "{{ _q_vip_manager.changed | default(false) }}" }
+    - { svc: keepalived.service, changed: "{{ _q_keepalived.changed | default(false) }}" }
   loop_control:
     label: "{{ item.svc }}"
   when:

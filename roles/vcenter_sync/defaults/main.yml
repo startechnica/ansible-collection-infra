@@ -89,5 +89,3 @@ vcenter_sync_auto_discover: true
 ## @param instance_datacenter [default: ""] vCenter instance_datacenter to query for auto-discovery.
 ##
 instance_datacenter: ""
-
-
