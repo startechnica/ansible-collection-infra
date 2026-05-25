@@ -129,7 +129,7 @@
         name: common
         tasks_from: inherit_localhost_vars
   tasks:
-    - name: patronictl remove
+    - name: Patronictl remove member from cluster
       community.docker.docker_container_exec:
         container: patroni
         command: >-
