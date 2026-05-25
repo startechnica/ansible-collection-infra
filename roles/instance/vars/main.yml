@@ -57,21 +57,92 @@ _ignition_flavour_default:
        | replace('{channel}', ignition_flavour_default.channel | default(ignition_flavour_map[ignition_flavour | default('fcos')].default_channel)) }}
   instance_user_name: "{{ ignition_flavour_map[ignition_flavour | default('fcos')].instance_user_name }}"
 
-# vSphere guest_id → NetBox platform slug mapping.
+# OS identity reference table — single source of truth that links the four
+# ways this collection identifies a guest OS:
 #
-# The KEYS (vSphere `guestId` strings reported by the VM's GuestInfo) are
-# vendor facts — fixed by VMware's API. Living here in vars/ because users
-# shouldn't override the keys themselves; only add new ones via inventory
-# `vsphere_guest_id_platform_map_extra` (merged in by the consumer).
+#   key                       NetBox platform slug (per-deployment string)
+#   .os_family                ansible_facts.os_family
+#   .distribution             ansible_facts.distribution
+#   .vsphere_guest_id         vSphere `guestId` from GuestInfo (vendor-fixed)
 #
-# The VALUES are NetBox platform slugs — these vary per NetBox deployment
-# (one site uses `rhel-9`, another `redhat-9`, another `rhel9`). Defaults
-# below match the slugs this collection's example inventories use; override
-# per-deployment by setting `instance_netbox_platform_map` in inventory
-# (the consumer falls back to this map for any unmapped guest_id).
+# Keyed by NetBox slug because that's the user-facing identifier; the rest
+# are vendor-fixed facts. Slugs vary per NetBox deployment — override via
+# `instance_netbox_platform_map` in inventory (consumer merges on top).
 #
 # vSphere guest_id reference:
 #   https://vdc-download.vmware.com/vmwb-repository/dcr-public/.../vim.vm.GuestOsDescriptor.html
+# NOTE on slug aliases: multiple NetBox slug conventions share one vSphere
+# guest_id (e.g. every Ubuntu LTS → ubuntu64Guest; debian-12 and
+# debian-gnulinux-12-64-bit → debian12_64Guest). All variants must resolve
+# forward to the same metadata, but the inverse map (guest_id → slug) needs
+# a single canonical answer. We rely on dict-insertion order: Jinja's
+# `dict(zip(guest_ids, slugs))` keeps the LAST insertion per guest_id, so
+# the canonical slug must be listed last in each group below.
+_platform_map:
+  # ── Debian family
+  # Ubuntu — all LTS variants share ubuntu64Guest; canonical (ubuntu-24-04-lts) last.
+  ubuntu-linux-64-bit: { os_family: Debian, distribution: Ubuntu, vsphere_guest_id: ubuntu64Guest }
+  ubuntu-16-04-lts: { os_family: Debian, distribution: Ubuntu, vsphere_guest_id: ubuntu64Guest }
+  ubuntu-20-04-lts: { os_family: Debian, distribution: Ubuntu, vsphere_guest_id: ubuntu64Guest }
+  ubuntu-22-04-lts: { os_family: Debian, distribution: Ubuntu, vsphere_guest_id: ubuntu64Guest }
+  ubuntu-24-04-lts: { os_family: Debian, distribution: Ubuntu, vsphere_guest_id: ubuntu64Guest }
+  # Debian — netbox-community alias `debian-gnulinux-N-64-bit` first, canonical `debian-N` last.
+  debian-gnulinux-8-64-bit: { os_family: Debian, distribution: Debian, vsphere_guest_id: debian8_64Guest }
+  debian-8: { os_family: Debian, distribution: Debian, vsphere_guest_id: debian8_64Guest }
+  debian-gnulinux-9-64-bit: { os_family: Debian, distribution: Debian, vsphere_guest_id: debian9_64Guest }
+  debian-9: { os_family: Debian, distribution: Debian, vsphere_guest_id: debian9_64Guest }
+  debian-gnulinux-10-64-bit: { os_family: Debian, distribution: Debian, vsphere_guest_id: debian10_64Guest }
+  debian-10: { os_family: Debian, distribution: Debian, vsphere_guest_id: debian10_64Guest }
+  debian-gnulinux-11-64-bit: { os_family: Debian, distribution: Debian, vsphere_guest_id: debian11_64Guest }
+  debian-11: { os_family: Debian, distribution: Debian, vsphere_guest_id: debian11_64Guest }
+  debian-gnulinux-12-64-bit: { os_family: Debian, distribution: Debian, vsphere_guest_id: debian12_64Guest }
+  debian-12: { os_family: Debian, distribution: Debian, vsphere_guest_id: debian12_64Guest }
+  debian-13: { os_family: Debian, distribution: Debian, vsphere_guest_id: debian13_64Guest }
+
+  # ── RedHat family (RHEL and clones — same os_family, different distribution)
+  rhel-9: { os_family: RedHat, distribution: RedHat, vsphere_guest_id: rhel9_64Guest }
+  rhel-8: { os_family: RedHat, distribution: RedHat, vsphere_guest_id: rhel8_64Guest }
+  rhel-7: { os_family: RedHat, distribution: RedHat, vsphere_guest_id: rhel7_64Guest }
+  rocky-linux-9: { os_family: RedHat, distribution: Rocky, vsphere_guest_id: rockyLinux_64Guest }
+  almalinux-9: { os_family: RedHat, distribution: AlmaLinux, vsphere_guest_id: almaLinux_64Guest }
+  oracle-linux-9: { os_family: RedHat, distribution: OracleLinux, vsphere_guest_id: oracleLinux9_64Guest }
+  oracle-linux-8: { os_family: RedHat, distribution: OracleLinux, vsphere_guest_id: oracleLinux8_64Guest }
+  oracle-linux-7-64-bit: { os_family: RedHat, distribution: OracleLinux, vsphere_guest_id: oracleLinux7_64Guest }
+  oracle-linux-7: { os_family: RedHat, distribution: OracleLinux, vsphere_guest_id: oracleLinux7_64Guest }
+  centos-9: { os_family: RedHat, distribution: CentOS, vsphere_guest_id: centos9_64Guest }
+  centos-8: { os_family: RedHat, distribution: CentOS, vsphere_guest_id: centos8_64Guest }
+  centos-7: { os_family: RedHat, distribution: CentOS, vsphere_guest_id: centos7_64Guest }
+  fedora: { os_family: RedHat, distribution: Fedora, vsphere_guest_id: fedora64Guest }
+  # Fedora CoreOS — coreos64Guest historically; newer FCOS OVAs may
+  # self-report fedora64Guest depending on the build.
+  fedora-coreos: { os_family: RedHat, distribution: Fedora, vsphere_guest_id: coreos64Guest }
+
+  # ── Suse family
+  opensuse-tumbleweed: { os_family: Suse, distribution: "openSUSE Tumbleweed", vsphere_guest_id: opensuse64Guest }
+  sles-15: { os_family: Suse, distribution: SLES, vsphere_guest_id: sles15_64Guest }
+  sles-12: { os_family: Suse, distribution: SLES, vsphere_guest_id: sles12_64Guest }
+
+  # ── Windows family (ansible_distribution varies by SKU; Windows is the
+  # closest stable label, override per-host if you need the full SKU string)
+  windows-server-2022: { os_family: Windows, distribution: Windows, vsphere_guest_id: windows2022srvNext_64Guest }
+  windows-server-2019: { os_family: Windows, distribution: Windows, vsphere_guest_id: windows2019srv_64Guest }
+  windows-server-2016: { os_family: Windows, distribution: Windows, vsphere_guest_id: windows2016srv_64Guest }
+  windows-11: { os_family: Windows, distribution: Windows, vsphere_guest_id: windows11_64Guest }
+  microsoft-windows-10-64-bit: { os_family: Windows, distribution: Windows, vsphere_guest_id: windows10_64Guest }
+  windows-10: { os_family: Windows, distribution: Windows, vsphere_guest_id: windows10_64Guest }
+
+  # ── FreeBSD family (pfSense, OPNsense, vanilla FreeBSD)
+  pfsense: { os_family: FreeBSD, distribution: FreeBSD, vsphere_guest_id: freebsd64Guest }
+
+  # ── RouterOS (MikroTik). Not detected by ansible setup module; values
+  # match what `community.routeros` users typically set manually.
+  # vSphere recommends "Linux Other 64-bit" (otherLinux64Guest) for RouterOS x86.
+  mikrotik-routeros: { os_family: RouterOS, distribution: RouterOS, vsphere_guest_id: otherLinux64Guest }
+
+# Inverse lookup: vSphere guestId → NetBox platform slug. Derived from
+# `_platform_map` so there's a single source of truth; the legacy name is
+# kept so the resolution chain documented for inventory consumers stays
+# stable.
 #
 # Resolution chain expected at the consumer:
 #   item.netbox_platform                           # explicit per-VM
@@ -79,55 +150,10 @@ _ignition_flavour_default:
 #   instance_netbox_platform_map[guest_id]         # user-override map
 #   _vsphere_guest_id_platform_map[guest_id]       # canonical (this file)
 #   ''                                             # unmapped → caller decides
-_vsphere_guest_id_platform_map:
-  # ── Ubuntu (vSphere reports generic; pick the latest LTS this collection uses)
-  ubuntu64Guest: ubuntu-24-04-lts
-
-  # ── Debian
-  debian13_64Guest: debian-13
-  debian12_64Guest: debian-12
-  debian11_64Guest: debian-11
-  debian10_64Guest: debian-10
-
-  # ── RHEL family (vSphere distinguishes major versions)
-  rhel9_64Guest: rhel-9
-  rhel8_64Guest: rhel-8
-  rhel7_64Guest: rhel-7
-
-  # ── Rocky / Alma / Oracle (RHEL clones; same guest_id family)
-  rockyLinux_64Guest: rocky-linux-9
-  almaLinux_64Guest: almalinux-9
-  oracleLinux9_64Guest: oracle-linux-9
-  oracleLinux8_64Guest: oracle-linux-8
-  oracleLinux7_64Guest: oracle-linux-7
-
-  # ── CentOS (legacy, prefer Rocky / RHEL clones for new builds)
-  centos9_64Guest: centos-9
-  centos8_64Guest: centos-8
-  centos7_64Guest: centos-7
-
-  # ── Fedora (server / workstation)
-  fedora64Guest: fedora
-
-  # ── Container OS (Fedora CoreOS, Flatcar — both use coreos64Guest historically;
-  #     newer FCOS OVAs may self-report fedora64Guest depending on the build)
-  coreos64Guest: fedora-coreos
-
-  # ── openSUSE / SLES
-  opensuse64Guest: opensuse-tumbleweed
-  sles15_64Guest: sles-15
-  sles12_64Guest: sles-12
-
-  # ── Windows Server
-  windows2022srvNext_64Guest: windows-server-2022
-  windows2019srv_64Guest: windows-server-2019
-  windows2016srv_64Guest: windows-server-2016
-
-  # ── Windows desktop
-  windows11_64Guest: windows-11
-  windows10_64Guest: windows-10
-
-  # ── Generic fallbacks (consumer should ignore — NetBox slug unset is fine)
-  otherLinux64Guest: ""
-  otherGuest64: ""
-  otherGuest: ""
+_vsphere_guest_id_platform_map: >-
+  {{
+    dict(
+      _platform_map.values() | map(attribute='vsphere_guest_id')
+      | zip(_platform_map.keys())
+    )
+  }}
