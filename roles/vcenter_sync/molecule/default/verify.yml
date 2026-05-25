@@ -1,0 +1,9 @@
+---
+- name: Verify
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Scenario is scaffold-only
+      ansible.builtin.debug:
+        msg: Syntax-only scaffold — see molecule/default/README.md.

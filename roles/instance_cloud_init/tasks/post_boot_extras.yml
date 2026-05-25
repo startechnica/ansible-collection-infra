@@ -1,0 +1,31 @@
+---
+# Cloud-init-specific post-boot tasks. Called from
+# instance/tasks/configure_all.yml via computed-name dispatch:
+#   include_role: name=instance_{{ instance_init_type|replace('-','_') }}
+#                 tasks_from=post_boot_extras.yml
+#
+# Counterpart: instance_ignition/tasks/post_boot_extras.yml is a
+# no-op — ignition VMs don't have an OVF-env CD-ROM and don't expose
+# a instance_post_commands hook (provisioning happens inside Ignition itself).
+#
+# Caller's loop variable `item` is the current VM dict (from
+# instance's per-VM loop in main.yml). detach_cdrom.yml is shared
+# infrastructure in the parent role; we cross-call it here rather than
+# duplicating, since the file already handles the discover-then-remove
+# logic correctly for any controller layout.
+
+- name: "Detach OVF-environment CD-ROM ISO from {{ item.name }}"
+  ansible.builtin.include_role:
+    name: instance
+    tasks_from: create_vm/detach_cdrom.yml
+
+- name: "Run post-provision commands for {{ item.name }}"
+  ansible.builtin.include_tasks: post_provision.yml
+  when: >-
+    (
+      item.post_commands
+        | default(
+            instance_post_commands
+            | default([])
+          )
+    ) | length > 0

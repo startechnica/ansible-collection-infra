@@ -1,0 +1,75 @@
+---
+# Called in a loop with cert_cn = mongodb-mongod | mongodb-configsvr | mongodb-mongos
+# Generates per-host certs (each host gets unique SANs with its own IP)
+
+- name: "Create per-host cert directory for {{ inventory_hostname }}"
+  ansible.builtin.file:
+    path: "{{ mongodb_local_certs_dir }}/{{ inventory_hostname }}"
+    state: directory
+    mode: "0700"
+  delegate_to: localhost
+  become: false
+
+- name: "Generate private key — {{ 'cn=' ~ cert_cn ~ ', host=' ~ inventory_hostname }}"
+  community.crypto.openssl_privatekey:
+    path: "{{ mongodb_local_certs_dir }}/{{ inventory_hostname }}/{{ cert_cn }}.key"
+    type: "{{ tls_key_type }}"
+    curve: "{{ tls_key_curve if tls_key_type == 'ECC' else omit }}"
+    size: "{{ tls_key_size if tls_key_type == 'RSA' else omit }}"
+  delegate_to: localhost
+  become: false
+
+- name: "Generate CSR — {{ 'cn=' ~ cert_cn ~ ', host=' ~ inventory_hostname }}"
+  community.crypto.openssl_csr:
+    path: "{{ mongodb_local_certs_dir }}/{{ inventory_hostname }}/{{ cert_cn }}.csr"
+    privatekey_path: "{{ mongodb_local_certs_dir }}/{{ inventory_hostname }}/{{ cert_cn }}.key"
+    subject:
+      O: "{{ mongodb_pki_o }}"
+      OU: "{{ mongodb_pki_member_ou }}"
+      CN: "{{ cert_cn }}"
+    key_usage:
+      - digitalSignature
+      - keyEncipherment
+    key_usage_critical: true
+    extended_key_usage:
+      - clientAuth
+      - serverAuth
+    subject_alt_name: >-
+      {{ ['DNS:' ~ cert_cn,
+          'DNS:localhost',
+          'DNS:' ~ inventory_hostname,
+          'IP:127.0.0.1',
+          'IP:' ~ ansible_host]
+         + (['IP:::1'])
+         + (['IP:' ~ ansible_host_ipv6] if ansible_host_ipv6 | default('') | length > 0 else [])
+         + (['DNS:' ~ inventory_hostname ~ '.' ~ instance_domain_name] if instance_domain_name | default('') | length > 0 else [])
+         | unique }}
+  delegate_to: localhost
+  become: false
+
+- name: "Sign certificate — {{ 'cn=' ~ cert_cn ~ ', host=' ~ inventory_hostname }}"
+  community.crypto.x509_certificate:
+    path: "{{ mongodb_local_certs_dir }}/{{ inventory_hostname }}/{{ cert_cn }}.crt"
+    csr_path: "{{ mongodb_local_certs_dir }}/{{ inventory_hostname }}/{{ cert_cn }}.csr"
+    ownca_path: "{{ mongodb_local_certs_dir }}/ca.pem"
+    ownca_privatekey_path: "{{ mongodb_local_certs_dir }}/ca.key"
+    ownca_not_after: "+{{ ssl_days }}d"
+    provider: ownca
+  delegate_to: localhost
+  become: false
+
+- name: "Create PEM bundle — {{ 'cn=' ~ cert_cn ~ ', host=' ~ inventory_hostname }}"
+  ansible.builtin.shell: >
+    cat {{ mongodb_local_certs_dir }}/{{ inventory_hostname }}/{{ cert_cn }}.key
+    {{ mongodb_local_certs_dir }}/{{ inventory_hostname }}/{{ cert_cn }}.crt
+    > {{ mongodb_local_certs_dir }}/{{ inventory_hostname }}/{{ cert_cn }}.pem
+  delegate_to: localhost
+  become: false
+  changed_when: false
+
+- name: "Clean up CSR — cn={{ cert_cn }}"
+  ansible.builtin.file:
+    path: "{{ mongodb_local_certs_dir }}/{{ inventory_hostname }}/{{ cert_cn }}.csr"
+    state: absent
+  delegate_to: localhost
+  become: false

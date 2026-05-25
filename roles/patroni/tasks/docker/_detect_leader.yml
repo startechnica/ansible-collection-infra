@@ -1,0 +1,81 @@
+---
+# Identify the current Patroni leader, then wait for direct PG to accept
+# loopback connections on it. Sets two play-scoped facts via run_once:
+#
+#   _patroni_leader_member — Patroni "Member" name (== inventory_hostname_short)
+#   _patroni_leader_host   — matching full inventory hostname (use as
+#                            delegate_to: target for direct PG operations)
+#
+# Use this whenever a task must hit the writable primary directly (port
+# postgresql_port = 55432) without going through HAProxy → PgBouncer —
+# e.g., bootstrap-time work that creates the very PG roles/functions
+# PgBouncer's auth_query depends on.
+
+- name: Wait for Patroni leader election
+  community.docker.docker_container_exec:
+    container: patroni
+    command: patronictl -c /etc/patroni/patroni.yml list --format json
+  register: _patroni_list
+  changed_when: false
+  failed_when: false
+  retries: 30
+  delay: 5
+  until:
+    - _patroni_list.rc | default(1) == 0
+    - _patroni_list.stdout is defined
+    - (_patroni_list.stdout | default('[]') | from_json | selectattr('Role', 'equalto', 'Leader') | list | length) == 1
+  delegate_to: "{{ groups['patroni_nodes'] | first }}"
+  run_once: true
+
+- name: Fail with diagnostic if leader election didn't converge
+  vars:
+    _leader_count: >-
+      {{ (_patroni_list.stdout | default('[]') | from_json
+          | selectattr('Role', 'equalto', 'Leader')
+          | list | length)
+         if _patroni_list.stdout is defined else '(no stdout)' }}
+  ansible.builtin.fail:
+    msg:
+      - "Patroni leader election did not converge within 30 × 5s = 150s."
+      - "The patroni container appears to be in a restart loop."
+      - "Last docker_container_exec result:"
+      - "  rc:           {{ _patroni_list.rc | default('(no rc — container not running)') }}"
+      - "  msg:          {{ _patroni_list.msg | default('(no msg)') }}"
+      - "  leader count: {{ _leader_count }} (expected 1)"
+      - "  stdout: {{ (_patroni_list.stdout | default(''))[:200] }}{{ '...' if (_patroni_list.stdout | default('') | length) > 200 else '' }}"
+      - "Diagnose on a node:"
+      - "  sudo docker ps -a --filter name=patroni"
+      - "  sudo docker logs --tail 80 patroni"
+      - "  sudo docker logs --tail 30 etcd"
+      - "Common causes: etcd quorum failure, leftover etcd state from a"
+      - "prior attempt (delete /var/lib/etcd on all nodes if so), uid/gid"
+      - "mismatch on the postgres data dir bind-mount, port 5432 already"
+      - "in use on the host, or wrong postgresql_postgres_password."
+      - "If leader count > 1 you have split-brain — investigate etcd state"
+      - "and member network reachability before re-running."
+  when:
+    - _patroni_list.stdout is not defined
+      or _patroni_list.rc | default(1) != 0
+      or (_patroni_list.stdout | default('[]') | from_json
+          | selectattr('Role', 'equalto', 'Leader') | list | length) != 1
+  run_once: true
+
+- name: Identify Patroni leader (member name)
+  ansible.builtin.set_fact:
+    _patroni_leader_member: "{{ _patroni_list.stdout | from_json | selectattr('Role', 'equalto', 'Leader') | map(attribute='Member') | first }}"
+  run_once: true
+
+- name: Map leader member name to inventory host
+  ansible.builtin.set_fact:
+    _patroni_leader_host: "{{ item }}"
+  loop: "{{ groups['patroni_nodes'] }}"
+  when: hostvars[item].inventory_hostname_short == _patroni_leader_member
+  run_once: true
+
+- name: Wait for direct PostgreSQL on leader
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ postgresql_port }}"
+    timeout: 120
+  delegate_to: "{{ _patroni_leader_host }}"
+  run_once: true

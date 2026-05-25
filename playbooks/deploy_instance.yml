@@ -1,0 +1,61 @@
+---
+# ─── Instance-Only Deployment: NetBox → VMs (no service install) ─────────────
+#
+# Provisions VMs on vCenter and (optionally) registers them in NetBox.
+# Does NOT install Docker or deploy any service role (mongodb, patroni, …).
+# Use this when you want to provision the VMs and configure the rest by hand
+# (or with a separate playbook).
+#
+# Stages:
+#   1. Query NetBox for VM definitions (optional)
+#   2. Provision VMs on vCenter
+#   3. Register provisioned VMs in NetBox (optional)
+#
+# Usage:
+#   ansible-playbook playbooks/deploy_instance.yml \
+#     -i inventories/<your-inventory>.yml --ask-vault-pass
+#
+# Skip NetBox lookup (already have inventory-defined VMs):
+#   ansible-playbook playbooks/deploy_instance.yml \
+#     -i inventories/<your-inventory>.yml --ask-vault-pass --tags provision
+#
+# Only register existing VMs in NetBox (skip provisioning):
+#   ansible-playbook playbooks/deploy_instance.yml \
+#     -i inventories/<your-inventory>.yml --ask-vault-pass --tags netbox_register
+
+# ── Stage 1: Gather facts from NetBox (optional) ─────────────────────────────
+
+- name: "Stage 1: Query NetBox for VMs"
+  hosts: localhost
+  gather_facts: false
+  tags: [netbox, provision]
+  roles:
+    - role: netbox_lookup
+      when:
+        - netbox_enabled | default(false) | bool
+        - netbox_lookup_enabled | default(true) | bool
+
+# ── Stage 2: Provision VMs on vCenter ─────────────────────────────────────────
+
+- name: "Stage 2: Provision VMs on vCenter"
+  hosts: localhost
+  gather_facts: true
+  tags: [provision]
+  collections:
+    - community.vmware
+  roles:
+    - role: instance
+
+# ── Stage 3: Register provisioned VMs in NetBox ──────────────────────────────
+
+- name: "Stage 3: Register VMs in NetBox"
+  hosts: localhost
+  gather_facts: false
+  tags: [netbox_register, netbox]
+  collections:
+    - netbox.netbox
+  roles:
+    - role: netbox_register
+      when:
+        - netbox_enabled | default(false) | bool
+        - netbox_connect.token | default('') | length > 0

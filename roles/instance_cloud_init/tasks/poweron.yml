@@ -1,0 +1,25 @@
+---
+# Power on — cloud-init reads hostname/network from guestinfo (injected in
+# inject.yml) on first boot. Do NOT use vmware_guest's `customization:` here;
+# vSphere's sysprep-style customization runs BEFORE cloud-init and marks the
+# VM as customized, which makes cloud-init skip user-data.
+
+- name: "Power on {{ item.name }}"
+  community.vmware.vmware_guest:
+    hostname: "{{ vcenter_connect.hostname }}"
+    username: "{{ vcenter_connect.username }}"
+    password: "{{ vcenter_connect.password }}"
+    validate_certs: "{{ vcenter_connect.validate_certs }}"
+    datacenter: "{{ instance_datacenter }}"
+    folder: "/{{ instance_datacenter }}/vm/{{ instance_folder }}"
+    name: "{{ item.name }}"
+    state: poweredon
+  delegate_to: localhost
+
+- name: "Record cloud-init poweron status for {{ item.name }}"
+  ansible.builtin.set_fact:
+    cloud_init_status: >-
+      {{ cloud_init_status | default({}) | combine({
+        item.name: (cloud_init_status | default({}))[item.name] | default({})
+                   | combine({'powered_on': true})
+      }) }}

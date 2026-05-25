@@ -1,0 +1,14 @@
+---
+- name: Verify
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Assert demo_nodes group was built
+      ansible.builtin.assert:
+        that:
+          - "'demo_nodes' in groups"
+          - groups['demo_nodes'] | length == 2
+          - "'demo-01' in groups['demo_nodes']"
+          - "'demo-02' in groups['demo_nodes']"
+        success_msg: common.build_host_groups populated groups as expected

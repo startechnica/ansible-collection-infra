@@ -1,0 +1,17 @@
+---
+# Host-side nofile sanity. Containers set their own ulimits, but legacy host
+# init scripts and the docker daemon itself need a reasonable baseline.
+
+- name: Check nofile ulimit
+  ansible.builtin.command: "bash -lc 'ulimit -n'"
+  register: _ulimit_nofile
+  changed_when: false
+
+- name: Warn if nofile is low
+  ansible.builtin.debug:
+    msg: >-
+      WARNING: nofile ulimit is {{ _ulimit_nofile.stdout | trim }}, recommended
+      >= 64000 for MongoDB/Postgres workloads.
+      The cluster roles set container-level limits independently; this check
+      covers host-side init scripts and legacy services.
+  when: (_ulimit_nofile.stdout | trim | int) < 32768

@@ -1,0 +1,34 @@
+---
+# Podman counterpart to docker_login.yml. Authenticates to one or more
+# OCI registries so subsequent image pulls (mongodb_image, walg_image,
+# …) work for private repos.
+#
+# Credentials persist in /run/containers/0/auth.json (root) by default;
+# the containers.podman.podman_login module writes there. We reuse the
+# `docker_registries` inventory variable to avoid forking the
+# inventory schema — a registry entry is a registry entry regardless
+# of the engine consuming it.
+#
+# Idempotent: podman_login is a no-op when already authenticated,
+# unless `reauthorize: true` is set on the entry.
+#
+# Standalone use:
+#   ansible-playbook ... \
+#     -e '{"docker_registries":[{"registry":"ghcr.io","username":"bot","password":"..."}]}' \
+#     --tags podman
+#
+# Or include directly from another role:
+#   - ansible.builtin.include_role:
+#       name: preflight
+#       tasks_from: podman_login
+
+- name: Authenticate to OCI registries via podman
+  containers.podman.podman_login:
+    registry: "{{ item.registry }}"
+    username: "{{ item.username }}"
+    password: "{{ item.password }}"
+    state: "{{ item.state | default('present') }}"
+  loop: "{{ docker_registries }}"
+  loop_control:
+    label: "{{ item.username }}@{{ item.registry }}"
+  no_log: true

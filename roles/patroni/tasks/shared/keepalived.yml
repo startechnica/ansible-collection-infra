@@ -1,0 +1,18 @@
+---
+# keepalived (VRRP-based VIP failover, fallback path).
+# Included only when `patroni_vip_enabled and not use_vip_manager` — caller is
+# responsible for the gate.
+
+- name: Deploy keepalived.conf
+  ansible.builtin.template:
+    src: keepalived.conf.j2
+    dest: "{{ keepalived_dir }}/keepalived.conf"
+    mode: "0644"
+  notify: restart keepalived
+
+- name: Deploy keepalived Dockerfile
+  ansible.builtin.template:
+    src: dockerfiles/keepalived.Dockerfile.j2
+    dest: "{{ keepalived_dir }}/Dockerfile"
+    mode: "0644"
+  notify: restart keepalived

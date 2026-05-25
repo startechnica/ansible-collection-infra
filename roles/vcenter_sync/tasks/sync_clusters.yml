@@ -1,0 +1,48 @@
+---
+# Sync clusters to NetBox
+# Reads from: vcenter_clusters (from discover.yml) or vcenter_sync_devices (from inventory)
+
+- name: Resolve cluster list
+  ansible.builtin.set_fact:
+    _clusters_to_sync: >-
+      {{ vcenter_clusters | default(
+           vcenter_sync_devices | selectattr('type', 'defined') | selectattr('type', 'equalto', 'cluster') | list
+         ) }}
+
+- name: "[DRY-RUN] Would sync clusters"
+  ansible.builtin.debug:
+    msg: "Would register cluster: {{ cluster_item.name }} (site: {{ cluster_item.site | default(vcenter_sync_site) | default('none') }})"
+  loop: "{{ _clusters_to_sync }}"
+  loop_control:
+    loop_var: cluster_item
+    label: "{{ cluster_item.name }}"
+  when:
+    - dry_run | bool
+    - _clusters_to_sync | length > 0
+
+- name: Register cluster in NetBox
+  netbox.netbox.netbox_cluster:
+    netbox_url: "{{ netbox_connect.url }}"
+    netbox_token: "{{ netbox_connect.token }}"
+    validate_certs: "{{ netbox_connect.validate_certs | default(false) }}"
+    state: present
+    data:
+      name: "{{ cluster_item.name }}"
+      type: "{{ vcenter_sync_cluster_type }}"
+      group: "{{ cluster_item.group | default(vcenter_sync_cluster_group) | default(omit, true) }}"
+      site: "{{ cluster_item.site | default(vcenter_sync_site) | default(omit, true) }}"
+      tenant: "{{ cluster_item.tenant | default(vcenter_sync_tenant) | default(omit, true) }}"
+      tags: "{{ cluster_item.tags | default(vcenter_sync_tags) | default(omit, true) }}"
+      comments: "Synced from vCenter {{ vcenter_connect.hostname }}"
+  delegate_to: localhost
+  loop: "{{ _clusters_to_sync }}"
+  loop_control:
+    loop_var: cluster_item
+    label: "{{ cluster_item.name }}"
+  when:
+    - not (dry_run | bool)
+    - _clusters_to_sync | length > 0
+
+- name: Display cluster sync results
+  ansible.builtin.debug:
+    msg: "{{ 'DRY-RUN: Would sync' if (dry_run | bool) else 'Synced' }} {{ _clusters_to_sync | length }} clusters"

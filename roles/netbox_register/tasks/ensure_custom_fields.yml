@@ -1,0 +1,24 @@
+---
+# Idempotent: create the vCenter custom fields on virtualization.virtualmachine
+# in NetBox once, before the per-VM register loop.
+
+- name: Ensure vCenter custom fields exist in NetBox
+  netbox.netbox.netbox_custom_field:
+    netbox_url: "{{ netbox_connect.url }}"
+    netbox_token: "{{ netbox_connect.token }}"
+    validate_certs: "{{ netbox_connect.validate_certs | default(false) }}"
+    state: present
+    data:
+      name: "{{ cf.name }}"
+      label: "{{ cf.label }}"
+      type: text
+      content_types:
+        - virtualization.virtualmachine
+  delegate_to: localhost
+  loop:
+    - { name: vcenter_uuid, label: "vCenter UUID" }
+    - { name: vcenter_folder, label: "vCenter Folder" }
+    - { name: vcenter_portgroup_name, label: "vCenter Portgroup Name" }
+  loop_control:
+    loop_var: cf
+    label: "{{ cf.name }}"

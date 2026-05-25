@@ -1,0 +1,93 @@
+---
+# ════════════════════════════════════════════════════════════════════
+# vCenter Sync to NetBox — Role Defaults
+# ════════════════════════════════════════════════════════════════════
+# Syncs vCenter infrastructure (clusters, ESXi hosts, datastores)
+# to NetBox as devices, clusters, and related objects.
+
+## @param dry_run [default: false] Show what would be synced without making changes.
+##
+dry_run: false
+
+## @param debug [default: false] Enable debug output for troubleshooting.
+## Set to true to see detailed info about API calls and data processing.
+##
+debug: false
+
+## @section vCenter Connection
+## @description Reuses the same vcenter dict from instance.
+vcenter_connect:
+  hostname: ""
+  username: ""
+  password: ""
+  validate_certs: false
+
+## @section NetBox Connection
+netbox_connect:
+  url: ""
+  token: ""
+  validate_certs: false
+
+## @section Sync Configuration
+
+## @param vcenter_sync_devices List of vCenter objects to sync to NetBox.
+## Each entry defines a device (ESXi host) or cluster to register.
+##
+## Example:
+##   vcenter_sync_devices:
+##     - name: esxi-01.example.com
+##       type: esxi_host
+##       site: dc-jakarta-1
+##       role: hypervisor
+##       tenant: infrastructure
+##       tags: [vmware, production]
+##
+##     - name: Deviruchi
+##       type: cluster
+##       site: dc-jakarta-1
+##       tags: [vmware]
+##
+vcenter_sync_devices: []
+
+## @param vcenter_sync_site [default: ""] Default site slug for all synced devices.
+##
+vcenter_sync_site: ""
+
+## @param vcenter_sync_role [default: hypervisor] Default device role slug for ESXi hosts.
+##
+vcenter_sync_role: "hypervisor"
+
+## @param vcenter_sync_manufacturer [default: vmware] Manufacturer slug in NetBox.
+##
+vcenter_sync_manufacturer: "vmware"
+
+## @param vcenter_sync_device_type [default: esxi-host] Device type slug in NetBox.
+##
+vcenter_sync_device_type: "esxi-host"
+
+## @param vcenter_sync_cluster_type [default: vmware-vsphere] Cluster type slug in NetBox.
+##
+vcenter_sync_cluster_type: "vmware-vsphere"
+
+## @param vcenter_sync_cluster_group [default: ""] Cluster group slug in NetBox.
+##
+vcenter_sync_cluster_group: ""
+
+## @param vcenter_sync_tenant [default: ""] Default tenant slug.
+##
+vcenter_sync_tenant: ""
+
+## @param vcenter_sync_tags [default: []] Default tags for synced devices.
+##
+vcenter_sync_tags: []
+
+## @param vcenter_sync_auto_discover [default: false] Auto-discover all ESXi hosts and clusters
+## from vCenter instead of using vcenter_sync_devices list.
+##
+vcenter_sync_auto_discover: true
+
+## @param instance_datacenter [default: ""] vCenter instance_datacenter to query for auto-discovery.
+##
+instance_datacenter: ""
+
+

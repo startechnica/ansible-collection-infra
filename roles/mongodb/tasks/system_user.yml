@@ -1,0 +1,71 @@
+---
+- name: Check if mongodb group exists
+  ansible.builtin.command: getent group mongodb
+  register: _mongodb_group_check
+  changed_when: false
+  failed_when: false
+
+- name: Check if GID is already taken
+  ansible.builtin.command: getent group {{ mongodb_gid }}
+  register: _gid_check
+  changed_when: false
+  failed_when: false
+
+- name: "Create mongodb group (or warn if GID taken)"
+  when: _mongodb_group_check.rc != 0
+  block:
+    - name: Create mongodb group
+      ansible.builtin.group:
+        name: mongodb
+        gid: "{{ mongodb_gid }}"
+        system: true
+        state: present
+      when: _gid_check.rc != 0
+
+    - name: "Warn: GID already in use — gid={{ mongodb_gid }}"
+      ansible.builtin.debug:
+        msg: >-
+          GID {{ mongodb_gid }} is already used by '{{ _gid_check.stdout.split(':')[0] | default('unknown') }}'.
+          MongoDB will use the existing 'mongodb' group or this GID.
+          Override with mongodb_gid in inventory if needed.
+      when: _gid_check.rc == 0
+
+- name: Check if mongodb user exists
+  ansible.builtin.command: id mongodb
+  register: _mongodb_user_check
+  changed_when: false
+  failed_when: false
+
+- name: Check if UID is already taken
+  ansible.builtin.command: getent passwd {{ mongodb_uid }}
+  register: _uid_check
+  changed_when: false
+  failed_when: false
+
+- name: "Create mongodb user (or warn if UID taken)"
+  when: _mongodb_user_check.rc != 0
+  block:
+    - name: Create mongodb user
+      vars:
+        _resolved_group: >-
+          {{ _mongodb_group_check.stdout.split(':')[0] | default('mongodb')
+             if _mongodb_group_check.rc == 0
+             else (_gid_check.stdout.split(':')[0] | default('mongodb')
+                   if _gid_check.rc == 0 else 'mongodb') }}
+      ansible.builtin.user:
+        name: mongodb
+        uid: "{{ mongodb_uid }}"
+        group: "{{ _resolved_group }}"
+        home: "{{ mongodb_root_dir }}"
+        create_home: false
+        shell: /usr/sbin/nologin
+        system: true
+        state: present
+      when: _uid_check.rc != 0
+
+    - name: "Warn: UID already in use — uid={{ mongodb_uid }}"
+      ansible.builtin.debug:
+        msg: >-
+          UID {{ mongodb_uid }} is already used by '{{ _uid_check.stdout.split(':')[0] | default('unknown') }}'.
+          Override with mongodb_uid in inventory if needed.
+      when: _uid_check.rc == 0

@@ -1,0 +1,356 @@
+---
+argument_specs:
+  main:
+    short_description: Deploy and manage Patroni HA PostgreSQL with etcd, HAProxy, PgBouncer
+    description:
+      - Bootstraps an etcd cluster + Patroni-managed PostgreSQL with HAProxy
+        r/w routing, PgBouncer connection pooling, and a floating VIP via
+        vip-manager or keepalived.
+      - TLS everywhere (etcd, Patroni API, PostgreSQL, replication, HAProxy).
+      - Integrated WAL-G backups (when S3 is configured), PITR, rolling
+        restart, cert rotation, password rotation, and scale-up/down flows.
+    options:
+      debug:
+        type: bool
+        default: false
+        description: Verbose / introspection output. Defensive `| bool` filter still used in tasks because CLI `-e debug=true` arrives as a string.
+      # ── Cluster identity ──
+      patroni_scope:
+        type: str
+        default: ha-pg-cluster
+        description: >-
+          etcd key prefix for this Patroni cluster. Must be unique if multiple
+          Patroni clusters share one etcd DCS. Default is a placeholder — set
+          per project (e.g., `startechnica-pg`).
+
+      # ── Floating IP ──
+      vip_manager:
+        type: str
+        default: vip-manager
+        choices: [vip-manager, keepalived, none]
+        description: Which VIP service to run. Any value other than `vip-manager` / `keepalived` disables the VIP.
+      patroni_vip_address:
+        type: str
+        default: ""
+        description: >-
+          Floating IP address. Empty (default) disables the VIP service
+          entirely (no vip-manager, no keepalived). Set to enable; choose
+          which manager runs via `vip_manager`. Must be unused on the same
+          subnet as the cluster.
+      patroni_vip_mask:
+        type: int
+        default: 24
+      patroni_vip_iface:
+        type: str
+        default: ""
+        description: NIC name. Empty = auto-detected from `node_ip`.
+
+      # ── Docker images ──
+      postgresql_version:
+        type: int
+        default: 18
+      patroni_image:
+        type: str
+        default: "ghcr.io/parmincloud/containers/patroni:4.1.0-pg18"
+      etcd_image:
+        type: str
+        default: "gcr.io/etcd-development/etcd:v3.6.0"
+      haproxy_image:
+        type: str
+        default: "haproxy:3.3-alpine"
+      pgbouncer_image:
+        type: str
+        default: "edoburu/pgbouncer:v1.25.1-p0"
+      vip_manager_version:
+        type: str
+        default: "4.0.0"
+      vip_manager_arch:
+        type: str
+        description: Computed from ansible_architecture.
+      walg_version:
+        type: str
+        default: "v3.0.8"
+        description: >-
+          Upstream WAL-G release tag (with the leading `v`). Used both
+          as the build URL component and as part of the image tag.
+      walg_image:
+        type: str
+        default: "localhost/wal-g:pg-v3.0.8"
+        description: >-
+          Image reference. Defaults to `localhost/wal-g:pg-<walg_version>`
+          (locally built). Override + set `walg_build_local: false` to pull
+          a prebuilt image from a public/mirrored registry.
+      walg_build_local:
+        type: bool
+        default: true
+        description: >-
+          When true (default), build wal-g locally from the bundled
+          Dockerfile. When false, pull `walg_image` from a registry instead
+          (no Dockerfile / build step). Use when upstream eventually
+          ships a container image or you mirror one yourself.
+
+      # ── Passwords ──
+      postgresql_postgres_password:
+        type: str
+        default: ""
+        description: >-
+          Auto-generated (64-char alphanumeric) when empty. Stored at
+          `<artifacts_dir>/patroni/credentials.txt` on the controller.
+      postgresql_replication_password:
+        type: str
+        default: ""
+        description: Empty = TLS client-cert auth for replication.
+      pgbouncer_auth_password:
+        type: str
+        default: ""
+        description: >-
+          Password for the dedicated `pgbouncer` PostgreSQL role used by
+          PgBouncer for auth_query lookups. The role has LOGIN privilege only
+          and EXECUTE on `pgbouncer.user_search()` — no direct pg_shadow
+          access. Auto-generated if empty and persisted to
+          artifacts/<inv>/patroni/pgbouncer.password on the controller.
+      pgbouncer_stats_password:
+        type: str
+        default: ""
+        description: >-
+          Password for the read-only `pgbouncer_stats` PgBouncer admin
+          console user (referenced by pgbouncer_stats_users). PgBouncer-
+          internal only — no PostgreSQL role is created, the credential
+          lives only in userlist.txt. Auto-generated if empty and persisted
+          to artifacts/<inv>/patroni/pgbouncer_stats.password on the
+          controller.
+      walg_auth_user:
+        type: str
+        default: walg
+        description: >-
+          Dedicated PostgreSQL role used by WAL-G for backup-push. LOGIN +
+          REPLICATION only — no superuser, no user-data read access. Lets
+          us keep the postgres superuser password out of walg.env.
+      walg_auth_password:
+        type: str
+        default: ""
+        description: >-
+          Password for `walg_auth_user`. Auto-generated if empty and
+          persisted to artifacts/<inv>/patroni/walg.password on the
+          controller.
+      postgresql_admin_cidrs:
+        type: list
+        elements: str
+        default: []
+        description: >-
+          CIDRs allowed to connect directly to PostgreSQL (pg_hba.conf).
+          PgBouncer (localhost) and cluster members are always allowed.
+          Use this for ops VPN / jump-host access; leave empty for
+          PgBouncer-only ingress (recommended).
+
+      # ── Ports ──
+      pgbouncer_port:
+        type: int
+        default: 6543
+      haproxy_primary_port:
+        type: int
+        default: 5432
+      haproxy_replicas_port:
+        type: int
+        default: 5433
+      haproxy_stats_port:
+        type: int
+        default: 7000
+      postgresql_port:
+        type: int
+        default: 55432
+      patroni_api_port:
+        type: int
+        default: 8008
+      etcd_client_port:
+        type: int
+        default: 2379
+      etcd_peer_port:
+        type: int
+        default: 2380
+
+      # ── Container UIDs ──
+      patroni_uid:
+        type: int
+        default: 999
+      patroni_gid:
+        type: int
+        default: 999
+      etcd_uid:
+        type: int
+        default: 42782
+      etcd_gid:
+        type: int
+        default: 42782
+      haproxy_uid:
+        type: int
+        default: 99
+      haproxy_gid:
+        type: int
+        default: 99
+
+      # ── Logging / debug ──
+      postgresql_log_destination:
+        type: str
+        default: file
+        choices: [file, stdout, both]
+      debug_mode:
+        type: bool
+        default: false
+        description: Rebuild container images on deploy (dev only).
+
+      # ── Host directories ──
+      postgresql_dir:
+        type: str
+        default: /opt/postgresql
+      postgresql_root_dir:
+        type: str
+        default: /opt/postgresql/pgroot
+      postgresql_log_dir:
+        type: str
+        default: /opt/postgresql/postgresql_log_dir
+      etcd_dir:
+        type: str
+        default: /opt/etcd
+      etcd_data_dir:
+        type: str
+        default: /opt/etcd/data
+      patroni_dir:
+        type: str
+        default: /opt/patroni
+      haproxy_dir:
+        type: str
+        default: /opt/haproxy
+      pgbouncer_dir:
+        type: str
+        default: /opt/pgbouncer
+      keepalived_dir:
+        type: str
+        default: /opt/keepalived
+      vip_manager_dir:
+        type: str
+        default: /opt/vip-manager
+      walg_dir:
+        type: str
+        default: /opt/walg
+
+      # ── Backups ──
+      patroni_backup_dir:
+        type: str
+        default: /opt/postgresql/backups
+      wal_archive_dir:
+        type: str
+        default: /opt/postgresql/wal_archive
+
+      # ── S3 / WAL-G (shared with mongodb) ──
+      s3_bucket:
+        type: str
+        default: ""
+        description: Set to enable WAL-G + etcd snapshot upload. Empty disables.
+      s3_endpoint:
+        type: str
+        default: ""
+      s3_access_key:
+        type: str
+        default: ""
+      s3_secret_key:
+        type: str
+        default: ""
+      s3_region:
+        type: str
+        default: us-east-1
+      s3_force_path_style:
+        type: str
+        default: "true"
+      walg_retention:
+        type: int
+        default: 7
+      walg_compression:
+        type: str
+        default: lz4
+      walg_schedule:
+        type: str
+        default: "*-*-* 02:00:00"
+        description:
+          - systemd OnCalendar expression for scheduled WAL-G backups.
+          - Empty string disables the timer (on-demand backups still work).
+
+      # ── etcd snapshots ──
+      etcd_snapshot_schedule:
+        type: str
+        default: "00,06,12,18:00:00"
+        description:
+          - systemd OnCalendar expression (see `man systemd.time`).
+          - Empty string disables scheduled snapshots.
+      etcd_snapshot_dir:
+        type: str
+        default: /opt/etcd/snapshots
+      etcd_snapshot_retain:
+        type: int
+        default: 7
+
+      # ── PostgreSQL memory (auto-calculated if empty) ──
+      pg_shared_buffers:
+        type: str
+        default: ""
+        description: e.g. "2GB". Empty = ansible_memtotal_mb / 4.
+      pg_effective_cache:
+        type: str
+        default: ""
+        description: Empty = ansible_memtotal_mb * 3 / 4.
+      pg_work_mem:
+        type: str
+        default: ""
+        description: Empty = max(mem/64, 4)MB.
+      pg_maint_mem:
+        type: str
+        default: ""
+        description: Empty = min(mem/8, 2048)MB.
+
+      # ── Monitoring ──
+      postgres_exporter_enabled:
+        type: bool
+        default: false
+      postgres_exporter_image:
+        type: str
+        default: "prometheuscommunity/postgres-exporter:v0.16.0"
+      postgres_exporter_port:
+        type: int
+        default: 9187
+
+      # ── TLS ──
+      tls_cert_days:
+        type: int
+        default: 3650
+      tls_key_type:
+        type: str
+        default: ECC
+        choices: [ECC, RSA]
+      tls_key_curve:
+        type: str
+        default: secp384r1
+      tls_key_size:
+        type: int
+        default: 4096
+      tls_signature_digest:
+        type: str
+        default: sha384
+
+      # ── Extensions ──
+      patroni_extensions:
+        type: list
+        elements: str
+        default: [pg_stat_statements]
+        description: >-
+          shared_preload_libraries + CREATE EXTENSION on each managed DB. Only
+          list extensions the underlying patroni_image actually bundles as
+          shared libraries — adding e.g. pgaudit to an image that doesn't
+          have libpgaudit.so makes postmaster fail at bootstrap with "could
+          not access file".
+
+      # ── Databases/users ──
+      patroni_databases:
+        type: list
+        elements: dict
+        default: []
+        description: Databases + users + grants to provision post-init. See README for schema.

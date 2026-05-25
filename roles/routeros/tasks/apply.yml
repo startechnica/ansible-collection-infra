@@ -1,0 +1,19 @@
+---
+# Push _routeros_entries into /ip firewall address-list. Uses
+# handle_entries_content: ignore so existing RouterOS entries that aren't in
+# our data (other lists, manual adds) are left untouched — we only add or
+# update the entries we own. Runs once from the controller.
+
+- name: Apply address-list to MikroTik (ignore — preserves unrelated entries)
+  community.routeros.api_modify:
+    hostname: "{{ routeros_host }}"
+    username: "{{ routeros_user }}"
+    password: "{{ routeros_password }}"
+    port: "{{ routeros_port if routeros_port | int > 0 else omit }}"
+    tls: "{{ routeros_tls | bool }}"
+    validate_certs: "{{ routeros_validate_certs | bool }}"
+    path: ip firewall address-list
+    data: "{{ _routeros_entries }}"
+    handle_entries_content: ignore
+  delegate_to: localhost
+  run_once: true

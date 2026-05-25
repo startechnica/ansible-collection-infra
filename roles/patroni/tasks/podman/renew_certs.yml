@@ -1,0 +1,71 @@
+---
+# Rolling cert rotation (podman). Cert generation itself runs in
+# shared/tls_certificates.yml (called from main.yml just before this);
+# this file's job is the rolling restart so containers pick up the
+# new on-disk certs, plus the post-rotation expiry summary.
+
+# -- Rolling restart (leaf rotation) ----------------------------------------
+- name: Rolling restart services
+  when: not (rotate_ca | default(false) | bool)
+  block:
+    - name: Restart etcd
+      ansible.builtin.systemd:
+        name: etcd.service
+        state: restarted
+
+    - name: Wait for etcd
+      ansible.builtin.pause:
+        seconds: 5
+
+    - name: Restart patroni
+      ansible.builtin.systemd:
+        name: patroni.service
+        state: restarted
+
+    - name: Wait for patroni
+      ansible.builtin.pause:
+        seconds: 10
+
+    - name: Restart haproxy
+      ansible.builtin.systemd:
+        name: haproxy.service
+        state: restarted
+
+# -- Full restart (CA rotation) ---------------------------------------------
+# Restart every Quadlet-managed service. failed_when: false so
+# optional units (walg-init, postgres-exporter, vip-manager/keepalived)
+# that aren't enabled in this inventory don't trip the play.
+# walg-cron is no longer a service — it's a host-side timer-driven
+# oneshot that exec's into the (already-restarted) patroni container
+# on its next fire, so no restart needed here.
+- name: Full restart (CA rotation)
+  when: rotate_ca | default(false) | bool
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: restarted
+  loop:
+    - etcd.service
+    - walg-init.service
+    - patroni.service
+    - haproxy.service
+    - pgbouncer.service
+    - postgres-exporter.service
+    - vip-manager.service
+    - keepalived.service
+  loop_control:
+    label: "{{ item }}"
+  failed_when: false
+
+# -- Display expiry info ----------------------------------------------------
+- name: Read certificate expiry dates
+  community.crypto.x509_certificate_info:
+    path: "{{ item }}"
+  register: _cert_info
+  loop: "{{ patroni_certs_to_inspect }}"
+  loop_control:
+    label: "{{ item }}"
+  when: (patroni_certs_to_inspect) | length > 0
+
+- name: Display rotation summary
+  ansible.builtin.debug:
+    msg: "Certificate rotation complete ({{ 'CA + leaves' if (rotate_ca | default(false) | bool) else 'leaves only' }})."

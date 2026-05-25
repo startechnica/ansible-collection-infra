@@ -1,0 +1,106 @@
+---
+# Deploy all VMs from content library in parallel using async
+# This fires all deploys simultaneously, then waits for all to complete.
+
+- name: "Deploy VMs from content library (OVF) [async]"
+  vmware.vmware.deploy_content_library_ovf:
+    hostname: "{{ vcenter_connect.hostname }}"
+    username: "{{ vcenter_connect.username }}"
+    password: "{{ vcenter_connect.password }}"
+    validate_certs: "{{ vcenter_connect.validate_certs }}"
+    datacenter: "{{ instance_datacenter }}"
+    datastore: "{{ instance_disks.datastore }}"
+    folder: "{{ instance_folder }}"
+    library_item_id: "{{ _content_library_item_id }}"
+    library_id: "{{ _content_library_id }}"
+    vm_name: "{{ instance.name }}"
+    cluster: "{{ instance_cluster_name }}"
+  delegate_to: localhost
+  loop: "{{ instances_to_create }}"
+  loop_control:
+    loop_var: instance
+    label: "{{ instance.name }}"
+  async: 1800
+  poll: 0
+  register: _deploy_jobs
+  when: content_library_type == 'ovf'
+
+- name: "Deploy VMs from content library (vm-template) [async]"
+  vmware.vmware.deploy_content_library_template:
+    hostname: "{{ vcenter_connect.hostname }}"
+    username: "{{ vcenter_connect.username }}"
+    password: "{{ vcenter_connect.password }}"
+    validate_certs: "{{ vcenter_connect.validate_certs }}"
+    datacenter: "{{ instance_datacenter }}"
+    datastore: "{{ instance_disks.datastore }}"
+    folder: "{{ instance_folder }}"
+    library_item_id: "{{ _content_library_item_id }}"
+    library_id: "{{ _content_library_id }}"
+    vm_name: "{{ instance.name }}"
+    cluster: "{{ instance_cluster_name }}"
+  delegate_to: localhost
+  loop: "{{ instances_to_create }}"
+  loop_control:
+    loop_var: instance
+    label: "{{ instance.name }}"
+  async: 1800
+  poll: 0
+  register: _deploy_jobs
+  when: content_library_type == 'vm-template'
+
+- name: "Wait for all VM deployments to complete"
+  # The async deploy above gives vCenter 1800s. We poll for up to 40 × 30s
+  # = 20 min per VM. OVF deploys typically finish in 5–10 min; if a deploy
+  # takes longer, something's wrong and we should fail rather than wait
+  # forever. `finished: true` short-circuits the until-loop the moment the
+  # async task completes (success or fail). `failed_when: false` lets all
+  # items poll independently — the downstream assert task surfaces per-VM
+  # failures with their names so the operator sees the full picture
+  # instead of bailing at the first failure.
+  async_status:
+    jid: "{{ job.ansible_job_id }}"
+  delegate_to: localhost
+  loop: "{{ _deploy_jobs.results }}"
+  loop_control:
+    loop_var: job
+    label: "{{ job.instance.name }}"
+  register: _deploy_results
+  until: _deploy_results.finished
+  retries: 40
+  delay: 30
+  when: job.ansible_job_id is defined
+  failed_when: false
+
+- name: "Assert each VM deployment succeeded"
+  ansible.builtin.assert:
+    that:
+      - not (item.failed | default(false))
+      - (item.rc | default(0)) == 0
+    fail_msg: >-
+      Deployment failed for {{ item.job.instance.name | default('(unknown)') }}:
+      rc={{ item.rc | default('?') }}
+      msg={{ item.msg | default(item.stderr | default(item)) }}
+    success_msg: "Deployment succeeded for {{ item.job.instance.name | default('(unknown)') }}"
+    quiet: true
+  loop: "{{ _deploy_results.results | default([]) }}"
+  loop_control:
+    label: "{{ item.job.instance.name | default('(unknown)') }}"
+  when: item.skipped is not defined or not item.skipped
+
+- name: "Wait for each VM to register in vCenter"
+  community.vmware.vmware_guest_info:
+    hostname: "{{ vcenter_connect.hostname }}"
+    username: "{{ vcenter_connect.username }}"
+    password: "{{ vcenter_connect.password }}"
+    validate_certs: "{{ vcenter_connect.validate_certs }}"
+    datacenter: "{{ instance_datacenter }}"
+    folder: "{{ instance_folder_path }}"
+    name: "{{ item.name }}"
+  delegate_to: localhost
+  loop: "{{ instances_to_create }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: _vm_presence
+  until: _vm_presence is succeeded
+  retries: 60
+  delay: 5

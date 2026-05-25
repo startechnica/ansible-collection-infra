@@ -1,0 +1,94 @@
+---
+argument_specs:
+  main:
+    short_description: OS-agnostic host firewall — UFW (Debian), firewalld (RHEL), or nftables (FCOS)
+    description:
+      - "Applies a declarative firewall policy. Default off — set
+        `firewall_enabled: true` to opt in."
+      - Backend auto-detected from ansible_os_family + ansible_pkg_mgr,
+        or set explicitly via `firewall_backend`.
+      - Auto-includes the active SSH port (ansible_port) so Ansible
+        doesn't lock itself out mid-apply.
+      - When the host has already run the mongodb or patroni role,
+        service ports are picked up from the host facts they publish
+        (unless firewall_include_service_ports is disabled).
+    options:
+      debug:
+        type: bool
+        default: false
+        description: Verbose / introspection output. Defensive `| bool` filter still used in tasks because CLI `-e debug=true` arrives as a string.
+      firewall_enabled:
+        type: bool
+        default: false
+        description: Master switch; when false the role is a no-op.
+      firewall_backend:
+        type: str
+        default: auto
+        choices: [auto, ufw, firewalld, nftables]
+        description: >-
+          Override backend selection. `auto` picks ufw for Debian-family,
+          nftables for rpm-ostree-managed (FCOS / RHCOS), firewalld for
+          everything else under RedHat family.
+      firewall_default_incoming:
+        type: str
+        default: deny
+        choices: [deny, allow, reject]
+      firewall_default_outgoing:
+        type: str
+        default: allow
+        choices: [deny, allow, reject]
+      firewall_rules:
+        type: list
+        elements: dict
+        default: []
+        description: >-
+          Declared allow rules. Each entry: port (int or "start:end"),
+          protocol (tcp|udp, default tcp), source (CIDR, optional),
+          comment (optional).
+      firewall_trusted_sources:
+        type: list
+        elements: str
+        default: []
+        description: >-
+          CIDRs granted blanket inbound access (e.g. jump-host subnet,
+          monitoring network).
+      firewall_auto_trust_controller:
+        type: bool
+        default: true
+        description: >-
+          Auto-add the Ansible controller's IP (extracted from
+          ansible_env.SSH_CONNECTION on the target) to the effective
+          trusted-sources list before applying rules. Prevents the
+          controller getting blocked on non-SSH ports after
+          firewall_default_incoming=deny is enforced. Set false for
+          strict mode.
+      firewall_include_service_ports:
+        type: bool
+        default: true
+        description: >-
+          Pick up ports from mongodb_services + patroni_services host
+          facts published by those roles' start/init tasks.
+      firewall_ssh_open_to_any:
+        type: bool
+        default: true
+        description: >-
+          Whether the broad "SSH from any" rule (`ssh-any`) is emitted
+          alongside the trusted-only `ssh-trusted` rule. Set false +
+          re-run to lock SSH down to trusted sources only. Operator
+          can also flip the live rule manually via `ufw delete allow 22`
+          / `firewall-cmd --remove-port=22/tcp --permanent` without
+          re-running Ansible — the trusted-source rules survive either way.
+      firewall_service_source_map:
+        type: dict
+        default: {}
+        description: >-
+          Per-service source restrictions. Map keys match a rule's
+          `name` (or `comment` if `name` missing) — including service
+          entries pulled from mongodb_services / patroni_services.
+          Values are lists of source CIDRs / IPs allowed to reach the
+          port; rule expands into one ALLOW per source. A rule with no
+          map entry is left "from any". A rule whose map entry resolves
+          to an empty list is dropped (port effectively closed). Role
+          ships defaults that scope ssh / mongod / configsvr to their
+          respective member groups; override piecemeal or set this to
+          `{}` to revert to "open to any" behavior.

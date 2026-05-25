@@ -1,0 +1,2 @@
+# Managed by Ansible - Patroni PostgreSQL I/O scheduler
+ACTION=="add|change", KERNEL=="{{ _block_dev.stdout | trim }}", ATTR{queue/scheduler}="{{ _io_scheduler }}"

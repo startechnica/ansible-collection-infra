@@ -1,0 +1,95 @@
+---
+# Podman / Quadlet teardown. Stop + disable systemd services, remove
+# the Quadlet source files, daemon-reload, then sweep any straggler
+# containers podman might still know about (e.g. orphaned by manual
+# `podman run` invocations during debugging). All listed regardless
+# of cluster shape — extra stops on missing units are no-ops with
+# failed_when: false.
+
+- name: Stop + disable Quadlet services
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: stopped
+    enabled: false
+  loop:
+    - etcd.service
+    - walg-init.service
+    - patroni.service
+    - haproxy.service
+    - pgbouncer.service
+    - postgres-exporter.service
+    - vip-manager.service
+    - keepalived.service
+  loop_control:
+    label: "{{ item }}"
+  failed_when: false
+
+- name: Remove Quadlet source files
+  ansible.builtin.file:
+    path: "/etc/containers/systemd/{{ item }}"
+    state: absent
+  loop:
+    - etcd.container
+    - walg-init.container
+    - patroni.container
+    - haproxy.container
+    - pgbouncer.container
+    - postgres-exporter.container
+    - vip-manager.container
+    - keepalived.container
+  loop_control:
+    label: "{{ item }}"
+
+- name: Reload systemd (Quadlet generator)
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: Reset failed state for removed units
+  ansible.builtin.command: systemctl reset-failed {{ item }}
+  loop:
+    - etcd.service
+    - walg-init.service
+    - patroni.service
+    - haproxy.service
+    - pgbouncer.service
+    - postgres-exporter.service
+    - vip-manager.service
+    - keepalived.service
+  loop_control:
+    label: "{{ item }}"
+  failed_when: false
+  changed_when: false
+
+- name: Force-remove any straggler containers (podman)
+  containers.podman.podman_container:
+    name: "{{ item }}"
+    state: absent
+    force: true
+  loop:
+    - etcd
+    - walg-init
+    - patroni
+    - haproxy
+    - pgbouncer
+    - postgres-exporter
+    - vip-manager
+    - keepalived
+  loop_control:
+    label: "{{ item }}"
+  failed_when: false
+
+# Locally-built images are tagged `localhost/...`; remove so a fresh
+# install rebuilds cleanly. Pulled images stay (cheap to re-pull,
+# expensive to download) — operator can `podman image prune` if
+# they really want to wipe everything.
+- name: Remove locally-built images
+  containers.podman.podman_image:
+    name: "{{ item }}"
+    state: absent
+    force: true
+  loop:
+    - "localhost/vip-manager:v{{ vip_manager_version }}"
+    - "localhost/keepalived:latest"
+  loop_control:
+    label: "{{ item }}"
+  failed_when: false

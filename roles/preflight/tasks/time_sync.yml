@@ -1,0 +1,18 @@
+---
+# Wall-clock sanity. Replica sets and Patroni leader election are sensitive
+# to clock drift; this is a soft warning, not a fail.
+
+- name: Check time sync service
+  ansible.builtin.command: "timedatectl show -p NTPSynchronized --value"
+  register: _timesync
+  changed_when: false
+  failed_when: false
+
+- name: Warn if time not synchronised
+  ansible.builtin.debug:
+    msg: >-
+      WARNING: NTP is not synchronised. Replica sets + Patroni leader election
+      are sensitive to clock drift. Ensure chrony or systemd-timesyncd is active.
+  when:
+    - _timesync.rc == 0
+    - _timesync.stdout | trim | lower != 'yes'

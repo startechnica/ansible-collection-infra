@@ -1,0 +1,279 @@
+---
+# ════════════════════════════════════════════════════════════════════
+# Patroni HA PostgreSQL — Role Defaults
+# ════════════════════════════════════════════════════════════════════
+
+debug: false
+dry_run: false
+
+patroni_enabled: false
+
+# Action dispatcher. See tasks/main.yml header for the full list:
+#   provision (default) | manage-databases | backup | status | health |
+#   switchover | renew-certs | rotate-passwords | uninstall
+patroni_action: provision
+
+# ── Uninstall safety ──
+# patroni_destroy_prune  — when true, also delete PGDATA/etcd data dirs
+#                          (everything under postgresql_root_dir, etcd_data_dir).
+#                          When false (default), keep data; only configs go.
+# patroni_skip_confirm   — when true, skip the interactive 'prune' prompt.
+#                          Mostly for unattended teardowns in CI.
+patroni_destroy_prune: false
+patroni_skip_confirm: false
+
+# Cluster
+patroni_scope: "ha-pg-cluster"
+
+# VIP manager: "vip-manager" (default), "keepalived", or any other value to disable.
+vip_manager: "vip-manager"
+
+# Floating IP served by vip-manager/keepalived on the current primary.
+# Empty (default) disables the VIP service entirely (no vip-manager, no
+# keepalived). Set per inventory to enable; vip_manager picks the implementation.
+# patroni_vip_iface is auto-detected from node_ip at runtime; override to force a specific NIC.
+patroni_vip_address: ""
+patroni_vip_mask: 32
+patroni_vip_iface: ens192
+
+# Docker images
+postgresql_version: 18
+patroni_image: "ghcr.io/parmincloud/containers/patroni:4.1.0-pg18"
+etcd_image: "gcr.io/etcd-development/etcd:v3.6.10"
+haproxy_image: "docker.io/haproxy:3.3-alpine"
+pgbouncer_image: "docker.io/edoburu/pgbouncer:v1.25.1-p0"
+vip_manager_version: "4.0.0"
+# Architecture suffix for the vip-manager release binary. Auto-detected
+# from `ansible_architecture` (logic in vars/main.yml :: _vip_manager_arch).
+# Override here in inventory to force a specific value (cross-arch build,
+# air-gapped mirror with a renamed asset, …).
+vip_manager_arch: "{{ _vip_manager_arch }}"
+# WAL-G is built locally from the official GitHub release binary
+# (no upstream container image is published — see issue wal-g/wal-g#473).
+# The Dockerfile lives in templates/dockerfiles/walg.Dockerfile.j2 and
+# pulls the postgres-flavor binary for v{{ walg_version }}. Override
+# walg_version to bump; walg_image follows it via the v<ver> tag.
+# NOTE: the Ubuntu binary release is amd64-only — aarch64 hosts need
+# a different asset name; not supported by this default.
+walg_version: "v3.0.8"
+walg_image: "localhost/wal-g:pg-{{ walg_version }}"
+
+# Build wal-g locally from the bundled Dockerfile (default) vs. pull a
+# prebuilt image. Set walg_build_local=false in inventory and override
+# walg_image to a public/mirrored reference (e.g. ghcr.io/yourorg/wal-g:pg-v3.0.8)
+# to skip the build and pull instead.
+walg_build_local: true
+
+# Passwords (auto-generated if empty)
+postgresql_postgres_password: ""
+postgresql_replication_password: ""  # empty = TLS cert auth for replication
+
+# Dedicated PostgreSQL role used by PgBouncer for auth_query lookups.
+# A LOGIN-only role; no other privileges. Auto-generated if empty and
+# persisted to artifacts/<inv>/patroni/pgbouncer.password on the controller.
+pgbouncer_auth_password: ""
+
+# Password for the read-only PgBouncer admin console user (`pgbouncer_stats`,
+# see pgbouncer_stats_users below). PgBouncer-internal only — no PG role,
+# no userlist auth_query path; lives only in userlist.txt. Auto-generated
+# if empty and persisted to artifacts/<inv>/patroni/pgbouncer_stats.password.
+pgbouncer_stats_password: ""
+
+# Direct PostgreSQL access (port {{ postgresql_port }}) — list of CIDRs allowed
+# in pg_hba.conf in addition to: localhost (PgBouncer on the same node) and
+# the cluster's own member nodes (Patroni coordination + replication).
+#
+# For day-to-day app traffic, leave this empty — clients should hit the VIP
+# via HAProxy → PgBouncer. Add CIDRs only when you need direct psql/pgcli
+# from a jump host or admin VPN. Example:
+#   postgresql_admin_cidrs:
+#     - 10.99.0.0/24    # ops VPN
+postgresql_admin_cidrs: []
+
+# Service ports
+pgbouncer_port: 6543
+haproxy_primary_port: 5432
+haproxy_replicas_port: 5433
+haproxy_stats_port: 7000
+postgresql_port: 55432
+patroni_api_port: 8008
+etcd_client_port: 2379
+etcd_peer_port: 2380
+
+# Container UIDs
+patroni_uid: 999
+patroni_gid: 999
+etcd_uid: 42782
+etcd_gid: 42782
+# HAProxy container UID/GID — official haproxy:* image uses haproxy:99.
+# Override if you switch to a different image (e.g. some forks use 1000).
+haproxy_uid: 99
+haproxy_gid: 99
+
+# PostgreSQL logging: "file", "stdout", or "both"
+postgresql_log_destination: "stdout"
+
+# Debug mode (rebuild images on deploy)
+debug_mode: false
+
+# Host directories
+postgresql_dir: /opt/postgresql
+postgresql_root_dir: "{{ postgresql_dir }}/pgroot"
+postgresql_log_dir: "{{ postgresql_dir }}/pg_log"
+
+etcd_dir: /opt/etcd
+etcd_data_dir: "{{ etcd_dir }}/data"
+patroni_dir: /opt/patroni
+certs_dir: "{{ patroni_dir }}/tls"
+
+# PgBouncer container UID/GID — edoburu/pgbouncer (Alpine) uses postgres:70.
+# Override if you switch to a different image (e.g. bitnami uses 1001).
+pgbouncer_uid: 70
+pgbouncer_gid: 70
+patroni_ca_dir: "{{ certs_dir }}/ca"
+etcd_certs_dir: "{{ certs_dir }}/etcd"
+patroni_certs_dir: "{{ certs_dir }}/patroni"
+haproxy_certs_dir: "{{ certs_dir }}/haproxy"
+pgbouncer_certs_dir: "{{ certs_dir }}/pgbouncer"
+vip_manager_certs_dir: "{{ certs_dir }}/vip-manager"
+haproxy_dir: /opt/haproxy
+pgbouncer_dir: /opt/pgbouncer
+keepalived_dir: /opt/keepalived
+vip_manager_dir: /opt/vip-manager
+walg_dir: /opt/walg
+
+# Backup & WAL archiving
+patroni_backup_dir: "{{ postgresql_dir }}/backups"
+wal_archive_dir: "{{ postgresql_dir }}/wal_archive"
+
+# S3/MinIO storage (set s3_bucket to enable WAL-G + etcd snapshot upload)
+s3_bucket: ""
+s3_endpoint: ""
+s3_access_key: ""
+s3_secret_key: ""
+s3_region: "us-east-1"
+s3_force_path_style: "true"
+
+walg_retention: 7
+walg_compression: "lz4"
+
+# WAL-G backup schedule — systemd OnCalendar expression (see `man
+# systemd.time`). Replaces the in-container sleep loop. Examples:
+#   "*-*-* 02:00:00"        daily at 02:00 (default)
+#   "Sun *-*-* 03:00:00"    weekly Sunday 03:00
+#   "00,12:00:00"           every 12 hours on the hour
+# Set to an empty string to disable scheduled backups (on-demand
+# `patroni_action: backup` still works).
+walg_schedule: "*-*-* 02:00:00"
+
+# Dedicated PostgreSQL role used by WAL-G for backup-push (calls
+# pg_backup_start / pg_backup_stop, which require REPLICATION). LOGIN +
+# REPLICATION only — no superuser, no read access to user data. Avoids
+# putting the postgres superuser password in walg.env.
+walg_auth_user: "walg"
+walg_auth_password: ""
+
+# WAL-G (PostgreSQL WAL archiving + base backups to S3). Defaults to
+# enabled, but only takes effect when S3 is configured (s3_bucket set).
+# Set to false in inventory to keep S3 for etcd-snapshot uploads only
+# while skipping WAL-G entirely (no walg.env, no walg-init container,
+# no walg-cron timer, no postgres archive_command).
+walg_enabled: true
+
+# etcd snapshots — driven by a systemd timer (no cron dependency; FCOS
+# doesn't ship crond). `etcd_snapshot_schedule` is a systemd OnCalendar
+# expression; see `man systemd.time` (section "CALENDAR EVENTS"). Examples:
+#   "00,06,12,18:00:00"     every 6h on the hour (default)
+#   "*-*-* 02:00:00"        daily at 02:00
+#   "Sun *-*-* 03:00:00"    weekly Sunday 03:00
+#   "*:0/15"                every 15 minutes
+# Set to an empty string to disable scheduled snapshots entirely.
+etcd_snapshot_schedule: "00,06,12,18:00:00"
+etcd_snapshot_dir: "{{ etcd_dir }}/snapshots"
+etcd_snapshot_retain: 7
+
+# PostgreSQL memory (auto-calculated if empty)
+pg_shared_buffers: ""
+pg_effective_cache: ""
+pg_work_mem: ""
+pg_maint_mem: ""
+
+# PostgreSQL extensions to preload + CREATE EXTENSION on each managed DB.
+#
+#   - pg_stat_statements — query telemetry; always bundled with Postgres core.
+#   - pgaudit            — session/object audit log; ONLY available if the
+#                          `patroni_image` bundles libpgaudit.so (e.g.
+#                          ghcr.io/zalando/spilo-* has it; generic Postgres
+#                          images don't). Adding it to a non-pgaudit image
+#                          makes postmaster fail with:
+#                             FATAL: could not access file "pgaudit":
+#                             No such file or directory
+#     Override `patroni_image` to one that bundles pgaudit before listing it.
+#   - Others (postgis, timescaledb, pg_trgm, ...) follow the same rule —
+#     the image must bundle the .so file.
+patroni_extensions:
+  - pg_stat_statements
+
+# Databases and users to create post-init. Each DB gets all listed extensions applied.
+# Example:
+#   patroni_databases:
+#     - name: app_main
+#       owner: app_main
+#       users:
+#         - name: app_main
+#           password: "{{ vault_app_main_password }}"
+#           roles: [LOGIN, CREATEDB]
+#         - name: app_main_ro
+#           password: "{{ vault_app_main_ro_password }}"
+#           roles: [LOGIN]
+#           grants:
+#             - { privs: "CONNECT", on: "database" }
+#             - { privs: "SELECT", on: "all-tables" }
+patroni_databases: []
+
+# Monitoring — postgres_exporter (optional)
+postgres_exporter_enabled: false
+postgres_exporter_image: "prometheuscommunity/postgres-exporter:v0.19.1"
+postgres_exporter_port: 9187
+# Optional custom queries.yaml content — rendered verbatim into the
+# exporter's queries file when non-empty. Empty (default) ships only the
+# exporter's built-in collectors.
+postgres_exporter_custom_queries: ""
+
+# TLS certificate validity (days)
+tls_cert_days: 3650
+
+# Key algorithm: ECC (ECDSA) by default — sha384 digest pairs with secp384r1.
+# Set tls_key_type: RSA with tls_key_size: 4096 to fall back to RSA.
+tls_key_type: ECC
+tls_key_curve: secp384r1
+tls_key_size: 4096
+tls_signature_digest: sha384
+
+# Renew_certs subset selector — list of cert names to inspect/regenerate
+# (e.g. ['patroni', 'haproxy', 'pgbouncer']). Empty (default) skips the
+# inspection loop; pass via `-e` for a targeted renew.
+patroni_certs_to_inspect: []
+
+# Local artifacts (on the Ansible controller)
+# artifacts_dir is set by playbooks/patroni/_setup.yml on localhost only,
+# because add_host nodes have inventory_file == None.
+patroni_credentials_dir: "{{ hostvars['localhost'].artifacts_dir }}/patroni"
+patroni_credentials_file: "{{ patroni_credentials_dir }}/postgres.password"
+pgbouncer_credentials_file: "{{ patroni_credentials_dir }}/pgbouncer.password"
+pgbouncer_stats_credentials_file: "{{ patroni_credentials_dir }}/pgbouncer_stats.password"
+walg_credentials_file: "{{ patroni_credentials_dir }}/walg.password"
+patroni_local_certs_dir: "{{ patroni_credentials_dir }}/certs"
+
+pgbouncer_pool_mode: "session"
+# Comma-separated list of database users allowed to run all commands on the
+# pgbouncer admin console. Must be present in userlist.txt (admin console
+# does NOT use auth_query). Default: the dedicated `pgbouncer` auth_user.
+pgbouncer_admin_users: "pgbouncer"
+# Comma-separated list of users allowed to run read-only SHOW commands on
+# the pgbouncer admin console. Same constraint as admin_users — must be in
+# userlist.txt. Default: the dedicated `pgbouncer_stats` user, separate
+# from the auth_user so monitoring credentials can rotate independently
+# and a SHOW-only credential leak doesn't expose pg_shadow access.
+pgbouncer_stats_users: "pgbouncer_stats"
+pgbouncer_default_pool_size: 20

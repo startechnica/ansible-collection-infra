@@ -1,0 +1,67 @@
+---
+# Set SELinux to permissive on RedHat-family hosts (RHEL, Rocky, Alma,
+# CentOS Stream, Fedora, FCOS, RHCOS).
+#
+# Why: the cluster roles (mongodb, patroni) bind container ports to host
+# IPs, mount data dirs, run as non-root inside containers, and rely on
+# inter-node TCP. The shipped targeted policy is conservative and
+# regularly produces AVC denials for these patterns. Enforcing requires
+# per-deployment policy tuning that is out of scope for this collection.
+#
+# Permissive (not disabled): kernel still labels objects, AVC denials
+# still hit the audit log, but nothing is blocked. Easy to switch back
+# (`setenforce 1`) for a forensic pass if anything looks suspicious.
+#
+# New FCOS provisions get this via fcos.bu.j2 at first boot. This task
+# brings existing hosts (and non-FCOS RedHat-family hosts) up to date.
+
+- name: Probe current SELinux mode
+  ansible.builtin.command: getenforce
+  register: _selinux_current
+  changed_when: false
+  failed_when: false
+
+- name: Set SELinux to permissive (runtime)
+  ansible.builtin.command: setenforce 0
+  changed_when: true
+  when: _selinux_current.stdout | default('') == 'Enforcing'
+
+- name: Persist SELinux=permissive in /etc/selinux/config
+  ansible.builtin.lineinfile:
+    path: /etc/selinux/config
+    regexp: '^SELINUX='
+    line: 'SELINUX=permissive'
+    state: present
+    create: false
+  register: _selinux_persisted
+  failed_when: false  # /etc/selinux/config may be absent on some minimal images
+
+- name: Re-probe SELinux mode after setenforce
+  ansible.builtin.command: getenforce
+  register: _selinux_after
+  changed_when: false
+  failed_when: false
+
+# Verifying the post-state catches the silent-failure case where
+# `setenforce 0` exits 0 but doesn't actually change the mode (locked
+# config, custom kernel, etc.). Acceptable post-states are Permissive,
+# Disabled, or empty (no SELinux on this host) — anything else means our
+# attempted switch didn't land. Doubles as the SELinux state report
+# (success_msg). The previous standalone debug printing the same info is
+# gone; `quiet:` is tied to the global `debug` flag so the output stays
+# opt-in.
+- name: Assert SELinux is no longer enforcing
+  ansible.builtin.assert:
+    that:
+      - _selinux_after.stdout | default('') in ['Permissive', 'Disabled', '']
+    fail_msg: >-
+      Expected SELinux to be Permissive (or Disabled) after this task,
+      got '{{ _selinux_after.stdout | default('?') }}'. setenforce 0 may
+      have failed silently — check `dmesg` / `audit.log` for relevant
+      errors, or whether SELinux is locked at the boot-arg level.
+    success_msg:
+      - >-
+        SELinux mode: {{ _selinux_after.stdout | default('unknown') }}
+        {%- if _selinux_current.stdout | default('') == 'Enforcing' %} (was Enforcing, switched at runtime){%- endif %}.
+      - >-
+        Persisted in /etc/selinux/config: {{ 'yes' if not (_selinux_persisted is failed) else 'no (file absent)' }}.

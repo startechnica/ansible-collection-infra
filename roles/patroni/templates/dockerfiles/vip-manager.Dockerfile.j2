@@ -1,0 +1,12 @@
+FROM alpine:3.23
+
+RUN apk add --no-cache iproute2 curl \
+    && curl -fsSL -o /tmp/vip-manager.tar.gz \
+        https://github.com/cybertec-postgresql/vip-manager/releases/download/v{{ vip_manager_version }}/vip-manager_{{ vip_manager_version }}_Linux_{{ vip_manager_arch }}.tar.gz \
+    && tar -xzf /tmp/vip-manager.tar.gz --strip-components=1 -C /usr/local/bin/ \
+    && rm -f /tmp/vip-manager.tar.gz /usr/local/bin/LICENSE \
+        /usr/local/bin/README.md /usr/local/bin/vip-manager.yml \
+    && chmod +x /usr/local/bin/vip-manager
+
+ENTRYPOINT ["/usr/local/bin/vip-manager"]
+CMD ["--config", "/etc/default/vip-manager.yml"]

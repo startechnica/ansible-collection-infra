@@ -1,0 +1,51 @@
+---
+# Publish mongodb_services as a host fact (per cluster type — sharded or
+# replicaset), then register each port against every mongodb_nodes member
+# in NetBox. Delegated to localhost; runs once from a single host. Other
+# unrelated NetBox service entries are untouched.
+
+- name: Set mongodb_services output fact (sharded)
+  ansible.builtin.set_fact:
+    mongodb_services:
+      - { name: mongos, port: "{{ mongodb_mongos_node_port | int }}", protocol: tcp, description: "MongoDB query router" }
+      - { name: mongod, port: "{{ mongodb_mongod_node_port | int }}", protocol: tcp, description: "MongoDB shard server" }
+      - { name: configsvr, port: "{{ mongodb_configsvr_node_port | int }}", protocol: tcp, description: "MongoDB config server" }
+      - { name: mongodb-exporter, port: "{{ mongodb_exporter_port | int }}", protocol: tcp, description: "Prometheus MongoDB exporter" }
+  when: _is_sharded | bool
+
+- name: Set mongodb_services output fact (replicaset)
+  ansible.builtin.set_fact:
+    mongodb_services:
+      - { name: mongod, port: "{{ mongodb_mongod_node_port | int }}", protocol: tcp, description: "MongoDB replica set member" }
+      - { name: mongodb-exporter, port: "{{ mongodb_exporter_port | int }}", protocol: tcp, description: "Prometheus MongoDB exporter" }
+  when: not (_is_sharded | bool)
+
+- name: Register MongoDB services in NetBox
+  netbox.netbox.netbox_service:
+    netbox_url: "{{ netbox_connect.url }}"
+    netbox_token: "{{ netbox_connect.token }}"
+    validate_certs: "{{ netbox_connect.validate_certs | default(false) }}"
+    state: present
+    data:
+      virtual_machine: "{{ item.0 }}"
+      name: "{{ item.1.name }}"
+      ports:
+        - "{{ item.1.port | int }}"
+      protocol: "{{ item.1.protocol | default('tcp') }}"
+      description: "{{ item.1.description | default(omit) }}"
+      ipaddresses: "{{ _svc_ips if _svc_ips else omit }}"
+  vars:
+    _svc_ips: >-
+      {{ hostvars['localhost'].instances | default([])
+         | selectattr('name', 'equalto', item.0)
+         | selectattr('ipv4', 'defined')
+         | map(attribute='ipv4') | list }}
+  delegate_to: localhost
+  become: false
+  run_once: true
+  loop: "{{ groups['mongodb_nodes'] | product(mongodb_services) | list }}"
+  loop_control:
+    label: "{{ item.0 }}: {{ item.1.name }}:{{ item.1.port }}"
+  when:
+    - netbox_enabled | default(false) | bool
+    - netbox_register_enabled | default(true) | bool

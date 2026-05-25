@@ -1,0 +1,21 @@
+---
+# keepalived — podman path. Build local image + render Quadlet.
+# Caller (podman/deploy.yml) gates on `patroni_vip_enabled and not use_vip_manager`.
+
+- name: Build keepalived image (VRRP fallback, podman)
+  containers.podman.podman_image:
+    name: "localhost/keepalived"
+    tag: "latest"
+    path: "{{ keepalived_dir }}"
+    build:
+      format: oci
+      force_rm: true
+
+- name: Render keepalived Quadlet
+  ansible.builtin.template:
+    src: quadlets/keepalived.container.j2
+    dest: /etc/containers/systemd/keepalived.container
+    owner: root
+    group: root
+    mode: "0644"
+  register: _q_keepalived

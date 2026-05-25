@@ -1,0 +1,255 @@
+# Managed by Ansible
+---
+services:
+  # ── etcd ──────────────────────────────────────────────────────────
+  etcd:
+    image: {{ etcd_image }}
+    container_name: etcd
+    restart: unless-stopped
+    network_mode: host
+    user: "{{ etcd_uid }}:{{ etcd_gid }}"
+    command:
+      - etcd
+      - --name=etcd-{{ node_ip }}
+      - --data-dir=/etcd-data
+      # Client TLS
+      - --listen-client-urls=https://0.0.0.0:{{ etcd_client_port }}
+      - --advertise-client-urls=https://{{ node_ip }}:{{ etcd_client_port }}
+      - --cert-file=/etc/certs/etcd-server.crt
+      - --key-file=/etc/certs/etcd-server.key
+      - --trusted-ca-file=/etc/certs/ca.crt
+      - --client-cert-auth=true
+      # Peer TLS
+      - --listen-peer-urls=https://0.0.0.0:{{ etcd_peer_port }}
+      - --initial-advertise-peer-urls=https://{{ node_ip }}:{{ etcd_peer_port }}
+      - --peer-cert-file=/etc/certs/etcd-peer.crt
+      - --peer-key-file=/etc/certs/etcd-peer.key
+      - --peer-trusted-ca-file=/etc/certs/ca.crt
+      - --peer-client-cert-auth=true
+      # Cluster
+      - --initial-cluster={% for ip in node_ips %}etcd-{{ ip }}=https://{{ ip }}:{{ etcd_peer_port }}{% if not loop.last %},{% endif %}{% endfor %}
+
+      - --initial-cluster-state={{ etcd_cluster_state }}
+      - --initial-cluster-token={{ patroni_scope }}
+    volumes:
+      - {{ etcd_data_dir }}:/etcd-data:Z
+      - {{ etcd_certs_dir }}:/etc/certs:ro,Z
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "3"
+        tag: "etcd"
+
+{% if walg_enabled %}
+  # ── WAL-G init (copies wal-g binary to shared volume) ────────────
+  walg-init:
+    image: {{ walg_image }}
+    container_name: walg-init
+    restart: "no"
+    network_mode: host
+    entrypoint:
+      - /bin/sh
+      - -c
+      - "cp /usr/local/bin/wal-g /opt/walg/wal-g && chmod 755 /opt/walg/wal-g"
+    volumes:
+      - {{ walg_dir }}/bin:/opt/walg:z
+
+{% endif %}
+  # ── Patroni (PostgreSQL + Patroni) ───────────────────────────────
+  patroni:
+    image: {{ patroni_image }}
+    container_name: patroni
+    restart: unless-stopped
+    network_mode: host
+    user: "{{ patroni_uid }}:{{ patroni_gid }}"
+    environment:
+      PATRONI_CONFIG: /etc/patroni/patroni.yml
+      PATRONI_POSTGRESQL_DATA_DIR: /var/lib/postgresql/pg_data
+      PATRONI_POSTGRESQL_CONFIG_DIR: /var/lib/postgresql/pg_data
+{% if walg_enabled %}
+    env_file:
+      - {{ walg_dir }}/walg.env
+{% endif %}
+    volumes:
+      - {{ postgresql_root_dir }}:/var/lib/postgresql:Z
+      - {{ postgresql_log_dir }}:/var/log/postgresql:Z
+      - {{ patroni_certs_dir }}:/etc/certs:ro,Z
+      - {{ patroni_dir }}/patroni.yml:/etc/patroni/patroni.yml:ro,Z
+      - {{ wal_archive_dir }}:/wal_archive:Z
+      - {{ patroni_backup_dir }}:/var/lib/postgresql/backups:Z
+{% if walg_enabled %}
+      - {{ walg_dir }}/bin:/opt/walg:ro,z
+{% endif %}
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+      nproc:
+        soft: 65536
+        hard: 65536
+    depends_on:
+      - etcd
+{% if walg_enabled %}
+      walg-init:
+        condition: service_completed_successfully
+{% endif %}
+    healthcheck:
+      # /readiness returns 200 only when patroni AND postgres are running.
+      # /health is too lenient — returns 200 even with postgres dead (bind
+      # conflict, OOM, etc.) because the patroni HTTP server itself is fine.
+      # -k tolerates cert-CN/127.0.0.1 mismatch.
+      test: ["CMD-SHELL", "curl -fsk --max-time 3 https://127.0.0.1:{{ patroni_api_port }}/readiness || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "5"
+        tag: "patroni"
+
+  # ── HAProxy ───────────────────────────────────────────────────────
+  haproxy:
+    image: {{ haproxy_image }}
+    container_name: haproxy
+    restart: unless-stopped
+    network_mode: host
+    user: "99:99"
+    volumes:
+      - {{ haproxy_dir }}/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro,Z
+      - {{ haproxy_certs_dir }}:/etc/certs:ro,z
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    healthcheck:
+      # Stats endpoint always returns 200 once haproxy has parsed its config
+      # and is accepting connections — proves both the process is up and
+      # the config didn't reject at parse time.
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:{{ haproxy_stats_port }}/ || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "3"
+        tag: "haproxy"
+
+  # ── PgBouncer ─────────────────────────────────────────────────────
+  pgbouncer:
+    image: {{ pgbouncer_image }}
+    container_name: pgbouncer
+    restart: unless-stopped
+    network_mode: host
+    user: "{{ pgbouncer_uid }}:{{ pgbouncer_gid }}"
+    volumes:
+      - {{ pgbouncer_dir }}/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro,Z
+      - {{ pgbouncer_dir }}/userlist.txt:/etc/pgbouncer/userlist.txt:ro,Z
+      - {{ pgbouncer_certs_dir }}:/etc/certs:ro,Z
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    depends_on:
+      - patroni
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "3"
+        tag: "pgbouncer"
+
+{% if patroni_vip_enabled %}
+{% if use_vip_manager %}
+  # ── vip-manager (Patroni-aware VIP via etcd) ─────────────────────
+  vip-manager:
+    build:
+      context: {{ vip_manager_dir }}
+    image: vip-manager:v{{ vip_manager_version }}
+    container_name: vip-manager
+    restart: unless-stopped
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    volumes:
+      - {{ vip_manager_dir }}/vip-manager.yml:/etc/default/vip-manager.yml:ro,Z
+      - {{ vip_manager_certs_dir }}:/etc/certs:ro,Z
+    depends_on:
+      - etcd
+    healthcheck:
+      # vip-manager has no health endpoint of its own. Best proxy for
+      # liveness is "can it still talk to etcd?" — without etcd it can't
+      # decide who holds the leader key, so the VIP can't move correctly.
+      # Uses vip-manager's own client cert (already mounted).
+      test: ["CMD-SHELL", "curl -sf --cert /etc/certs/vip-manager.crt --key /etc/certs/vip-manager.key --cacert /etc/certs/ca.crt https://127.0.0.1:{{ etcd_client_port }}/health -o /dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "3"
+        tag: "vip-manager"
+{% else %}
+  # ── Keepalived (VRRP-based VIP) ──────────────────────────────────
+  keepalived:
+    build:
+      context: {{ keepalived_dir }}
+    image: keepalived:latest
+    container_name: keepalived
+    restart: unless-stopped
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+      - NET_BROADCAST
+      - NET_RAW
+    volumes:
+      - {{ keepalived_dir }}/keepalived.conf:/etc/keepalived/keepalived.conf:ro,Z
+      - {{ haproxy_certs_dir }}:/etc/certs:ro,z
+    depends_on:
+      - haproxy
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "3"
+        tag: "keepalived"
+{% endif %}
+{% endif %}
+
+{% if postgres_exporter_enabled | bool %}
+  # ── postgres_exporter (Prometheus metrics) ───────────────────────
+  postgres-exporter:
+    image: {{ postgres_exporter_image }}
+    container_name: postgres-exporter
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      DATA_SOURCE_NAME: "postgresql://postgres:{{ postgresql_postgres_password }}@127.0.0.1:{{ postgresql_port }}/postgres?sslmode=disable"
+    depends_on:
+      - patroni
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+        tag: "postgres-exporter"
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+{% endif %}
+
+# walg-cron service removed — scheduled backups now run via host-level
+# systemd timer (walg-cron.timer → walg-cron.service → walg-backup.sh,
+# rendered by tasks/shared/walg.yml). On-demand backups via
+# `patroni_action: backup` continue to exec into the patroni container.

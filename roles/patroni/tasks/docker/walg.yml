@@ -1,0 +1,12 @@
+---
+# Build the local wal-g image (docker). Counterpart to vip_manager.yml.
+# Caller (docker/deploy.yml) gates on `walg_enabled`.
+
+- name: Build wal-g image (docker)
+  community.docker.docker_image:
+    name: "localhost/wal-g:pg-{{ walg_version }}"
+    build:
+      path: "{{ walg_dir }}"
+      pull: false
+    source: build
+    state: present

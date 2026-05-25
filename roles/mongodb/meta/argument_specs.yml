@@ -1,0 +1,249 @@
+---
+argument_specs:
+  main:
+    short_description: Deploy and manage a Docker-based MongoDB cluster
+    description:
+      - Installs a sharded or replicaset MongoDB cluster with TLS (X.509 auth),
+        Prometheus exporter, backups (local + optional S3), and day-2 ops
+        (rolling restart, upgrade, PITR, add/remove node).
+      - Dispatches on the `mongodb_action` variable; default is full provisioning.
+    options:
+      debug:
+        type: bool
+        default: false
+        description: Verbose / introspection output. Defensive `| bool` filter still used in tasks because CLI `-e debug=true` arrives as a string.
+      mongodb_enabled:
+        type: bool
+        default: true
+        description: Master on/off switch. When false, the role is a no-op.
+
+      mongodb_action:
+        type: str
+        default: provision
+        choices: [provision, init, backup, restore, status, renew-certs, upgrade, uninstall]
+        description: Which sub-flow to run. Most day-2 playbooks override this.
+
+      mongodb_cluster_type:
+        type: str
+        default: sharded
+        choices: [sharded, replicaset]
+        description: Cluster topology. `sharded` deploys configsvr + mongos + shard; `replicaset` deploys a single replica set.
+
+      mongodb_version:
+        type: str
+        default: "8.2.6"
+        description: MongoDB Docker image tag to deploy.
+
+      mongodb_unsupported_kernel:
+        type: str
+        default: "6.19"
+        description:
+          - Kernel version string at-or-above which MongoDB is known to be
+            incompatible. Preflight refuses to install when the host kernel
+            is >= this value.
+          - Bump only after verifying a later MongoDB release supports your
+            kernel (see https://jira.mongodb.org/browse/SERVER-121912).
+
+      mongodb_skip_kernel_check:
+        type: bool
+        default: false
+        description:
+          - Bypass the kernel-compatibility check. Use only when you have
+            verified MongoDB runs on your kernel — running with this set on
+            an actually-incompatible kernel causes containers to crash in a
+            restart loop.
+
+      mongodb_image_registry:
+        type: str
+        default: docker.io
+      mongodb_image_repository:
+        type: str
+        default: mongo
+      mongodb_image_tag:
+        type: str
+        description: Defaults to `mongodb_version`. Override to pin.
+
+      # ── System user ──
+      mongodb_uid:
+        type: int
+        default: 999
+      mongodb_gid:
+        type: int
+        default: 999
+
+      mongodb_root_dir:
+        type: str
+        default: /opt/mongodb
+        description: Host directory for mongod data, config, and compose files.
+
+      # ── Networking + ports ──
+      mongodb_network:
+        type: str
+        default: mongodb-cluster
+        description: >-
+          Cluster identifier. Used as the docker network name on the
+          docker-compose path (podman/Quadlet runs on Network=host with
+          no podman network) and as the S3 path-prefix segment for
+          backups, so distinct clusters sharing a bucket don't collide.
+      mongodb_mongos_node_port:
+        type: int
+        default: 27017
+      mongodb_configsvr_node_port:
+        type: int
+        default: 27018
+      mongodb_mongod_node_port:
+        type: int
+        default: 27019
+
+      # ── Resources (MB) ──
+      mongod_mem_limit_mb:
+        type: int
+        default: 2048
+      configsvr_mem_limit_mb:
+        type: int
+        default: 512
+      mongos_mem_limit_mb:
+        type: int
+        default: 512
+
+      # ── TLS / PKI ──
+      ssl_days:
+        type: int
+        default: 365
+        description: Leaf certificate validity in days.
+      ssl_ca_days:
+        type: int
+        default: 3650
+        description: CA certificate validity in days.
+      tls_key_type:
+        type: str
+        default: ECC
+        choices: [ECC, RSA]
+      tls_key_curve:
+        type: str
+        default: secp256r1
+        description: |
+          ECC curve. Only used when `tls_key_type: ECC`.
+      tls_key_size:
+        type: int
+        default: 4096
+        description: |
+          RSA key size in bits. Only used when `tls_key_type: RSA`.
+
+      mongodb_pki_o:
+        type: str
+        default: MongoDB
+      mongodb_pki_member_ou:
+        type: str
+        default: MongoDBCluster
+      mongodb_pki_client_ou:
+        type: str
+        default: MongoDBClient
+      mongodb_pki_ca_cn:
+        type: str
+        default: MongoDB-CA
+      mongodb_healthcheck_cn:
+        type: str
+        default: mongodb-healthcheck
+      mongodb_exporter_cn:
+        type: str
+        default: mongodb-exporter
+
+      mongod_tls_mode:
+        type: str
+        default: requireTLS
+        choices: [requireTLS, preferTLS, allowTLS, disabled]
+      configsvr_tls_mode:
+        type: str
+        default: requireTLS
+        choices: [requireTLS, preferTLS, allowTLS, disabled]
+      mongos_tls_mode:
+        type: str
+        default: preferTLS
+        choices: [requireTLS, preferTLS, allowTLS, disabled]
+
+      # ── Replica set names ──
+      mongodb_shard_replset:
+        type: str
+        default: rs0
+      mongodb_config_replset:
+        type: str
+        default: configReplSet
+
+      # ── Admin user ──
+      mongodb_admin_user:
+        type: str
+        default: admin
+      mongodb_admin_password:
+        type: str
+        default: ""
+        description: >-
+          When empty, the role auto-generates a 64-char alphanumeric password
+          on first run and stores it at `<artifacts_dir>/mongodb/admin.password`.
+          Subsequent runs reuse that file.
+
+      # ── Databases/users ──
+      mongodb_databases:
+        type: list
+        elements: dict
+        default: []
+        description: >-
+          Application databases to create post-init. Each entry creates the DB
+          and its listed users. See README for schema.
+
+      # ── Exporter ──
+      mongodb_exporter_enabled:
+        type: bool
+        default: true
+      mongodb_exporter_image:
+        type: str
+        default: "percona/mongodb_exporter:0.43.1"
+      mongodb_exporter_port:
+        type: int
+        default: 9216
+
+      # ── Backup ──
+      mongodb_backup_dir:
+        type: str
+        default: /opt/mongodb/backups
+      mongodb_backup_retain_days:
+        type: int
+        default: 7
+
+      # ── S3 (shared with patroni) ──
+      s3_endpoint:
+        type: str
+        default: ""
+      s3_bucket:
+        type: str
+        default: ""
+        description: Set to enable S3 upload of backups. Empty disables.
+      s3_access_key:
+        type: str
+        default: ""
+      s3_secret_key:
+        type: str
+        default: ""
+      s3_region:
+        type: str
+        default: us-east-1
+      s3_prefix:
+        type: str
+        description: Path prefix inside the bucket. Defaults to `mongodb/<mongodb_network>`.
+      s3_retain_days:
+        type: str
+        description: Retention for S3 objects. Defaults to `mongodb_backup_retain_days`. Set `0` to disable prune.
+      s3_client_image:
+        type: str
+        default: "minio/mc:latest"
+
+      # ── Uninstall safety ──
+      mongodb_destroy_prune:
+        type: bool
+        default: false
+        description: When uninstalling, set true to also delete data directories.
+
+      mongodb_skip_confirm:
+        type: bool
+        default: false
+        description: When uninstalling, skip the interactive prompt.

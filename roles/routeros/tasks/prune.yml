@@ -1,0 +1,62 @@
+---
+# Remove entries under routeros_address_list that are no longer in our
+# desired set (_routeros_entries). Scope is strictly limited to our list —
+# other address-lists on the MikroTik are untouched. Only runs when
+# routeros_prune_stale is true.
+
+# Server-side filter via `extended_query` (structured form). Avoids the
+# fragility of the string-based `query:` parameter — no whitespace-around-
+# operator gotcha, no KeyError when sibling entries lack the `list` field.
+# Ref: https://docs.ansible.com/ansible/latest/collections/community/routeros/api_module.html
+- name: "Fetch MikroTik entries from address-list {{ routeros_address_list }}"
+  community.routeros.api:
+    hostname: "{{ routeros_host }}"
+    username: "{{ routeros_user }}"
+    password: "{{ routeros_password }}"
+    port: "{{ routeros_port if routeros_port | int > 0 else omit }}"
+    tls: "{{ routeros_tls | bool }}"
+    validate_certs: "{{ routeros_validate_certs | bool }}"
+    path: ip firewall address-list
+    extended_query:
+      attributes:
+        - .id
+        - address
+        - list
+      where:
+        - attribute: list
+          is: "=="
+          value: "{{ routeros_address_list }}"
+  register: _current_entries
+  delegate_to: localhost
+  run_once: true
+
+- name: "Compute stale entries under address-list {{ routeros_address_list }}"
+  ansible.builtin.set_fact:
+    _routeros_stale: >-
+      {{ _current_entries.msg | default([])
+         | rejectattr('address', 'in', _routeros_entries | map(attribute='address') | list)
+         | list }}
+
+- name: "Report stale entries — {{ 'address-list=' ~ routeros_address_list ~ ', count=' ~ (_routeros_stale | length) }}"
+  ansible.builtin.debug:
+    msg: "{{ item.address }}  .id={{ item['.id'] }}"
+  loop: "{{ _routeros_stale }}"
+  loop_control:
+    label: "{{ item.address }}"
+
+- name: "Remove stale entries from the MikroTik from address-list {{ routeros_address_list }}"
+  community.routeros.api:
+    hostname: "{{ routeros_host }}"
+    username: "{{ routeros_user }}"
+    password: "{{ routeros_password }}"
+    port: "{{ routeros_port if routeros_port | int > 0 else omit }}"
+    tls: "{{ routeros_tls | bool }}"
+    validate_certs: "{{ routeros_validate_certs | bool }}"
+    path: ip firewall address-list
+    remove: "{{ item['.id'] }}"
+  delegate_to: localhost
+  run_once: true
+  loop: "{{ _routeros_stale }}"
+  loop_control:
+    label: "{{ item.address }}"
+  when: _routeros_stale | length > 0

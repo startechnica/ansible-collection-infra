@@ -1,0 +1,122 @@
+---
+# ─── Patroni: Rolling Restart ───────────────────────────────────────────────
+#
+# Restarts each Patroni+Postgres container one node at a time. Uses Patroni's
+# `patronictl switchover` to move leadership off the current primary before
+# restarting it, so clients never see an outage.
+#
+# Usage:
+#   ansible-playbook playbooks/patroni/restart.yml -i inventories/<your-inventory>.yml
+#
+# Optional: -e restart_target=patroni|etcd|haproxy|pgbouncer|vip-manager|all
+#           (default: patroni only — restart the DB layer, not the DCS)
+
+- name: Setup patroni hosts
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - ansible.builtin.include_tasks: _setup.yml
+
+- name: Rolling restart of Patroni stack
+  hosts: patroni_nodes
+  become: true
+  gather_facts: true
+  serial: 1
+  pre_tasks:
+    - ansible.builtin.include_role:
+        name: common
+        tasks_from: inherit_localhost_vars
+  tasks:
+    - name: Set restart target
+      ansible.builtin.set_fact:
+        _targets: >-
+          {{ ['patroni', 'etcd', 'haproxy', 'pgbouncer', 'vip-manager']
+             if (restart_target | default('patroni')) == 'all'
+             else [restart_target | default('patroni')] }}
+
+    - name: Find current Patroni leader (before this node restarts)
+      community.docker.docker_container_exec:
+        container: patroni
+        command: >
+          curl -sk --cert /etc/certs/patroni.crt --key /etc/certs/patroni.key
+          --cacert /etc/certs/ca.crt
+          https://127.0.0.1:{{ patroni_api_port }}/cluster
+      register: _cluster_state
+      changed_when: false
+      failed_when: false
+
+    - name: Identify leader
+      ansible.builtin.set_fact:
+        _current_leader: >-
+          {{ ((_cluster_state.stdout | from_json).members
+              | selectattr('role', 'equalto', 'leader')
+              | map(attribute='name') | first) | default('') }}
+
+    - name: Switchover off this node if it is the leader
+      community.docker.docker_container_exec:
+        container: patroni
+        command: >
+          patronictl -c /etc/patroni/patroni.yml switchover --force
+          --leader {{ inventory_hostname_short }}
+      when:
+        - _current_leader == inventory_hostname_short
+        - "'patroni' in _targets"
+      register: _switchover
+      changed_when: "'switched over' in (_switchover.stdout | default(''))"
+
+    - name: Wait for leadership to move elsewhere
+      community.docker.docker_container_exec:
+        container: patroni
+        command: >
+          curl -sk --cert /etc/certs/patroni.crt --key /etc/certs/patroni.key
+          --cacert /etc/certs/ca.crt
+          https://127.0.0.1:{{ patroni_api_port }}/cluster
+      register: _post_switchover
+      until: >
+        ((_post_switchover.stdout | from_json).members
+         | selectattr('role', 'equalto', 'leader')
+         | map(attribute='name') | first | default('')) != inventory_hostname_short
+      retries: 20
+      delay: 3
+      changed_when: false
+      when:
+        - _current_leader == inventory_hostname_short
+        - "'patroni' in _targets"
+
+    - name: Restart target containers
+      community.docker.docker_container:
+        name: "{{ item }}"
+        state: started
+        restart: true
+      loop: "{{ _targets }}"
+      failed_when: false  # vip-manager/keepalived may not be present
+
+    - name: Wait for Patroni API to respond healthy on this node
+      community.docker.docker_container_exec:
+        container: patroni
+        command: >
+          curl -sfk --cert /etc/certs/patroni.crt --key /etc/certs/patroni.key
+          --cacert /etc/certs/ca.crt
+          https://127.0.0.1:{{ patroni_api_port }}/health
+      register: _health
+      until: _health.rc | default(1) == 0
+      retries: 30
+      delay: 5
+      changed_when: false
+      when: "'patroni' in _targets"
+
+    - name: Confirm cluster has a leader before moving on
+      community.docker.docker_container_exec:
+        container: patroni
+        command: >
+          curl -sk --cert /etc/certs/patroni.crt --key /etc/certs/patroni.key
+          --cacert /etc/certs/ca.crt
+          https://127.0.0.1:{{ patroni_api_port }}/cluster
+      register: _final_state
+      until: >
+        ((_final_state.stdout | from_json).members
+         | selectattr('role', 'equalto', 'leader')
+         | list | length) >= 1
+      retries: 20
+      delay: 3
+      changed_when: false

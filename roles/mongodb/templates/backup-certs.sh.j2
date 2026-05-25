@@ -1,0 +1,8 @@
+#!/bin/bash
+set -euo pipefail
+TS=$(date +"%Y%m%d_%H%M%S")
+for cn in {{ _member_certs | default(['mongodb-mongod', 'mongodb-configsvr', 'mongodb-mongos']) | join(' ') }}; do
+  for ext in key crt pem; do
+    [ -f "{{ mongodb_tls_dir }}/${cn}.${ext}" ] && cp "{{ mongodb_tls_dir }}/${cn}.${ext}" "{{ mongodb_tls_dir }}/${cn}.${ext}.bak.${TS}"
+  done
+done

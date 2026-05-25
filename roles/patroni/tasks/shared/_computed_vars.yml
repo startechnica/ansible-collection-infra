@@ -1,0 +1,40 @@
+---
+# Shared computed facts — set by main.yml during provision, and included
+# directly by every day-2 action task file so they work when invoked
+# standalone via `import_role: tasks_from: <action>`.
+# set_fact is idempotent so including this twice in a provision run is fine.
+
+- name: Set computed variables
+  ansible.builtin.set_fact:
+    node_ip: "{{ node_ip | default(ansible_host) }}"
+    node_name: "{{ inventory_hostname_short }}"
+    node_num: "{{ groups['patroni_nodes'].index(inventory_hostname) + 1 }}"
+    node_count: "{{ groups['patroni_nodes'] | length }}"
+    patroni_nodes: >-
+      {%- set nodes = [] -%}
+      {%- for h in groups['patroni_nodes'] -%}
+        {%- set node = {'ipv4': (hostvars[h].node_ip | default(hostvars[h].ansible_host)) | split('/') | first, 'name': h} -%}
+        {%- if hostvars[h].ansible_host_ipv6 is defined -%}
+          {%- set node = node | combine({'ipv6': hostvars[h].ansible_host_ipv6 | split('/') | first}) -%}
+        {%- endif -%}
+        {%- if hostvars[h].netbox_id is defined -%}
+          {%- set node = node | combine({'netbox_id': hostvars[h].netbox_id}) -%}
+        {%- endif -%}
+        {%- set _ = nodes.append(node) -%}
+      {%- endfor -%}
+      {{ nodes }}
+    node_ips: >-
+      {%- set ips = [] -%}
+      {%- for h in groups['patroni_nodes'] -%}
+        {%- set _ = ips.append(hostvars[h].node_ip | default(hostvars[h].ansible_host)) -%}
+      {%- endfor -%}
+      {{ ips }}
+    s3_enabled: "{{ s3_bucket | length > 0 }}"
+    # walg_enabled: user-facing toggle (defaults true), but only effective
+    # when S3 is configured. Set walg_enabled=false in inventory to keep
+    # S3 for etcd-snapshots only and skip WAL-G entirely.
+    walg_enabled: "{{ (s3_bucket | length > 0) and (walg_enabled | bool) }}"
+    patroni_vip_enabled: "{{ patroni_vip_address | length > 0 }}"
+    use_vip_manager: >-
+      {{ (patroni_vip_address | length > 0)
+         and (vip_manager == 'vip-manager') }}

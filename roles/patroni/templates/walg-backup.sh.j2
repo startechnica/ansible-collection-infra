@@ -1,0 +1,22 @@
+#!/bin/sh
+# {{ ansible_managed }}
+# Run a WAL-G base backup + retention sweep against the running patroni
+# container. Invoked by walg-cron.service (oneshot), scheduled by
+# walg-cron.timer. Mirrors the on-demand `patroni_action: backup` flow,
+# replacing the old in-container sleep loop.
+#
+# We exec inside the patroni container because that's where /opt/walg
+# is mounted, walg.env is attached as EnvironmentFile, and PGDATA lives
+# at /var/lib/postgresql/pg_data — same context the cluster's own
+# archive_command uses.
+
+set -eu
+
+ENGINE={{ container_engine | default('docker') }}
+RETAIN={{ walg_retention }}
+TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+echo "[$TS] WAL-G backup starting"
+$ENGINE exec patroni /opt/walg/wal-g backup-push /var/lib/postgresql/pg_data
+$ENGINE exec patroni /opt/walg/wal-g delete retain FULL "$RETAIN" --confirm
+echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] WAL-G backup + retention sweep done"

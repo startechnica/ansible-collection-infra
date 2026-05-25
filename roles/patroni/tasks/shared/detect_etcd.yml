@@ -1,0 +1,43 @@
+---
+- name: Check if local etcd data exists
+  ansible.builtin.stat:
+    path: "{{ etcd_data_dir }}/member"
+  register: etcd_local_data
+
+- name: Set etcd_cluster_state to existing (local data found)
+  ansible.builtin.set_fact:
+    etcd_cluster_state: "existing"
+  when: etcd_local_data.stat.exists
+
+- name: Probe remote etcd nodes for running cluster
+  ansible.builtin.command: >-
+    curl --silent --fail
+    --cacert {{ patroni_ca_dir }}/ca.crt
+    --cert {{ etcd_certs_dir }}/etcd-healthcheck.crt
+    --key {{ etcd_certs_dir }}/etcd-healthcheck.key
+    https://{{ item }}:{{ etcd_client_port }}/version
+  loop: "{{ node_ips }}"
+  loop_control:
+    label: "{{ item }}"
+  register: etcd_probe
+  changed_when: false
+  failed_when: false
+  when: not etcd_local_data.stat.exists
+
+- name: Set etcd_cluster_state to existing (remote etcd found)
+  ansible.builtin.set_fact:
+    etcd_cluster_state: "existing"
+  when:
+    - not etcd_local_data.stat.exists
+    - etcd_probe.results | selectattr('rc', 'equalto', 0) | list | length > 0
+
+- name: Set etcd_cluster_state to new (no etcd found)
+  ansible.builtin.set_fact:
+    etcd_cluster_state: "new"
+  when:
+    - not etcd_local_data.stat.exists
+    - etcd_probe.results | selectattr('rc', 'equalto', 0) | list | length == 0
+
+- name: Display detected etcd cluster state
+  ansible.builtin.debug:
+    msg: "etcd cluster state: {{ etcd_cluster_state }}"

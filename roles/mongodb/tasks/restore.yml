@@ -1,0 +1,35 @@
+---
+# Usage:
+#   --tags restore -e restore_path=/opt/mongodb/backups/mongodump_YYYYMMDD_HHMMSS
+#   --tags restore -e restore_path=... -e restore_drop=true
+#   --tags restore -e restore_path=... -e restore_db=mydb
+#   --tags restore -e restore_path=... -e restore_db=mydb -e restore_collection=col
+
+- name: Validate restore_path is specified
+  ansible.builtin.assert:
+    that:
+      - restore_path is defined
+      - restore_path | length > 0
+    fail_msg: "Specify backup path: -e restore_path=/opt/mongodb/backups/mongodump_YYYYMMDD_HHMMSS"
+    success_msg: "Restore source: {{ restore_path }}"
+  run_once: true
+
+- name: Run mongorestore
+  mongodb_restore:
+    image: "{{ mongodb_image }}"
+    container: mongodb-mongos
+    username: "{{ mongodb_admin_user }}"
+    password: "{{ mongodb_admin_password }}"
+    restore_path: "{{ restore_path }}"
+    uid: "{{ mongodb_uid }}"
+    gid: "{{ mongodb_gid }}"
+    drop: "{{ restore_drop | default(false) | bool }}"
+    db: "{{ restore_db | default('') }}"
+    collection: "{{ restore_collection | default('') }}"
+  register: _restore
+  run_once: true
+
+- name: Show restore result
+  ansible.builtin.debug:
+    msg: "{{ _restore.msg }}"
+  run_once: true

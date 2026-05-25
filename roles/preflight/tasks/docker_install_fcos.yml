@@ -1,0 +1,248 @@
+---
+# Verify (and if needed, install) Docker on Fedora CoreOS hosts.
+#
+# Happy path — Docker CE is layered onto FCOS at first boot by
+# `rpm-ostree-install-docker-ce.service` (defined in fcos.bu.j2). That unit
+# drops /etc/yum.repos.d/docker-ce.repo via curl, runs
+#   `rpm-ostree override remove moby-engine ... --install docker-ce ...`,
+# publishes guestinfo.startechnica.bootstrap_phase=docker-ce-done, touches a
+# stamp, and reboots. `docker.service` is pre-enabled in butane and starts
+# automatically on the post-install reboot.
+#
+# Recovery path — if the bootstrap service ran but didn't end up installing
+# docker (rpm-ostree network blip, repo down, transaction wedged), this role
+# falls back to running the install manually. The manual fallback only fires
+# AFTER bootstrap is definitively complete (success or failure), so we never
+# preempt an in-progress install.
+#
+# Completion signals (whichever fires first):
+#   * vmtools — guestinfo.startechnica.bootstrap_phase == ready
+#               (post-reboot success — startechnica-bootstrap-ready.service
+#                publishes this only after the docker-ce install reboot
+#                completes and docker.service is up. Crucially fires AFTER
+#                the reboot, not just-before like docker-ce-done, so we
+#                don't race wait_for_connection with the reboot disconnect.)
+#   * SSH    — systemctl is-active rpm-ostree-install-docker-ce.service
+#               returns 'inactive' / 'failed' / 'unknown'
+#               (failure: service exited non-zero;
+#                post-reboot: ConditionPathExists skipped it)
+#
+# Reference: https://docs.fedoraproject.org/en-US/fedora-coreos/docker-ce/
+
+# ── Phase 1: probe initial state ──
+
+- name: Probe docker.service state
+  ansible.builtin.command: systemctl is-active docker.service
+  register: _docker_active_initial
+  changed_when: false
+  failed_when: false
+
+# ── Phase 1b–3: recovery path (docker.service not yet up) ──
+# Three-level nesting mirrors the actual decision tree. Each block tightens
+# the predicate by one condition; the deepest block runs only on the unhappy-
+# path-of-the-unhappy-path:
+#
+#   docker not active               → outer block
+#     └── docker-ce not installed   → middle block (bootstrap in flight or failed)
+#           └── bootstrap settled
+#               but pkg still absent → inner block (manual install fallback)
+- name: "Recovery: docker.service not yet active"
+  when: _docker_active_initial.stdout != 'active'
+  block:
+    - name: Probe docker-ce package presence
+      ansible.builtin.command: rpm -q docker-ce
+      register: _docker_ce_pkg
+      changed_when: false
+      failed_when: false
+
+    - name: "Recovery: docker-ce package missing — wait for bootstrap"
+      when: _docker_ce_pkg.rc | default(0) != 0
+      block:
+        - name: Wait via vmtools for post-reboot bootstrap=ready
+          ansible.builtin.include_role:
+            name: common
+            tasks_from: wait_for_vm_bootstrap
+          vars:
+            vm_bootstrap_target_phase: ready
+            vm_bootstrap_retries: 120
+          ignore_errors: true
+
+        - name: Wait for SSH (handles bootstrap-triggered reboot)
+          ansible.builtin.wait_for_connection:
+            timeout: 300
+            sleep: 5
+
+        # After SSH is back, confirm the bootstrap service has actually
+        # settled. Catches the failure case where vmtools never published
+        # docker-ce-done and the include above timed out — the service
+        # should now be in a terminal state (failed, or post-reboot
+        # inactive because ConditionPathExists skipped it). Empty stdout
+        # means the unit isn't loaded at all (also terminal).
+        - name: Wait for rpm-ostree-install-docker-ce.service to settle
+          ansible.builtin.command: systemctl is-active rpm-ostree-install-docker-ce.service
+          register: _bootstrap_state
+          changed_when: false
+          failed_when: false
+          retries: 60
+          delay: 5
+          until: _bootstrap_state.stdout in ['inactive', 'failed', 'unknown', '']
+
+        - name: Re-probe docker-ce package after bootstrap settled
+          ansible.builtin.command: rpm -q docker-ce
+          register: _docker_ce_pkg_after
+          changed_when: false
+          failed_when: false
+
+        - name: "Recovery: bootstrap settled but docker-ce still absent — manual install"
+          when: _docker_ce_pkg_after.rc | default(1) != 0
+          block:
+            - name: Show why the manual install is firing
+              ansible.builtin.debug:
+                msg: >-
+                  Bootstrap settled (state='{{ _bootstrap_state.stdout | default('') }}')
+                  but docker-ce is not installed. Falling back to manual install.
+
+            - name: Download docker-ce.repo
+              ansible.builtin.get_url:
+                url: https://download.docker.com/linux/fedora/docker-ce.repo
+                dest: /etc/yum.repos.d/docker-ce.repo
+                owner: '0'
+                group: '0'
+                mode: '0644'
+
+            - name: rpm-ostree override remove moby-engine and install docker-ce
+              ansible.builtin.command: >-
+                rpm-ostree override remove moby-engine containerd runc docker-cli
+                --install docker-ce --install docker-ce-cli --install containerd.io
+                --install docker-buildx-plugin --install docker-compose-plugin
+              register: _rpmostree_manual
+              changed_when: _rpmostree_manual.rc == 0
+
+            - name: Enable docker.service for next boot
+              ansible.builtin.systemd:
+                name: docker.service
+                enabled: true
+
+            - name: Reboot to apply rpm-ostree override
+              ansible.builtin.reboot:
+                reboot_timeout: 600
+                post_reboot_delay: 30
+
+# ── Phase 4: final verification (always runs) ──
+
+- name: Wait for docker.service to be active
+  ansible.builtin.command: systemctl is-active docker.service
+  register: _docker_active
+  changed_when: false
+  failed_when: false
+  retries: 60
+  delay: 5
+  until: _docker_active.stdout == 'active'
+
+# Render /etc/docker/daemon.json from docker_daemon_options + restart
+# docker if changed. Geerlingguy.docker handles this on cloud-init hosts;
+# on FCOS we do it here. Extracted into a shared task file so future
+# rpm-ostree paths (RHCOS, openSUSE MicroOS) can reuse it.
+- name: Configure docker daemon.json
+  ansible.builtin.include_tasks: docker_daemon_config.yml
+
+# Use the docker CLI directly instead of community.docker.docker_host_info
+# here: this task runs BEFORE preflight/venv.yml creates the target venv that
+# carries the Docker SDK for Python (see service_venv_packages in
+# preflight/defaults/main.yml). On a freshly-bootstrapped FCOS host, the only
+# Python on the system is the rpm-ostree-layered system python3 — which does
+# NOT carry the `docker` SDK by design (kept in venv to avoid bloating the
+# immutable OS layer). `docker version` needs no Python at all.
+- name: Probe Docker daemon
+  ansible.builtin.command: docker version --format '{% raw %}{{.Server.Version}}{% endraw %}'
+  register: _docker_version
+  changed_when: false
+  retries: 6
+  delay: 5
+  until: _docker_version.rc == 0 and _docker_version.stdout | length > 0
+
+- name: Assert Docker version >= 24
+  ansible.builtin.assert:
+    that:
+      - _docker_version.stdout is version('24.0', '>=')
+    fail_msg: >-
+      FCOS layered Docker {{ _docker_version.stdout }}, below the required
+      24.0. Check the docker-ce.repo channel and the logs of
+      rpm-ostree-install-docker-ce.service on the guest.
+    success_msg: >-
+      Docker {{ _docker_version.stdout }} (FCOS rpm-ostree layer) is up
+      {{- ' [manual install fallback]' if (_docker_active_initial.stdout != 'active'
+            and _docker_ce_pkg_after.rc | default(1) != 0) else '' }}.
+
+# Two-layer compose-plugin check so the failure mode names the actual cause.
+#
+# Layer 1: rpm -q — is the package present at all?
+#   Failure here means the rpm-ostree-install-docker-ce.service didn't
+#   succeed with `--install docker-compose-plugin`. Recover with
+#   `rpm-ostree install --apply-live docker-compose-plugin` on the host
+#   (or rebuild — re-running the bootstrap unit is idempotent because of
+#   the stamp file).
+#
+# Layer 2: `docker compose version` — does the docker CLI find the plugin
+#   binary? On Fedora the package installs to
+#   /usr/libexec/docker/cli-plugins/docker-compose; Docker also searches
+#   /usr/lib/docker/cli-plugins, /usr/local/lib/docker/cli-plugins, and
+#   ~/.docker/cli-plugins. Failure here despite the rpm being installed
+#   means the binary landed somewhere unexpected — usually a packaging
+#   regression. fail_msg points at the diagnostic commands.
+- name: Probe docker-compose-plugin RPM
+  ansible.builtin.command: rpm -q docker-compose-plugin
+  register: _compose_pkg
+  changed_when: false
+  failed_when: false
+
+- name: Assert docker-compose-plugin RPM is layered
+  ansible.builtin.assert:
+    that:
+      - _compose_pkg.rc == 0
+    fail_msg: >-
+      docker-compose-plugin RPM not installed on this host. Expected from
+      rpm-ostree-install-docker-ce.service (`--install docker-compose-plugin`
+      in fcos.bu.j2). Recover with:
+        sudo rpm-ostree install --apply-live docker-compose-plugin
+      Or check `rpm-ostree status` and
+      `journalctl -u rpm-ostree-install-docker-ce.service` to see what went
+      wrong.
+    success_msg: "{{ _compose_pkg.stdout }} layered."
+    quiet: true
+
+- name: Verify Docker can find the compose plugin
+  ansible.builtin.command: docker compose version
+  register: _docker_compose_check
+  changed_when: false
+  failed_when:
+    - _docker_compose_check.rc != 0
+    - "'Docker Compose version' not in (_docker_compose_check.stdout | default(''))"
+  # The RPM is installed (assert above passed) but docker isn't seeing
+  # the plugin. Surface where the binary actually landed so we can decide
+  # whether to add a symlink or extend Docker's search path.
+  ignore_errors: true
+
+- name: Locate compose plugin if docker can't find it
+  ansible.builtin.command: rpm -ql docker-compose-plugin
+  register: _compose_files
+  changed_when: false
+  when: _docker_compose_check is failed
+
+- name: Assert docker compose works (with locator hint on failure)
+  ansible.builtin.assert:
+    that:
+      - _docker_compose_check is not failed
+    fail_msg: >-
+      docker-compose-plugin RPM is installed
+      ({{ _compose_pkg.stdout | default('?') }}) but `docker compose
+      version` reports `{{ _docker_compose_check.stderr | default(_docker_compose_check.stdout) | default('?') }}`.
+      Files owned by the package on this host:
+      {{ _compose_files.stdout_lines | default([]) | to_json }}.
+      Docker searches /usr/local/lib/docker/cli-plugins,
+      /usr/local/libexec/docker/cli-plugins, /usr/lib/docker/cli-plugins,
+      /usr/libexec/docker/cli-plugins, ~/.docker/cli-plugins. If the
+      binary isn't in any of those, symlink it into one or set
+      `cli-plugins` in /etc/docker/daemon.json.
+    success_msg: "{{ _docker_compose_check.stdout | default('Docker Compose plugin OK') }}"
+    quiet: true

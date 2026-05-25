@@ -1,0 +1,132 @@
+---
+# Wait for VM boot, VMware Tools, IP, and verify.
+#
+# History note: an earlier revision had a "static-IP fast path" here that
+# skipped the vmtoolsd wait when the inventory specified a static CIDR,
+# synthesizing vm_info from inventory + a quick vSphere query (~10s
+# instead of ~17 min per VM). It was removed because:
+#   1. deploy.yml's Stage 3.4 already waits for bootstrap_phase=ready,
+#      which subsumes the time savings — the wall clock is dominated by
+#      the slowest VM there, not by per-VM waits in this file.
+#   2. The fast path raced with Ignition's initramfs read of
+#      guestinfo.ignition.config.data: cleanup ran ~10s after power-on,
+#      before Ignition had consumed the config, producing silent
+#      "Ignition: no config provided by user" failures on the VM console.
+# git history has the synthesis if you ever need it back.
+
+- name: "Wait for VM to be powered on — {{ item.name }}"
+  community.vmware.vmware_guest_info:
+    hostname: "{{ vcenter_connect.hostname }}"
+    username: "{{ vcenter_connect.username }}"
+    password: "{{ vcenter_connect.password }}"
+    validate_certs: "{{ vcenter_connect.validate_certs }}"
+    datacenter: "{{ instance_datacenter }}"
+    folder: "{{ instance_folder_path }}"
+    name: "{{ item.name }}"
+  delegate_to: localhost
+  register: vm_power_info
+  until: (vm_power_info.instance.hw_power_status | default('')) == 'poweredOn'
+  # 36 × 5s = 3 min budget. The old 12 × 5s (1 min) was unrealistic for
+  # busy clusters where power-on can queue behind other ops.
+  retries: 36
+  delay: 5
+
+# Diagnostic snapshot of afterburn-published guestinfo keys, taken AFTER
+# power-on but BEFORE the slow vmtoolsd wait. Afterburn writes its keys via
+# the VMware backdoor protocol very early in boot (no open-vm-tools needed),
+# so if it's working we'll see ipv4-address / hostname here long before
+# vmtoolsd reports anything. Empirically (FCOS 43): afterburn does NOT
+# publish those keys back on this version — this snapshot consistently
+# shows {} — but kept as a tap so a future FCOS bump that adds the
+# publisher gets noticed immediately. Same query lives standalone in
+# playbooks/probe_extraconfig.yml for ad-hoc inspection.
+- name: "Snapshot afterburn guestinfo for {{ item.name }}"
+  community.vmware.vmware_guest_info:
+    hostname: "{{ vcenter_connect.hostname }}"
+    username: "{{ vcenter_connect.username }}"
+    password: "{{ vcenter_connect.password }}"
+    validate_certs: "{{ vcenter_connect.validate_certs }}"
+    datacenter: "{{ instance_datacenter }}"
+    folder: "{{ instance_folder_path }}"
+    name: "{{ item.name }}"
+    schema: vsphere
+    properties:
+      - config.extraConfig
+  delegate_to: localhost
+  register: _afterburn_snapshot
+  changed_when: false
+
+- name: "Show afterburn-published keys for {{ item.name }}"
+  ansible.builtin.debug:
+    msg: |-
+      {{ item.name }} afterburn keys (post-poweron, pre-vmtoolsd):
+      {{ (_afterburn_snapshot.instance.config.extraConfig | default([]))
+         | selectattr('key', 'match', '^guestinfo\\.afterburn\\.')
+         | items2dict(key_name='key', value_name='value')
+         | to_nice_yaml(indent=2) }}
+
+- name: "Wait for VMware Tools running on {{ item.name }}"
+  community.vmware.vmware_guest_info:
+    hostname: "{{ vcenter_connect.hostname }}"
+    username: "{{ vcenter_connect.username }}"
+    password: "{{ vcenter_connect.password }}"
+    validate_certs: "{{ vcenter_connect.validate_certs }}"
+    datacenter: "{{ instance_datacenter }}"
+    folder: "{{ instance_folder_path }}"
+    name: "{{ item.name }}"
+  delegate_to: localhost
+  register: vm_tools_info
+  until: (vm_tools_info.instance.guest_tools_status | default('')) == 'guestToolsRunning'
+  retries: 50
+  delay: 20
+
+- name: "Wait for VM to get an IP address — {{ item.name }}"
+  community.vmware.vmware_guest_info:
+    hostname: "{{ vcenter_connect.hostname }}"
+    username: "{{ vcenter_connect.username }}"
+    password: "{{ vcenter_connect.password }}"
+    validate_certs: "{{ vcenter_connect.validate_certs }}"
+    datacenter: "{{ instance_datacenter }}"
+    folder: "{{ instance_folder_path }}"
+    name: "{{ item.name }}"
+  delegate_to: localhost
+  register: vm_info
+  until: vm_info.instance.ipv4 is defined and vm_info.instance.ipv4 != None and vm_info.instance.ipv4 | string | length > 0
+  retries: 30
+  delay: 10
+
+- name: "Verify VM has correct IP — {{ item.name }}"
+  vars:
+    _first_nic: "{{ (item.networks | default([{}]))[0] | default({}) }}"
+  ansible.builtin.assert:
+    that:
+      - vm_info.instance.ipv4 == _first_nic.ipv4.split('/')[0]
+    fail_msg: "Expected IP {{ _first_nic.ipv4.split('/')[0] }} but got {{ vm_info.instance.ipv4 | default('none') }}"
+    success_msg: "IP {{ _first_nic.ipv4.split('/')[0] }} verified"
+  when: _first_nic.ipv4 is defined and _first_nic.ipv4 != 'dhcp'
+
+- name: "Verify VM has correct hostname — {{ item.name }}"
+  ansible.builtin.assert:
+    that:
+      - vm_info.instance.hw_name == item.name
+    fail_msg: "Expected hostname {{ item.name }} but got {{ vm_info.instance.hw_name | default('unknown') }}"
+    success_msg: "Hostname {{ item.name }} verified"
+  ignore_errors: true
+
+- name: "Collect provisioned VM facts for {{ item.name }}"
+  ansible.builtin.set_fact:
+    _provisioned_vm_facts: >-
+      {{ _provisioned_vm_facts | default({}) | combine({
+        item.name: {
+          'instance_uuid': vm_info.instance.instance_uuid | default(''),
+          'mac_address': vm_info.instance.hw_eth0.macaddress | default(''),
+          'ipv4': vm_info.instance.ipv4 | default(''),
+          'ipv6': vm_info.instance.ipv6 | default(''),
+          'hw_name': vm_info.instance.hw_name | default(item.name),
+          'hw_power_status': vm_info.instance.hw_power_status | default(''),
+          'guest_tools_status': vm_info.instance.guest_tools_status | default(''),
+          'folder': instance_folder_path,
+          'cluster': instance_cluster_name,
+          'instance_datacenter': instance_datacenter
+        }
+      }) }}

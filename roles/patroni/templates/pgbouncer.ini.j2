@@ -1,0 +1,102 @@
+[databases]
+; auth_dbname=postgres pins the auth_query lookup to the `postgres`
+; database — the only one where roles/patroni/tasks/pgbouncer_auth.yml
+; provisions the `pgbouncer` schema + `user_search()` function. Without
+; it, PgBouncer runs `SELECT * FROM pgbouncer.user_search($1)` against
+; whichever database the client is connecting to (e.g. prd_actionpay)
+; and PG returns: ERROR: schema "pgbouncer" does not exist.
+* = host=127.0.0.1 port={{ postgresql_port }} auth_user=pgbouncer auth_dbname=postgres
+
+[pgbouncer]
+; users allowed to run SHOW/SET commands on pgbouncer admin console
+admin_users = {{ pgbouncer_admin_users }}
+
+; path to file containing user/password pairs (only the auth_user lives here;
+; everyone else is fetched dynamically via auth_query)
+auth_file = /etc/pgbouncer/userlist.txt
+
+; Routes through the SECURITY DEFINER function pgbouncer.user_search() —
+; the pgbouncer role does NOT have direct access to pg_shadow.
+; See roles/patroni/tasks/pgbouncer_auth.yml for the function setup.
+auth_query = SELECT * FROM pgbouncer.user_search($1)
+
+; authentication method for clients connecting to pgbouncer
+auth_type = scram-sha-256
+
+; max seconds client has to authenticate before being dropped
+client_login_timeout = 60
+
+; number of server connections per user/database pair
+default_pool_size = 50
+
+; startup parameters pgbouncer should ignore from clients
+ignore_startup_parameters = extra_float_digits,search_path,application_name
+
+; address pgbouncer listens on
+listen_addr = 0.0.0.0
+
+; port pgbouncer listens on
+listen_port = {{ pgbouncer_port }}
+
+; log client connect events
+log_connections = 1
+
+; log client disconnect events
+log_disconnections = 1
+
+; log errors sent to clients by pgbouncer
+log_pooler_errors = 1
+
+; log aggregated stats periodically
+log_stats = 1
+
+; max total client connections allowed
+max_client_conn = 1000
+
+; cache prepared statements in transaction/statement mode
+max_prepared_statements = 128
+
+; minimum server connections kept open per pool
+min_pool_size = 10
+
+; pooling mode: session, transaction, or statement
+pool_mode = {{ pgbouncer_pool_mode }}
+
+; max seconds a query can run before being cancelled (0 = unlimited)
+query_timeout = 0
+
+; max seconds a client waits for a server connection
+query_wait_timeout = 120
+
+; extra connections above default_pool_size for burst traffic
+reserve_pool_size = 10
+
+; seconds before reserve pool connections are used
+reserve_pool_timeout = 3
+
+; max seconds to wait for a server connection to establish
+server_connect_timeout = 15
+
+; seconds before an unused server connection is closed
+server_idle_timeout = 600
+
+; max lifetime of a server connection in seconds
+server_lifetime = 3600
+
+; seconds to wait before retrying a failed server login
+server_login_retry = 3
+
+; interval in seconds between stats logging
+stats_period = 60
+
+; users allowed to view pgbouncer stats
+stats_users = {{ pgbouncer_stats_users }}
+
+; ── TLS to upstream PostgreSQL ─────────────────────────────────────
+; `prefer` = use TLS if PG offers it, fall back to plain otherwise.
+; PG's pg_hba allows both hostssl and host on 127.0.0.1/32, so this
+; degrades gracefully if cert material is missing or being rotated.
+server_tls_sslmode = prefer
+server_tls_ca_file = /etc/certs/ca.crt
+server_tls_cert_file = /etc/certs/pgbouncer.crt
+server_tls_key_file = /etc/certs/pgbouncer.key

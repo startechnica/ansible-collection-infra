@@ -1,0 +1,70 @@
+---
+# Fixture data for ignition (Butane) render tests.
+
+instance_domain_name: test.local
+instance_timezone: UTC
+
+instance_dns_servers: [10.0.0.10, 10.0.0.11]
+instance_networks:
+  gateway4: 10.0.0.1
+  gateway6: "2001:db8::1"
+  mtu: 1500
+
+instance_disks:
+  size_gb: 40
+  type: thin
+  datastore: datastore01
+
+portgroup_name: pg-default
+
+instance_user_name: core
+instance_user_password: ""
+instance_user_ssh_authorized_keys:
+  - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAtest test@fixture"
+
+instance_packages: []
+instance_runcmds: []
+instance_extra_users: []
+
+# Default state — the test playbook re-renders for each flavour by overriding
+# this and the rest below.
+ignition_flavour: fcos
+container_engine: docker
+docker_install: true
+fcos_zincati_enabled: false
+chrony_servers: []
+nm_unmanaged_devices:
+  - "interface-name:cni*"
+  - "interface-name:veth*"
+
+fixture_instances:
+  - hostname: fcos-master-01
+    name: fcos-master-01
+    networks:
+      - ipv4: 10.0.0.21/24
+    ignition:
+      role: master
+
+  - hostname: fcos-multi-nic
+    name: fcos-multi-nic
+    networks:
+      - name: pg-mgmt
+        ipv4: 10.0.0.22/24
+        ipv6: "2001:db8::22/64"
+      - name: pg-data
+        ipv4: dhcp
+        mtu: 9000
+    disks:
+      - size_gb: 60
+      - size_gb: 250
+        type: thick
+    ignition:
+      role: worker
+      packages: [tmux]
+      runcmds:
+        - systemctl enable foo
+
+  - hostname: fcos-minimal
+    name: fcos-minimal
+    networks:
+      - ipv4: dhcp

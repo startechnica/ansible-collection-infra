@@ -1,0 +1,16 @@
+---
+# Syntax-only scaffold — see molecule/default/README.md.
+
+- name: Converge
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Parse-check netbox_register
+      ansible.builtin.import_role:
+        name: netbox_register
+      when: false
+
+    - name: Placeholder
+      ansible.builtin.debug:
+        msg: "netbox_register loaded cleanly."

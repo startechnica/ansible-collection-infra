@@ -1,0 +1,19 @@
+---
+# PgBouncer connection pooler — pgbouncer.ini + userlist.txt.
+# Files must be owned by the pgbouncer container's uid/gid (70:70 for
+# edoburu/pgbouncer) — bind-mounts preserve host UID into the container,
+# so root-owned mode 0600 would lock pgbouncer out of its own auth file.
+
+- name: Deploy pgbouncer config files
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "{{ pgbouncer_dir }}/{{ item.name }}"
+    owner: "{{ pgbouncer_uid }}"
+    group: "{{ pgbouncer_gid }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { src: pgbouncer.ini.j2, name: pgbouncer.ini, mode: "0640" }
+    - { src: userlist.txt.j2,  name: userlist.txt,  mode: "0600" }
+  loop_control:
+    label: "{{ item.name }}"
+  notify: restart pgbouncer

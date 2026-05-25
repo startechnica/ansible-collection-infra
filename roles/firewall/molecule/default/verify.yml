@@ -1,0 +1,19 @@
+---
+- name: Verify
+  hosts: all
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Read UFW status
+      ansible.builtin.command: ufw status verbose
+      register: _ufw
+      changed_when: false
+
+    - name: Assert UFW is active with our rules present
+      ansible.builtin.assert:
+        that:
+          - "'Status: active' in _ufw.stdout"
+          - "'9100/tcp' in _ufw.stdout"
+          - "'3000/tcp' in _ufw.stdout"
+          - "'22/tcp' in _ufw.stdout"   # SSH auto-allowed
+        success_msg: UFW enabled and declared rules applied

@@ -1,0 +1,64 @@
+---
+# Auto-create missing portgroups in vCenter. Gated by `portgroup_create`
+# (default: false) so production inventories fail fast on missing
+# portgroups by default — opt in explicitly when bootstrapping a new
+# environment where you trust the inventory's portgroup names enough to
+# have them created from scratch.
+#
+# `missing_networks` is computed in validate/network.yml; when
+# portgroup_create=true the existence assert there is skipped, so this
+# file is the actual create step.
+#
+# Two branches, mutually exclusive:
+#   - Standard portgroup on the ESXi host's vSwitch (standalone ESXi)
+#   - Distributed portgroup on the cluster's vDS (cluster mode)
+
+# --- Standard portgroup on ESXi host vSwitch ---
+- name: Create standard portgroup on ESXi host
+  community.vmware.vmware_portgroup:
+    hostname: "{{ vcenter_connect.hostname }}"
+    username: "{{ vcenter_connect.username }}"
+    password: "{{ vcenter_connect.password }}"
+    validate_certs: "{{ vcenter_connect.validate_certs }}"
+    hosts: ["{{ vsphere_esxi_hostname }}"]
+    switch: "{{ portgroup_vswitch_name }}"
+    portgroup: "{{ item }}"
+    vlan_id: "{{ portgroup_vlan_id }}"
+  delegate_to: localhost
+  loop: "{{ missing_networks }}"
+  when:
+    - portgroup_create | bool
+    - missing_networks | length > 0
+    - vsphere_esxi_hostname | length > 0
+    - instance_cluster_name | length == 0
+    - portgroup_vlan_id is defined
+
+# --- Distributed portgroup on vDS (cluster) ---
+- name: Create distributed portgroup on vDS
+  community.vmware.vmware_dvs_portgroup:
+    hostname: "{{ vcenter_connect.hostname }}"
+    username: "{{ vcenter_connect.username }}"
+    password: "{{ vcenter_connect.password }}"
+    validate_certs: "{{ vcenter_connect.validate_certs }}"
+    switch_name: "{{ portgroup_dvswitch_name }}"
+    portgroup_name: "{{ item }}"
+    vlan_id: "{{ portgroup_vlan_id }}"
+    num_ports: 120
+    port_binding: static
+    state: present
+  delegate_to: localhost
+  loop: "{{ missing_networks }}"
+  when:
+    - portgroup_create | bool
+    - missing_networks | length > 0
+    - instance_cluster_name | length > 0
+    - portgroup_dvswitch_name | length > 0
+    - portgroup_vlan_id is defined
+
+- name: Debug network creation
+  ansible.builtin.debug:
+    msg: "Created portgroup(s): {{ missing_networks }}"
+  when:
+    - portgroup_create | bool
+    - missing_networks | length > 0
+    - debug_validation | bool

@@ -1,0 +1,167 @@
+---
+# ════════════════════════════════════════════════════════════════════
+# Firewall — main dispatcher
+#
+# Backends:
+#   ufw       — Debian / Ubuntu (cloud-init hosts)
+#   firewalld — RHEL / Rocky / Alma / CentOS Stream / standard Fedora
+#               (uses nftables backend internally)
+#   nftables  — FCOS / RHCOS / minimal Fedora — direct nft management,
+#               no firewalld layer (would require rpm-ostree to install)
+#
+# Auto-detection: rpm-ostree-managed systems (ansible_pkg_mgr in
+# atomic_container/atomic) → nftables; ansible_os_family == 'Debian' →
+# ufw; everything else under RedHat family → firewalld. Override via
+# `firewall_backend` if needed.
+# ════════════════════════════════════════════════════════════════════
+
+- name: Skip firewall role (firewall_enabled is false)
+  ansible.builtin.debug:
+    msg: "firewall_enabled=false — skipping firewall configuration."
+  when: not (firewall_enabled | bool)
+
+- name: End role if disabled
+  ansible.builtin.meta: end_host
+  when: not (firewall_enabled | bool)
+
+- name: Detect firewall backend
+  ansible.builtin.set_fact:
+    _firewall_backend: >-
+      {%- if (firewall_backend) != 'auto' -%}
+      {{ firewall_backend }}
+      {%- elif ansible_os_family == 'Debian' -%}
+      ufw
+      {%- elif ansible_pkg_mgr | default('') in ['atomic_container', 'atomic'] -%}
+      nftables
+      {%- elif ansible_os_family == 'RedHat' -%}
+      firewalld
+      {%- else -%}
+      unsupported
+      {%- endif -%}
+
+# Trusted-sources fact is computed FIRST because firewall_service_source_map
+# (and the per-rule expansion below) reference it for the SSH entry.
+#
+# Auto-add the Ansible controller's IP (as seen from the target via the
+# active SSH session) to the trusted-sources list. Without this, applying
+# `firewall_default_incoming: deny` can lock the controller out from any
+# port other than SSH — which breaks any future Ansible run that does
+# direct API calls (e.g., postgresql_query, mongodb_*) on non-SSH ports.
+# Operator can disable via `firewall_auto_trust_controller: false`.
+#
+# Source: ansible_env.SSH_CONNECTION = "<client-ip> <client-port>
+#         <server-ip> <server-port>" — first field is the controller's IP
+#         as routed to this host (handles NAT / multi-NIC controllers
+#         correctly because it's the address the kernel actually sees).
+- name: Resolve Ansible controller IP (as seen from target)
+  ansible.builtin.set_fact:
+    _controller_ip: >-
+      {{ (ansible_env.SSH_CONNECTION | default('') | split | first)
+         if (ansible_env.SSH_CONNECTION | default('') | length > 0)
+         else '' }}
+
+- name: Assemble effective trusted sources
+  ansible.builtin.set_fact:
+    _fw_trusted_sources: >-
+      {{ ((firewall_trusted_sources)
+          + ([_controller_ip]
+             if (firewall_auto_trust_controller | bool
+                 and _controller_ip | length > 0)
+             else []))
+         | unique }}
+
+# Assemble the rule set, then expand any rule whose name matches a key
+# in firewall_service_source_map into one rule per allowed source. A
+# rule with no map entry is left as-is ("from any"). A rule whose map
+# entry resolves to an empty list is dropped (port effectively closed).
+#
+# SSH gets two auto-rules with distinct names so the operator can drop
+# the broad "from any" rule during a maintenance lockdown without
+# losing trusted-source access:
+#   ssh-trusted — scoped per `_fw_trusted_sources` (always on)
+#   ssh-any     — open from any (only emitted when
+#                 `firewall_ssh_open_to_any: true`)
+- name: Assemble effective firewall rule set
+  ansible.builtin.set_fact:
+    _fw_rules: >-
+      {%- set ssh_port = ansible_port | default(22) | int -%}
+      {%- set ssh_any_rule =
+            [{'port': ssh_port, 'protocol': 'tcp',
+              'name': 'ssh-any',
+              'comment': 'SSH (any) — toggle via firewall_ssh_open_to_any'}]
+            if (firewall_ssh_open_to_any | bool) else [] -%}
+      {%- set raw = (firewall_rules)
+                  + [{'port': ssh_port, 'protocol': 'tcp',
+                      'name': 'ssh-trusted',
+                      'comment': 'SSH (trusted source)'}]
+                  + ssh_any_rule
+                  + (mongodb_services | default([]) if firewall_include_service_ports | bool else [])
+                  + (patroni_services | default([]) if firewall_include_service_ports | bool else []) -%}
+      {%- set out = [] -%}
+      {%- set src_map = firewall_service_source_map -%}
+      {%- for r in raw -%}
+      {%-   set _key = r.name | default(r.comment | default('')) -%}
+      {%-   if _key in src_map -%}
+      {%-     for s in (src_map[_key] | default([])) -%}
+      {%-       set _ = out.append(r | combine({'source': s})) -%}
+      {%-     endfor -%}
+      {%-   else -%}
+      {%-     set _ = out.append(r) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Show effective firewall rules
+  vars:
+    # Build a label per rule with a graceful fallback chain — the
+    # operator-supplied `firewall_rules`, the auto-added SSH entry, and
+    # mongodb_services / patroni_services facts each use slightly
+    # different keys (`name`, `comment`, or neither). port/protocol is
+    # the only field guaranteed present, so we fall back to "<port>/
+    # <proto>" when both labels are missing. Source is appended when
+    # set, so source-restricted rules are visible in the summary.
+    _rule_labels: >-
+      {%- set out = [] -%}
+      {%- for r in _fw_rules -%}
+      {%-   set _label = r.comment
+            | default(r.name | default(
+                (r.port | string) ~ '/' ~ (r.protocol | default('tcp'))
+              )) -%}
+      {%-   set _src = r.source | default('') -%}
+      {%-   set _full = _label ~ (' from ' ~ _src if _src | length > 0 else ' from any') -%}
+      {%-   set _ = out.append(_full) -%}
+      {%- endfor -%}
+      {{ out }}
+    _controller_ip_label: "{{ _controller_ip if _controller_ip | length > 0 else '(unknown — SSH_CONNECTION unset)' }}"
+    _auto_trust_label: "{{ ' [auto-trusted]' if (firewall_auto_trust_controller | bool and _controller_ip | length > 0) else ' [auto-trust disabled]' }}"
+  ansible.builtin.debug:
+    msg:
+      - "backend:         {{ _firewall_backend }}"
+      - "default:         in={{ firewall_default_incoming }}, out={{ firewall_default_outgoing }}"
+      - "controller IP:   {{ _controller_ip_label }}{{ _auto_trust_label }}"
+      - "trusted sources: {{ _fw_trusted_sources | join(', ') or '(none)' }}"
+      - "rules ({{ _fw_rules | length }}):"
+      - "{{ _rule_labels | join(', ') }}"
+
+- name: Apply UFW rules (Debian / Ubuntu)
+  ansible.builtin.include_tasks: ufw.yml
+  when: _firewall_backend == 'ufw'
+
+- name: Apply firewalld rules (RedHat / Rocky / Alma / etc.)
+  ansible.builtin.include_tasks: firewalld.yml
+  when: _firewall_backend == 'firewalld'
+
+- name: Apply nftables rules (FCOS / RHCOS / minimal Fedora)
+  ansible.builtin.include_tasks: nft.yml
+  when: _firewall_backend == 'nftables'
+
+- name: Fail on unsupported backend
+  ansible.builtin.fail:
+    msg: >-
+      firewall role couldn't pick a backend. Detected
+      ansible_os_family='{{ ansible_os_family }}',
+      ansible_pkg_mgr='{{ ansible_pkg_mgr | default('') }}'.
+      Supported: ufw (Debian), firewalld (RHEL family), nftables (FCOS).
+      Set `firewall_backend` explicitly to one of those, or
+      `firewall_enabled: false` to skip.
+  when: _firewall_backend == 'unsupported'

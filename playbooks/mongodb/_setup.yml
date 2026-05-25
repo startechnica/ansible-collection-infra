@@ -1,0 +1,47 @@
+---
+# ─── MongoDB: Build host group from instances ──────────────────────────────────────
+#
+# Included by all mongodb/ playbooks as a localhost pre-play.
+# Handles: NetBox enrichment (optional) + dynamic inventory from instances[].
+
+- name: Enrich VMs from NetBox
+  ansible.builtin.include_role:
+    name: netbox_lookup
+  when:
+    - netbox_enabled | default(false) | bool
+    - netbox_lookup_enabled | default(true) | bool
+
+- name: Add VMs to mongodb group
+  vars:
+    _first_nic: "{{ (item.networks | default([{}]))[0] | default({}) }}"
+  ansible.builtin.add_host:
+    name: "{{ item.hostname }}"
+    ansible_host: "{{ (_first_nic.ipv4 if (_first_nic.ipv4 | default('') and _first_nic.ipv4 != 'dhcp') else '') | split('/') | first }}"
+    ansible_host_ipv6: "{{ _first_nic.ipv6 | default(omit) }}"
+    ansible_user: "{{ instance_user_name | default('ubuntu') }}"
+    ansible_password: "{{ instance_user_password | default(omit) }}"
+    ansible_ssh_private_key_file: "{{ instance_user_ssh_private_key | default(omit) }}"
+    ansible_port: "{{ item.ssh_config.Port | default(instance_ssh_configs.Port | default(22)) | int }}"
+    ansible_become: true
+    ansible_become_method: sudo
+    node_ip: "{{ (_first_nic.ipv4 if (_first_nic.ipv4 | default('') and _first_nic.ipv4 != 'dhcp') else '') | split('/') | first }}"
+    netbox_id: "{{ item.netbox_id | default(omit) }}"
+    groups: mongodb_nodes
+  loop: "{{ instances }}"
+  loop_control:
+    label: "{{ item.hostname }}"
+
+- name: Display mongodb_nodes group
+  ansible.builtin.debug:
+    msg: "mongodb_nodes: {{ instances | map(attribute='hostname') | join(', ') }}"
+
+- name: Compute artifacts_dir on localhost (controller-only)
+  ansible.builtin.set_fact:
+    artifacts_dir: "{{ inventory_dir | dirname }}/playbooks/artifacts/{{ inventory_file | basename | splitext | first }}"
+
+- name: Probe SSH reachability on mongodb_nodes
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: wait_for_ssh
+  vars:
+    ssh_wait_group: mongodb_nodes

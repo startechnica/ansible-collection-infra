@@ -1,0 +1,45 @@
+---
+# One-shot dump of every guestinfo.* key on a VM. Used to inspect what
+# afterburn / cloud-init / our own services have published to vCenter
+# extraConfig at runtime.
+#
+# Usage:
+#   ansible-playbook playbooks/probe_extraconfig.yml -i inventories/<your-inventory>.yml \
+#     --ask-vault-pass -e vm=<vm-name>
+#
+#   # filter to a specific prefix:
+#   ansible-playbook playbooks/probe_extraconfig.yml -i inventories/<your-inventory>.yml \
+#     --ask-vault-pass -e vm=<vm-name> -e prefix=guestinfo.afterburn
+
+- name: Dump guestinfo.* extraConfig keys from a VM
+  hosts: localhost
+  gather_facts: false
+  vars:
+    _prefix: "{{ prefix | default('guestinfo.') }}"
+  tasks:
+    - name: Validate input
+      ansible.builtin.assert:
+        that:
+          - vm | default('') | length > 0
+        fail_msg: "Provide -e vm=<name>"
+        quiet: true
+
+    - name: Query vCenter for VM extraConfig
+      community.vmware.vmware_guest_info:
+        hostname: "{{ vcenter_connect.hostname }}"
+        username: "{{ vcenter_connect.username }}"
+        password: "{{ vcenter_connect.password }}"
+        validate_certs: "{{ vcenter_connect.validate_certs | default(false) }}"
+        name: "{{ vm }}"
+        schema: vsphere
+        properties:
+          - config.extraConfig
+      register: _info
+      changed_when: false
+
+    - name: Show matching extraConfig keys
+      ansible.builtin.debug:
+        msg: >-
+          {{ (_info.instance.config.extraConfig | default([]))
+             | selectattr('key', 'match', '^' ~ _prefix)
+             | list }}

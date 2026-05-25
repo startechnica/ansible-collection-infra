@@ -1,0 +1,13 @@
+---
+# ════════════════════════════════════════════════════════════════════
+# Helper Scripts
+# ════════════════════════════════════════════════════════════════════
+# Stack lifecycle is handled by a single consolidated script,
+# `patroni-ctl.sh`, with subcommands {start|stop|status}. Bare
+# invocation runs `status`.
+
+- name: Deploy patroni-ctl helper script
+  ansible.builtin.template:
+    src: patroni-ctl.sh.j2
+    dest: "{{ patroni_dir }}/patroni-ctl.sh"
+    mode: "0755"

@@ -1,0 +1,103 @@
+# instance_ignition
+
+Ignition phases for [instance](../instance/). Supports Fedora CoreOS
+(default), Flatcar Container Linux, Red Hat CoreOS (RHCOS), and openSUSE
+MicroOS — pick via `ignition_flavour` (see *Flavor support* below).
+
+Not a standalone role — sub-role invoked from `instance/tasks/main.yml`
+via `include_role: tasks_from:`.
+
+## Flavor support
+
+`ignition_flavour` (parent-role var, default `fcos`) selects a per-distro
+defaults map at [defaults/main.yml](defaults/main.yml) (`ignition_flavour_map`).
+The map supplies every flavor-varying knob; callers rarely need to override
+individual `ignition.*` keys.
+
+| Flavor | Butane variant | Spec version | Template prefix | Default user | Default channel | Channels | Metadata URL |
+|---|---|---|---|---|---|---|---|
+| `fcos` | `fcos` | `1.5.0` | `fedora-coreos` | `core` | `stable` | `stable`, `testing`, `next` | `https://builds.coreos.fedoraproject.org/streams/{channel}.json` |
+| `flatcar` | `flatcar` | `1.1.0` | `flatcar-production-vmware` | `core` | `stable` | `stable`, `beta`, `alpha`, `lts` | `https://{channel}.release.flatcar-linux.net/amd64-usr/current/version.txt` |
+| `rhcos` | `openshift` | `4.16.0` | `rhcos` | `core` | `4.16` | (Red Hat portal) | — (manual OVA) |
+| `opensuse` | `opensuse` | `1.0.0` | `openSUSE-MicroOS` | `root` | `tumbleweed` | `tumbleweed` | — (manual OVA) |
+
+All of those are available as `ignition_flavour_default.butane_variant`,
+`ignition_flavour_default.butane_spec_version`, `ignition_flavour_default.channel`, `ignition_flavour_default.metadata_url`,
+`ignition_flavour_default.instance_user_name`, etc. The `{channel}` placeholder in the
+metadata/OVA URLs is substituted from `ignition_flavour_default.channel`, so flipping
+channels (e.g. `ignition_flavour_default.channel: lts` for Flatcar) requires no URL edits.
+
+Auto-import currently parses only the FCOS stream schema. For other flavors,
+pre-import the OVA into the content library manually (or via vCenter UI), set
+`content_library_template` to the imported name, and set
+`content_library_auto_import: false`.
+
+## Phases (entry points)
+
+| Entry file | When | Invocation |
+|---|---|---|
+| `tasks/fcos_prepare.yml` | Before deploy | once (localhost); fetches FCOS stream metadata, imports OVA into vCenter content library (when `content_library_auto_import: true`) |
+| `tasks/render_ignition.yml` | Before deploy | once (localhost); Butane → Ignition JSON for every VM in `instances_to_create` |
+| `tasks/inject.yml` | After deploy | per-VM loop; writes `guestinfo.ignition.config.data` + encoding |
+| `tasks/poweron.yml` | After inject | per-VM loop; powers VM on |
+| `tasks/cleanup.yml` | After verify | per-VM loop; clears ignition guestinfo |
+
+Also bundled:
+- `tasks/content_library_import.yml` — reusable helper used by `fcos_prepare.yml` to import an OVA URL into a content library item. Not an entry point.
+
+## Expected inputs (from parent role context)
+
+- `item` (per-VM entries) — VM dict from the loop
+- `instances_to_create` (render/prepare) — full list for once-per-run ops
+- `ignition` — config dict: `butane_template`, `butane_variant`, `butane_spec_version`, `butane_strict`, `tmp_dir`
+- `ignition_fcos_stream`, `ignition_fcos_arch`, `ignition_fcos_stream_metadata_url` — flat FCOS-specific scalars (see instance defaults)
+- `ignition_flavour` — `fcos` (default) / `flatcar` / `rhcos` / `opensuse`; supplies defaults for `butane_variant` + `butane_spec_version`
+- `content_library` — `name`, `template`, `template_prefix`, `auto_import`, etc.
+- `vcenter`, `instance_datacenter`, `instance_folder` — standard vCenter connection vars
+
+## Templates
+
+- [templates/fcos.bu.j2](templates/fcos.bu.j2) — Butane template rendered per VM before Butane→Ignition conversion.
+
+## Requirements
+
+- `butane` binary on the controller for render_ignition.yml. Install via:
+  - Fedora: `dnf install butane`
+  - macOS: `brew install butane`
+  - Docker (no install): wrap with `docker run --rm -i quay.io/coreos/butane:release`
+- `community.vmware` collection on the controller for content-library import tasks.
+
+## Role outputs
+
+### `ignition_status` — per-VM phase tracking
+
+```yaml
+ignition_status:
+  <vm_name>:
+    butane_rendered: "/tmp/ignition/<vm>.bu"    # after render_ignition.yml
+    ignition_file: "/tmp/ignition/<vm>.ign"    # after render_ignition.yml
+    injected: true                              # after inject.yml
+    powered_on: true                            # after poweron.yml
+    cleaned_up: true                            # after cleanup.yml
+```
+
+### `fcos_import_facts` — what was imported (populated by `fcos_prepare.yml`)
+
+```yaml
+fcos_import_facts:
+  stream: stable
+  arch: x86_64
+  version: "40.20240322.3.1"
+  ova_url: "https://builds.coreos.fedoraproject.org/prod/streams/stable/builds/..."
+  library_name: "fcos-library"
+  library_item_name: "fedora-coreos-40.20240322.3.1"
+```
+
+Useful for downstream roles that need to reference the imported OVA (e.g. to
+deploy VMs from it without re-fetching metadata).
+
+## Gotchas
+
+- **FCOS metadata endpoint** — defaults to `https://builds.coreos.fedoraproject.org/streams/<stream>.json`. Set `ignition_fcos_stream_metadata_url` to override (air-gapped / mirror).
+- **Auto-import lag** — pulling the OVA into vCenter's content library from `builds.coreos.fedoraproject.org` can take 5+ minutes over slow WAN links; `fcos_prepare.yml` waits synchronously.
+- **Butane binary required** — no pure-Python Butane implementation exists; `butane` must be in PATH or replaced with a container wrapper.

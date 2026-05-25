@@ -1,0 +1,12 @@
+---
+# keepalived — docker path. Build the local image via docker compose.
+# Caller (docker/deploy.yml) gates on `patroni_vip_enabled and not use_vip_manager`.
+
+- name: Build keepalived image (VRRP fallback)
+  community.docker.docker_compose_v2:
+    project_src: "{{ patroni_dir }}"
+    state: present
+    build: always
+    pull: never
+    services:
+      - keepalived

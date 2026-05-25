@@ -1,0 +1,12 @@
+---
+# vip-manager — docker path. Build the local image via docker compose.
+# Caller (docker/deploy.yml) gates on `patroni_vip_enabled and use_vip_manager`.
+
+- name: Build vip-manager image (etcd-aware VIP)
+  community.docker.docker_compose_v2:
+    project_src: "{{ patroni_dir }}"
+    state: present
+    build: always
+    pull: never
+    services:
+      - vip-manager

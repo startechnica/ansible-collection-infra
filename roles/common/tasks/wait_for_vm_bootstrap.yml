@@ -1,0 +1,46 @@
+---
+# Poll vCenter for guestinfo.startechnica.bootstrap_phase published by the
+# rpm-ostree-install-* services in fcos.bu.j2. Decouples long-running
+# bootstrap (open-vm-tools + python3 + docker-ce override + reboot) from any
+# SSH timeout — vCenter API stays reachable even while the guest is rebooting.
+#
+# Caller passes:
+#   vm_bootstrap_target_phase   — phase to wait for. Common values:
+#                                   open-vm-tools-done
+#                                   python3-done
+#                                   docker-ce-done   (default; covers full
+#                                                     docker bootstrap)
+#   vm_bootstrap_retries        — retry count (default 120)
+#   vm_bootstrap_delay          — delay between retries in seconds (default 15)
+#                                   120 * 15s = 30 min budget by default
+#   vm_bootstrap_vm_name        — VM name in vCenter
+#                                   (default: inventory_hostname)
+
+- name: "Poll vCenter for bootstrap phase on VM: {{ vm_bootstrap_vm_name | default(inventory_hostname) }}"
+  community.vmware.vmware_guest_info:
+    hostname: "{{ vcenter_connect.hostname }}"
+    username: "{{ vcenter_connect.username }}"
+    password: "{{ vcenter_connect.password }}"
+    validate_certs: "{{ vcenter_connect.validate_certs | default(false) }}"
+    name: "{{ vm_bootstrap_vm_name | default(inventory_hostname) }}"
+    schema: vsphere
+    properties:
+      - config.extraConfig
+  delegate_to: localhost
+  register: _vm_bootstrap_info
+  retries: "{{ vm_bootstrap_retries | default(120) | int }}"
+  delay: "{{ vm_bootstrap_delay | default(15) | int }}"
+  changed_when: false
+  until: >-
+    (_vm_bootstrap_info.instance.config.extraConfig | default([])
+       | selectattr('key', 'equalto', 'guestinfo.startechnica.bootstrap_phase')
+       | map(attribute='value')
+       | first
+       | default('')) == (vm_bootstrap_target_phase | default('docker-ce-done'))
+
+- name: Show bootstrap phase reached
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }} reached bootstrap phase
+      '{{ vm_bootstrap_target_phase | default('docker-ce-done') }}'
+      via vmtools guestinfo.

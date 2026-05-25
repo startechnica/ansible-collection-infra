@@ -1,0 +1,37 @@
+---
+# ── Skip if disabled ─────────────────────────────────────────────────────────
+# Honors both the global master switch (netbox_enabled) and the role-specific
+# toggle (netbox_register_enabled). Either false → skip the entire role.
+
+- name: Skip netbox_register role (NetBox disabled)
+  ansible.builtin.debug:
+    msg: >-
+      netbox_register is disabled
+      (netbox_enabled={{ netbox_enabled }},
+      netbox_register_enabled={{ netbox_register_enabled | default(true) }}). Skipping.
+  when: >-
+    not (netbox_enabled | bool)
+    or not (netbox_register_enabled | default(true) | bool)
+
+- name: End role if disabled
+  ansible.builtin.meta: end_role
+  when: >-
+    not (netbox_enabled | bool)
+    or not (netbox_register_enabled | default(true) | bool)
+
+- name: Validate NetBox connection
+  import_tasks: validate.yml
+
+- name: Ensure vCenter custom fields exist in NetBox (once)
+  import_tasks: ensure_custom_fields.yml
+
+- name: Register VM in NetBox
+  ansible.builtin.include_tasks: register_vm.yml
+  loop: "{{ instances }}"
+  loop_control:
+    label: "{{ item.name }}"
+  # Per-VM opt-out: set `netbox_register: false` on a instances[] entry to skip
+  # NetBox registration for that VM only. Useful when a single inventory
+  # provisions some VMs that should appear in NetBox (e.g., production
+  # databases) and some that shouldn't (e.g., scratch / lab VMs).
+  when: item.netbox_register | default(true) | bool

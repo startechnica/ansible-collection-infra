@@ -1,0 +1,11 @@
+---
+- name: Verify
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Scenario is scaffold-only
+      ansible.builtin.debug:
+        msg: >-
+          Syntax-only scaffold. See molecule/default/README.md for the
+          mock-NetBox wiring needed to turn this into a functional test.

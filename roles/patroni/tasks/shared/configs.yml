@@ -1,0 +1,46 @@
+---
+# ════════════════════════════════════════════════════════════════════
+# Configuration Files — orchestrator
+# ════════════════════════════════════════════════════════════════════
+# Renders every config the stack needs. Each component owns its own task
+# file under roles/patroni/tasks/<name>.yml so day-2 work can re-render a
+# single component via:
+#   ansible.builtin.include_role: { name: patroni, tasks_from: <name> }
+
+- name: Deploy patroni.yml
+  ansible.builtin.template:
+    src: patroni.yml.j2
+    dest: "{{ patroni_dir }}/patroni.yml"
+    owner: "{{ patroni_uid }}"
+    group: "{{ patroni_gid }}"
+    mode: "0600"
+  notify: restart patroni
+
+- name: Deploy haproxy.cfg
+  ansible.builtin.template:
+    src: haproxy.cfg.j2
+    dest: "{{ haproxy_dir }}/haproxy.cfg"
+    mode: "0644"
+  notify: restart haproxy
+
+- name: Render pgbouncer config
+  ansible.builtin.include_tasks: pgbouncer.yml
+
+- name: Render vip-manager config
+  ansible.builtin.include_tasks: vip_manager.yml
+  when:
+    - patroni_vip_enabled
+    - use_vip_manager
+
+- name: Render keepalived config
+  ansible.builtin.include_tasks: keepalived.yml
+  when:
+    - patroni_vip_enabled
+    - not use_vip_manager
+
+- name: Render postgres_exporter config (optional custom queries)
+  ansible.builtin.include_tasks: postgres_exporter.yml
+
+- name: Provision WAL-G (password + env file)
+  ansible.builtin.include_tasks: walg.yml
+  when: walg_enabled

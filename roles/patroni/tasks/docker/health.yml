@@ -1,0 +1,74 @@
+---
+# Quick health check (docker) — verify all stack containers and HAProxy
+# stats endpoint. Reads container state via community.docker.docker_container_info.
+
+- name: Check etcd container
+  community.docker.docker_container_info:
+    name: etcd
+  register: etcd_check
+  failed_when: false
+
+- name: Check patroni container
+  community.docker.docker_container_info:
+    name: patroni
+  register: patroni_check
+  failed_when: false
+
+- name: Check haproxy container
+  community.docker.docker_container_info:
+    name: haproxy
+  register: haproxy_check
+  failed_when: false
+
+- name: Check pgbouncer container
+  community.docker.docker_container_info:
+    name: pgbouncer
+  register: pgbouncer_check
+  failed_when: false
+
+- name: Check vip-manager container
+  community.docker.docker_container_info:
+    name: vip-manager
+  register: vip_mgr_check
+  failed_when: false
+
+- name: Check keepalived container
+  community.docker.docker_container_info:
+    name: keepalived
+  register: keepalived_check
+  failed_when: false
+
+- name: Check postgres-exporter container
+  community.docker.docker_container_info:
+    name: postgres-exporter
+  register: pg_exporter_check
+  failed_when: false
+  when: postgres_exporter_enabled | bool
+
+- name: Check HAProxy stats endpoint
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ haproxy_stats_port }}"
+    timeout: 3
+  register: haproxy_stats
+  failed_when: false
+
+- name: Display health summary
+  vars:
+    _etcd_running: "{{ etcd_check.exists | default(false) and etcd_check.container.State.Running | default(false) }}"
+    _patroni_running: "{{ patroni_check.exists | default(false) and patroni_check.container.State.Running | default(false) }}"
+    _haproxy_running: "{{ haproxy_check.exists | default(false) and haproxy_check.container.State.Running | default(false) }}"
+    _pgbouncer_running: "{{ pgbouncer_check.exists | default(false) and pgbouncer_check.container.State.Running | default(false) }}"
+    _vipmgr_running: "{{ vip_mgr_check.exists | default(false) and vip_mgr_check.container.State.Running | default(false) }}"
+    _keepalived_running: "{{ keepalived_check.exists | default(false) and keepalived_check.container.State.Running | default(false) }}"
+    _pg_exporter_running: "{{ pg_exporter_check.exists | default(false) and pg_exporter_check.container.State.Running | default(false) }}"
+    vip_running: "{{ _vipmgr_running or _keepalived_running }}"
+    _haproxy_stats_ok: "{{ haproxy_stats.status is defined and haproxy_stats.status == 200 }}"
+  ansible.builtin.debug:
+    msg:
+      - "{{ inventory_hostname }} ({{ ansible_host }}):"
+      - "  etcd:        {{ 'running' if _etcd_running else 'NOT RUNNING' }}"
+      - "  patroni:     {{ 'running' if _patroni_running else 'NOT RUNNING' }}"
+      - "  haproxy:     {{ 'running' if _haproxy_running else 'NOT RUNNING' }}{{ ' (stats OK)' if _haproxy_stats_ok else '' }}"
+      - "  pgbouncer:   {{ 'running' if _pgbouncer_running else 'NOT RUNNING' }}"
+      - "  vip-manager: {{ 'running' if vip_running else 'NOT RUNNING' }}"
+      - "  pg-exporter: {{ 'disabled' if not (postgres_exporter_enabled | bool) else ('running' if _pg_exporter_running else 'NOT RUNNING') }}"

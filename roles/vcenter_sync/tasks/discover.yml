@@ -1,0 +1,80 @@
+---
+# Auto-discover clusters and ESXi hosts from vCenter
+#
+# Output facts (usable by any downstream role):
+#   vcenter_clusters:  List of cluster dicts [{name, site, tags}]
+#   vcenter_hosts:     List of host dicts [{name, cluster, site, role, tags, cpu, memory_mb}]
+
+- name: Get all clusters from vCenter
+  vmware.vmware.cluster_info:
+    hostname: "{{ vcenter_connect.hostname }}"
+    username: "{{ vcenter_connect.username }}"
+    password: "{{ vcenter_connect.password }}"
+    validate_certs: "{{ vcenter_connect.validate_certs }}"
+    datacenter: "{{ instance_datacenter }}"
+  delegate_to: localhost
+  register: _vcenter_clusters
+
+- name: Initialize lists
+  ansible.builtin.set_fact:
+    _vcenter_all_hosts: []
+    vcenter_clusters: []
+    vcenter_hosts: []
+
+- name: Build host-to-cluster list
+  ansible.builtin.set_fact:
+    _vcenter_all_hosts: "{{ _vcenter_all_hosts + [{'name': host_entry.1.name, 'cluster': host_entry.0.key}] }}"
+  loop: "{{ _vcenter_clusters.clusters | default({}) | dict2items | subelements('value.hosts', skip_missing=true) }}"
+  loop_control:
+    loop_var: host_entry
+    label: "{{ host_entry.1.name }}"
+
+- name: Get ESXi host facts
+  community.vmware.vmware_host_facts:
+    hostname: "{{ vcenter_connect.hostname }}"
+    username: "{{ vcenter_connect.username }}"
+    password: "{{ vcenter_connect.password }}"
+    validate_certs: "{{ vcenter_connect.validate_certs }}"
+    esxi_hostname: "{{ host_item.name }}"
+  delegate_to: localhost
+  loop: "{{ _vcenter_all_hosts }}"
+  loop_control:
+    loop_var: host_item
+    label: "{{ host_item.name }}"
+  register: _vcenter_host_facts
+
+# ── Build output facts ───────────────────────────────────────────────────────
+
+- name: Build vcenter_clusters fact
+  ansible.builtin.set_fact:
+    vcenter_clusters: >-
+      {{ vcenter_clusters + [{
+        'name': citem.key,
+        'site': vcenter_sync_site,
+        'tags': vcenter_sync_tags
+      }] }}
+  loop: "{{ _vcenter_clusters.clusters | default({}) | dict2items }}"
+  loop_control:
+    loop_var: citem
+    label: "{{ citem.key }}"
+
+- name: Build vcenter_hosts fact
+  ansible.builtin.set_fact:
+    vcenter_hosts: >-
+      {{ vcenter_hosts + [{
+        'name': host_result.host_item.name,
+        'cluster': host_result.host_item.cluster | default(''),
+        'site': vcenter_sync_site,
+        'role': vcenter_sync_role,
+        'tags': vcenter_sync_tags,
+        'cpu': host_result.ansible_facts.ansible_processor_vcpus | default(0),
+        'memory_mb': host_result.ansible_facts.ansible_memtotal_mb | default(0)
+      }] }}
+  loop: "{{ _vcenter_host_facts.results | default([]) }}"
+  loop_control:
+    loop_var: host_result
+    label: "{{ host_result.host_item.name }}"
+
+- name: Display discovered infrastructure
+  ansible.builtin.debug:
+    msg: "Discovered {{ vcenter_clusters | length }} clusters, {{ vcenter_hosts | length }} ESXi hosts"

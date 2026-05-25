@@ -1,0 +1,32 @@
+---
+- name: Validate NetBox connection parameters
+  ansible.builtin.assert:
+    that:
+      - netbox_connect.url is defined
+      - netbox_connect.url | length > 0
+      - netbox_connect.token is defined
+      - netbox_connect.token | length > 0
+    fail_msg: >
+      NetBox connection parameters are incomplete.
+      Required: netbox_connect.url, netbox_connect.token
+    success_msg:
+      - "NetBox connection parameters validated ({{ netbox_connect.url }})"
+
+- name: Validate NetBox API is reachable
+  uri:
+    url: "{{ netbox_connect.url }}/api/status/"
+    method: GET
+    headers:
+      Authorization: "Token {{ netbox_connect.token }}"
+    validate_certs: "{{ netbox_connect.validate_certs | default(false) }}"
+    status_code: [200]
+  delegate_to: localhost
+  run_once: true
+  register: netbox_status
+
+- name: Debug NetBox connection
+  ansible.builtin.debug:
+    msg:
+      - "NetBox {{ netbox_status.json['netbox-version'] | default('unknown') }} at {{ netbox_connect.url }} - connected"
+  run_once: true
+  when: debug

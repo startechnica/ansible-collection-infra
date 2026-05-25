@@ -1,0 +1,38 @@
+---
+argument_specs:
+  main:
+    short_description: Sync vCenter clusters + ESXi hosts to NetBox
+    description:
+      - Discovers vCenter clusters and ESXi hosts via the vSphere API and
+        produces two facts (`vcenter_clusters`, `vcenter_hosts`) for downstream
+        NetBox registration.
+    options:
+      debug:
+        type: bool
+        default: false
+        description: Verbose / introspection output. Defensive `| bool` filter still used in tasks because CLI `-e debug=true` arrives as a string.
+      vcenter_connect:
+        type: dict
+        required: true
+        options:
+          hostname: { type: str, required: true }
+          username: { type: str, required: true }
+          password: { type: str, required: true, no_log: true }
+          validate_certs: { type: bool, default: false }
+
+      instance_datacenter:
+        type: str
+        required: true
+
+      vcenter_sync_site:
+        type: str
+        default: ""
+        description: NetBox site slug to tag discovered resources with.
+      vcenter_sync_role:
+        type: str
+        default: ""
+        description: NetBox device role slug for ESXi hosts.
+      vcenter_sync_tags:
+        type: list
+        elements: str
+        default: []

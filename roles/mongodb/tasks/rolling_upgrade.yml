@@ -1,0 +1,261 @@
+---
+# Rolling MongoDB version upgrade — zero downtime
+# Requires: -e mongodb_image_tag_new=<new_version>
+#
+# Strategy:
+#   1. Validate new image is pullable
+#   2. Upgrade configsvr secondaries → stepdown primary → upgrade former primary
+#   3. Upgrade shard secondaries → stepdown primary → upgrade former primary
+#   4. Upgrade mongos (all nodes, one at a time)
+#   5. Verify cluster health
+#
+# Usage:
+#   ansible-playbook playbooks/mongodb-cluster.yml \
+#     -i inventories/<your-inventory>.yml --ask-vault-pass \
+#     --tags upgrade -e mongodb_image_tag_new=8.2.7
+
+- name: Validate new image tag is specified
+  ansible.builtin.assert:
+    that:
+      - mongodb_image_tag_new is defined
+      - mongodb_image_tag_new | length > 0
+      - mongodb_image_tag_new != mongodb_image_tag
+    fail_msg: >
+      Specify new version: -e mongodb_image_tag_new=<version>
+      Current version: {{ mongodb_image_tag }}
+    success_msg: "Upgrade target: {{ mongodb_image_tag }} → {{ mongodb_image_tag_new }}"
+  run_once: true
+
+- name: Set upgrade variables
+  ansible.builtin.set_fact:
+    _new_image: "{{ mongodb_image_registry }}/{{ mongodb_image_repository }}:{{ mongodb_image_tag_new }}"
+    _old_image: "{{ mongodb_image_registry }}/{{ mongodb_image_repository }}:{{ mongodb_image_tag }}"
+  run_once: true
+
+- name: Display upgrade plan
+  ansible.builtin.debug:
+    msg:
+      - "Rolling upgrade plan:"
+      - "  Current: {{ _old_image }}"
+      - "  Target:  {{ _new_image }}"
+      - "  Nodes:   {{ mongodb_nodes | map(attribute='ipv4') | join(', ') }}"
+  run_once: true
+
+# ── Pre-pull new image on all nodes ──────────────────────────────────────────
+
+- name: Pull new image on all nodes
+  community.docker.docker_image:
+    name: "{{ _new_image }}"
+    source: pull
+
+# ── Identify replica set members ─────────────────────────────────────────────
+
+- name: Get configsvr replica set info
+  community.mongodb.mongodb_shell:
+    login_host: localhost
+    login_port: "{{ mongodb_configsvr_node_port }}"
+    ssl: true
+    ssl_certfile: "{{ mongodb_tls_dir }}/healthcheck.pem"
+    ssl_ca_certs: "{{ mongodb_tls_dir }}/ca.pem"
+    eval: >-
+      var s = rs.status();
+      var primary = '';
+      var secondaries = [];
+      s.members.forEach(function(m) {
+        if (m.stateStr === 'PRIMARY') primary = m.name;
+        else if (m.stateStr === 'SECONDARY') secondaries.push(m.name);
+      });
+      JSON.stringify({primary: primary, secondaries: secondaries});
+  register: _configsvr_members
+  run_once: true
+  changed_when: false
+
+- name: Get shard replica set info
+  community.mongodb.mongodb_shell:
+    login_host: localhost
+    login_port: "{{ mongodb_mongod_node_port }}"
+    ssl: true
+    ssl_certfile: "{{ mongodb_tls_dir }}/healthcheck.pem"
+    ssl_ca_certs: "{{ mongodb_tls_dir }}/ca.pem"
+    eval: >-
+      var s = rs.status();
+      var primary = '';
+      var secondaries = [];
+      s.members.forEach(function(m) {
+        if (m.stateStr === 'PRIMARY') primary = m.name;
+        else if (m.stateStr === 'SECONDARY') secondaries.push(m.name);
+      });
+      JSON.stringify({primary: primary, secondaries: secondaries});
+  register: _shard_members
+  run_once: true
+  changed_when: false
+
+- name: Parse replica set topology
+  ansible.builtin.set_fact:
+    _configsvr_topo: "{{ _configsvr_members.transformed_output | first | from_json }}"
+    _shard_topo: "{{ _shard_members.transformed_output | first | from_json }}"
+  run_once: true
+
+- name: Display current topology
+  ansible.builtin.debug:
+    msg:
+      - "ConfigSvr — Primary: {{ _configsvr_topo.primary }}, Secondaries: {{ _configsvr_topo.secondaries | join(', ') }}"
+      - "Shard     — Primary: {{ _shard_topo.primary }}, Secondaries: {{ _shard_topo.secondaries | join(', ') }}"
+  run_once: true
+
+# ── Upgrade configsvr (secondaries first, then primary) ─────────────────────
+
+- name: Identify configsvr primary host
+  ansible.builtin.set_fact:
+    _configsvr_primary_ip: "{{ _configsvr_topo.primary.split(':')[0] }}"
+  run_once: true
+
+- name: Upgrade configsvr secondaries
+  ansible.builtin.include_tasks: _upgrade_container.yml
+  vars:
+    container_name: mongodb-configsvr
+    new_image: "{{ _new_image }}"
+    target_host: "{{ item.split(':')[0] }}"
+  loop: "{{ _configsvr_topo.secondaries }}"
+  when: ansible_host == item.split(':')[0]
+
+- name: Stepdown configsvr primary
+  community.mongodb.mongodb_stepdown:
+    login_host: localhost
+    login_port: "{{ mongodb_configsvr_node_port }}"
+    ssl: true
+    ssl_certfile: "{{ mongodb_tls_dir }}/healthcheck.pem"
+    ssl_ca_certs: "{{ mongodb_tls_dir }}/ca.pem"
+    stepdown_seconds: 60
+    poll: 5
+  when: ansible_host == _configsvr_primary_ip
+  failed_when: false
+  run_once: true
+
+- name: Wait for new configsvr primary election
+  community.mongodb.mongodb_status:
+    login_host: localhost
+    login_port: "{{ mongodb_configsvr_node_port }}"
+    replica_set: "{{ mongodb_config_replset }}"
+    ssl: true
+    ssl_certfile: "{{ mongodb_tls_dir }}/healthcheck.pem"
+    ssl_ca_certs: "{{ mongodb_tls_dir }}/ca.pem"
+    poll: 5
+    interval: 2
+  run_once: true
+
+- name: Upgrade former configsvr primary
+  ansible.builtin.include_tasks: _upgrade_container.yml
+  vars:
+    container_name: mongodb-configsvr
+    new_image: "{{ _new_image }}"
+    target_host: "{{ _configsvr_primary_ip }}"
+  when: ansible_host == _configsvr_primary_ip
+
+# ── Upgrade shard (secondaries first, then primary) ──────────────────────────
+
+- name: Identify shard primary host
+  ansible.builtin.set_fact:
+    _shard_primary_ip: "{{ _shard_topo.primary.split(':')[0] }}"
+  run_once: true
+
+- name: Upgrade shard secondaries
+  ansible.builtin.include_tasks: _upgrade_container.yml
+  vars:
+    container_name: mongodb-mongod
+    new_image: "{{ _new_image }}"
+    target_host: "{{ item.split(':')[0] }}"
+  loop: "{{ _shard_topo.secondaries }}"
+  when: ansible_host == item.split(':')[0]
+
+- name: Stepdown shard primary
+  community.mongodb.mongodb_stepdown:
+    login_host: localhost
+    login_port: "{{ mongodb_mongod_node_port }}"
+    ssl: true
+    ssl_certfile: "{{ mongodb_tls_dir }}/healthcheck.pem"
+    ssl_ca_certs: "{{ mongodb_tls_dir }}/ca.pem"
+    stepdown_seconds: 60
+    poll: 5
+  when: ansible_host == _shard_primary_ip
+  failed_when: false
+  run_once: true
+
+- name: Wait for new shard primary election
+  community.mongodb.mongodb_status:
+    login_host: localhost
+    login_port: "{{ mongodb_mongod_node_port }}"
+    replica_set: "{{ mongodb_shard_replset }}"
+    ssl: true
+    ssl_certfile: "{{ mongodb_tls_dir }}/healthcheck.pem"
+    ssl_ca_certs: "{{ mongodb_tls_dir }}/ca.pem"
+    poll: 5
+    interval: 2
+  run_once: true
+
+- name: Upgrade former shard primary
+  ansible.builtin.include_tasks: _upgrade_container.yml
+  vars:
+    container_name: mongodb-mongod
+    new_image: "{{ _new_image }}"
+    target_host: "{{ _shard_primary_ip }}"
+  when: ansible_host == _shard_primary_ip
+
+# ── Upgrade mongos (all nodes, serial) ───────────────────────────────────────
+
+- name: Upgrade mongos
+  ansible.builtin.include_tasks: _upgrade_container.yml
+  vars:
+    container_name: mongodb-mongos
+    new_image: "{{ _new_image }}"
+    target_host: "{{ ansible_host }}"
+
+# ── Update docker-compose.yml with new tag ───────────────────────────────────
+
+- name: Update image tag for persistence
+  ansible.builtin.lineinfile:
+    path: "{{ mongodb_root_dir }}/docker-compose.yml"
+    regexp: "image: {{ mongodb_image_registry }}/{{ mongodb_image_repository }}:.*"
+    line: "    image: {{ _new_image }}"
+  changed_when: false
+
+# ── Post-upgrade health check ────────────────────────────────────────────────
+
+- name: Verify shard cluster health
+  community.mongodb.mongodb_status:
+    login_host: localhost
+    login_port: "{{ mongodb_mongod_node_port }}"
+    replica_set: "{{ mongodb_shard_replset }}"
+    ssl: true
+    ssl_certfile: "{{ mongodb_tls_dir }}/healthcheck.pem"
+    ssl_ca_certs: "{{ mongodb_tls_dir }}/ca.pem"
+    poll: 5
+    interval: 2
+  run_once: true
+
+- name: Verify all containers running new version
+  community.docker.docker_container_info:
+    name: "{{ item }}"
+  loop:
+    - mongodb-mongod
+    - mongodb-configsvr
+    - mongodb-mongos
+  register: _post_upgrade_status
+
+- name: Display post-upgrade status
+  ansible.builtin.debug:
+    msg: "{{ item.item }}: {{ item.container.Config.Image }} — {{ item.container.State.Status }}"
+  loop: "{{ _post_upgrade_status.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Upgrade complete
+  ansible.builtin.debug:
+    msg:
+      - "Rolling upgrade complete!"
+      - "  Old: {{ _old_image }}"
+      - "  New: {{ _new_image }}"
+      - ""
+      - "IMPORTANT: Update mongodb_image_tag in your inventory to '{{ mongodb_image_tag_new }}'"
+      - "so future provisioning uses the new version."
+  run_once: true

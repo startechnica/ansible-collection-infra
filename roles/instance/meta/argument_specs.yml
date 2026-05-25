@@ -1,0 +1,352 @@
+---
+argument_specs:
+  main:
+    short_description: Provision VMs on vCenter from content library (cloud-init or ignition)
+    description:
+      - Deploys VMs in parallel from a vCenter content library OVF or VM template.
+      - Injects cloud-init (user-data / metadata) or Fedora CoreOS ignition via guestinfo.
+      - Creates the VM folder if missing, validates datastore / portgroup / template up front.
+    options:
+      debug:
+        type: bool
+        default: false
+        description: Verbose / introspection output. Defensive `| bool` filter still used in tasks because CLI `-e debug=true` arrives as a string.
+      # ── Debug ──
+      ansible.builtin.debug:
+        type: bool
+        default: false
+      debug_validation:
+        type: bool
+        default: false
+      validation_only:
+        type: bool
+        default: false
+        description: Run validation only; do not create any VMs.
+
+      # ── vCenter connection ──
+      vcenter_connect:
+        type: dict
+        required: true
+        options:
+          hostname:
+            type: str
+            required: true
+          username:
+            type: str
+            required: true
+          password:
+            type: str
+            required: true
+            no_log: true
+          validate_certs:
+            type: bool
+            default: false
+
+      # ── Infrastructure ──
+      instance_datacenter:
+        type: str
+        required: true
+      instance_cluster_name:
+        type: str
+        description: vCenter compute cluster.
+      # Datastore lives in `instance_disks.datastore` — see below.
+      instance_folder:
+        type: str
+        required: true
+      # ── portgroup_* (flat) ──
+      portgroup_name:
+        type: str
+        required: true
+      portgroup_dvswitch_name:
+        type: str
+      portgroup_vswitch_name:
+        type: str
+        default: vSwitch0
+      portgroup_vlan_id:
+        type: int
+        default: 0
+
+      instance_domain_name:
+        type: str
+        default: ""
+      instance_dns_servers:
+        type: list
+        elements: str
+        default: [8.8.8.8, 1.1.1.1]
+      instance_timezone:
+        type: str
+        default: ""
+
+      # ── Per-NIC network defaults — merged into each entry of every VM's
+      #    `networks:` list. Per-NIC keys override these. Flat shape (one
+      #    set of defaults shared across all NICs) by design; see role
+      #    defaults docstring for the migration path to per-network keying. ──
+      instance_networks:
+        type: dict
+        default: {mtu: 1500}
+        description: >-
+          Defaults merged into every NIC entry. Keys: gateway4 (str),
+          gateway6 (str), mtu (int). gateway4 is required if any NIC
+          declares a static ipv4 address; same for gateway6 with ipv6.
+
+      # ── Sizing defaults ──
+      instance_cpu:
+        type: int
+        default: 2
+      instance_memory_mb:
+        type: int
+        default: 4096
+
+      # ── Per-disk defaults — merged into each entry of every VM's `disks:`
+      #    list. Per-disk keys override these. A VM with no `disks:` set
+      #    effectively gets `[instance_disks]` — one disk using these defaults. ──
+      instance_disks:
+        type: dict
+        default: {size_gb: 40, type: thin}
+        description: >-
+          Defaults merged into every disk entry. Keys: size_gb (int),
+          type (thin/thick/eagerzeroedthick), datastore (str), controller_type
+          (str), controller_number (int), unit_number (int), disk_mode (str).
+
+      # ── Init type + content library ──
+      instance_init_type:
+        type: str
+        default: ignition
+        choices: [cloud-init, ignition]
+      ignition_flavour:
+        type: str
+        default: fcos
+        choices: [fcos, flatcar, rhcos, opensuse]
+        description: >-
+          Ignition distro flavor (only meaningful when instance_init_type=ignition).
+          Picks sane defaults for Butane variant / spec version / content-
+          library prefix. Override individual `ignition.*` keys to customize.
+          Auto-import currently supports `fcos` only; other flavors require a
+          pre-imported OVA in the content library.
+      # ── content_library_* (flat) — template source. See README for
+      #    auto-import behavior (FCOS only). ──
+      content_library_name:
+        type: str
+        required: true
+      content_library_template:
+        type: str
+        required: true
+        description: Auto-populated when content_library_auto_import is true.
+      content_library_type:
+        type: str
+        default: ovf
+        choices: [ovf, vm-template]
+      content_library_auto_import:
+        type: bool
+        default: false
+      content_library_template_prefix:
+        type: str
+        default: fedora-coreos
+
+      # ── instance_user_* (flat — partial overrides on a dict silently
+      #    drop unspecified keys, so each field is a top-level variable) ──
+      instance_user_name:
+        type: str
+        default: ubuntu
+        description: Default OS username injected on every VM (cloud-init + ignition).
+      instance_user_password:
+        type: str
+        no_log: true
+        description: Plain text password for the default user; auto-hashed SHA-512 (cloud-init only).
+      instance_user_sudo:
+        type: str
+        default: "ALL=(ALL) NOPASSWD:ALL"
+      instance_user_shell:
+        type: str
+        default: /bin/bash
+      instance_user_lock_passwd:
+        type: bool
+        default: true
+      instance_user_ssh_authorized_keys:
+        type: list
+        elements: str
+      instance_user_ssh_private_key:
+        type: str
+        no_log: true
+
+      # ── VM list ──
+      # Per-VM dict shape declared via nested `options:` so Ansible
+      # validates it at role-entry instead of failing later in a task.
+      instances:
+        type: list
+        elements: dict
+        required: true
+        description: >-
+          VM definitions. Each entry has `hostname` + `networks: [{...}]`.
+          See README for the full schema and per-key semantics.
+        options:
+          # ── Identity ──
+          hostname:
+            type: str
+            required: true
+            description: Guest OS hostname (set inside the VM by cloud-init / Butane).
+          name:
+            type: str
+            description: >-
+              vCenter VM display name. Defaults to `hostname` when omitted;
+              set explicitly only when the two should differ (asset tag in
+              vCenter, short hostname inside the guest).
+
+          # ── NICs (per-VM list, in vSphere device order ens192/224/256/...) ──
+          networks:
+            type: list
+            elements: dict
+            required: true
+            description: >-
+              At least one NIC. Per-NIC `name` falls back to `portgroup_name`;
+              gateway4/gateway6/mtu fall back to `instance_networks`.
+            options:
+              name:
+                type: str
+                description: vCenter portgroup. Falls back to `portgroup_name`.
+              ipv4:
+                type: str
+                description: CIDR (e.g. "10.0.0.10/24") or the literal "dhcp".
+              ipv6:
+                type: str
+                description: CIDR (e.g. "2001:db8::10/64") or the literal "dhcp6".
+              gateway4:
+                type: str
+                description: Per-NIC IPv4 gateway override. Falls back to instance_networks.gateway4.
+              gateway6:
+                type: str
+                description: Per-NIC IPv6 gateway override. Falls back to instance_networks.gateway6.
+              mtu:
+                type: int
+                description: Per-NIC MTU override. Falls back to instance_networks.mtu.
+              mac:
+                type: str
+                description: Pin a MAC address. Otherwise vCenter auto-assigns.
+              device:
+                type: str
+                description: >-
+                  Override the OS-side interface name (default: ens192,
+                  ens224, ens256, ... by index). Set when your firmware
+                  / HW combo names NICs differently.
+
+          # ── Hardware overrides (per-item dict keys, idiomatic Ansible) ──
+          cpu:
+            type: int
+            description: Per-VM vCPU override. Falls back to `instance_cpu`.
+          memory_mb:
+            type: int
+            description: Per-VM memory MB override. Falls back to `instance_memory_mb`.
+          vsphere_hw_version:
+            type: int
+            description: Per-VM HW version override. Falls back to `vsphere_hw_version`.
+          boot_firmware:
+            type: str
+            choices: [efi, bios]
+            description: Per-VM boot firmware override. Falls back to `instance_boot_firmware`.
+
+          # ── Disks (per-VM list; auto-defaults to a single `[instance_disks]`
+          #    when omitted). Each entry is merged with `instance_disks`. ──
+          disks:
+            type: list
+            elements: dict
+            description: >-
+              List of disks for this VM. First entry is the OS / boot disk.
+              When omitted, role uses [{instance_disks}] (one disk).
+            options:
+              size_gb:
+                type: int
+                description: Disk size in GB. Falls back to `instance_disks.size_gb`.
+              type:
+                type: str
+                choices: [thin, thick, eagerzeroedthick]
+                description: Provisioning type. Falls back to `instance_disks.type` (thin).
+              datastore:
+                type: str
+                description: Per-disk datastore override (e.g. ssd-tier vs hdd-tier).
+              controller_type:
+                type: str
+                choices: [paravirtual, lsilogic, lsilogicsas, buslogic, sata, nvme]
+              controller_number:
+                type: int
+              unit_number:
+                type: int
+              disk_mode:
+                type: str
+                choices: [persistent, independent_persistent, independent_nonpersistent]
+
+          # ── First-boot / post-provision ──
+          post_commands:
+            type: list
+            elements: str
+            description: Shell commands run via VMware Tools after the VM is up.
+          cloud_init:
+            type: dict
+            description: Per-VM cloud-init dict (`packages`, `runcmd`, `users`).
+          ignition:
+            type: dict
+            description: Per-VM ignition dict (`role`, `users`, `packages`, `runcmds`, `files`, `systemd_units`).
+          ssh_config:
+            type: dict
+            description: Per-VM sshd_config overrides; merged over role-level `instance_ssh_configs`.
+          tags:
+            type: list
+            elements: str
+            description: Per-VM tags; merged with `instance_tags` for service routing + NetBox.
+
+          # ── NetBox per-VM overrides (consumed by netbox_register) ──
+          netbox_id:
+            type: int
+          netbox_status:
+            type: str
+            choices: [active, staged, planned, decommissioning, offline]
+          netbox_platform:
+            type: str
+          netbox_vm_role:
+            type: str
+          netbox_site:
+            type: str
+          netbox_tenant:
+            type: str
+          netbox_interface:
+            type: str
+          netbox_custom_fields:
+            type: dict
+          cluster_name:
+            type: str
+            description: NetBox cluster override (resolution chain — see netbox_register/README).
+
+      # ── SSH customisation (optional) ──
+      instance_ssh_configs:
+        type: dict
+        default: {}
+        description: >-
+          sshd_config directives written to /etc/ssh/sshd_config.d/99-ansible.conf
+          on each VM via VMware Tools after cloud-init finishes. Keys map 1:1 to
+          sshd_config directive names (e.g. Port, PasswordAuthentication,
+          PermitRootLogin, ClientAliveInterval). Per-VM `instance_ssh_configs` in the instances
+          list merges with (and overrides) this role-level one.
+
+      # ── Permissions (optional) ──
+      vcenter_principal_user:
+        type: str
+        default: ""
+        description: >-
+          vCenter user (or group) to grant VM-level permissions to. Leave
+          empty to skip all permission-related tasks. Examples:
+          "devteam@vsphere.local", "DOMAIN\\group-name".
+      vcenter_principal_is_group:
+        type: bool
+        default: false
+        description: Whether vcenter_principal_user names a group.
+      vcenter_permission_enabled:
+        type: bool
+        default: false
+        description: Enable VM-level permission assignment. Requires vcenter_principal_user.
+      vcenter_permission_role:
+        type: str
+        default: ""
+        description: vCenter role name to assign (must exist in vCenter).
+      vcenter_permission_propagate:
+        type: bool
+        default: false
+        description: Propagate permission to child objects.

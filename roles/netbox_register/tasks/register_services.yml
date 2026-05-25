@@ -1,0 +1,34 @@
+---
+# Register services (ports) on a VM in NetBox
+#
+# Required vars:
+#   netbox_vm_name:      VM name in NetBox
+#   netbox_vm_services:  List of services to register
+#     - name: service name
+#       port: port number
+#       protocol: tcp (default) or udp
+#       description: optional description
+#
+# Example:
+#   netbox_vm_services:
+#     - { name: mongos, port: 27017, protocol: tcp }
+#     - { name: mongod, port: 27019, protocol: tcp }
+
+- name: "Register service — {{ svc.name ~ ':' ~ svc.port ~ ' on ' ~ netbox_vm_name }}"
+  netbox.netbox.netbox_service:
+    netbox_url: "{{ netbox_connect.url }}"
+    netbox_token: "{{ netbox_connect.token }}"
+    validate_certs: "{{ netbox_connect.validate_certs | default(false) }}"
+    state: present
+    data:
+      virtual_machine: "{{ netbox_vm_name }}"
+      name: "{{ svc.name }}"
+      ports:
+        - "{{ svc.port | int }}"
+      protocol: "{{ svc.protocol | default('tcp') }}"
+      description: "{{ svc.description | default(omit) }}"
+  delegate_to: localhost
+  loop: "{{ netbox_vm_services }}"
+  loop_control:
+    loop_var: svc
+    label: "{{ svc.name }}:{{ svc.port }}"

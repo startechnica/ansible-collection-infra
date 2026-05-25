@@ -1,0 +1,4 @@
+# MongoDB kernel tuning — managed by Ansible
+{% for key, value in mongodb_sysctl.items() %}
+{{ key }} = {{ value }}
+{% endfor %}

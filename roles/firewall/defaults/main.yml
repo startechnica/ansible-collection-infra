@@ -1,0 +1,95 @@
+---
+
+debug: false
+# Enable host firewall configuration.
+# Default off — the role is a no-op until opted-in via inventory.
+firewall_enabled: false
+
+# Backend selection. `auto` picks based on the host:
+#   ufw       - Debian / Ubuntu
+#   firewalld - RHEL / Rocky / Alma / CentOS Stream / standard Fedora
+#   nftables  - FCOS / RHCOS / minimal Fedora (rpm-ostree-managed)
+# Override per-inventory if auto-detection picks the wrong one.
+firewall_backend: auto
+
+# Default zone policies.
+firewall_default_incoming: deny
+firewall_default_outgoing: allow
+
+# Declarative rules. Each entry:
+#   port:     int, or "start:end" for a range
+#   protocol: tcp (default) | udp
+#   source:   CIDR (optional); omit = from any
+#   comment:  optional label
+firewall_rules: []
+
+# Extra trusted sources allowed blanket access (CIDRs).
+# Useful for a jump-host subnet or monitoring network.
+firewall_trusted_sources: []
+
+# Auto-add the Ansible controller's IP (as seen from the target via the
+# active SSH session) to the effective trusted-sources list before
+# applying rules. Prevents the controller from being locked out for
+# non-SSH ports after `firewall_default_incoming: deny` is enforced —
+# important because future ansible runs use psql / pymongo / docker API
+# calls on non-22 ports. Set false for strict mode (operator must include
+# the controller IP explicitly in firewall_trusted_sources or rely on
+# the auto-allowed SSH port only).
+firewall_auto_trust_controller: true
+
+# Auto-open ports published by mongodb / patroni roles
+# (via mongodb_services / patroni_services host facts).
+firewall_include_service_ports: true
+
+# Per-service source restrictions. Map keys match a rule's `name` (or
+# `comment` if `name` is missing) — including service entries pulled
+# from mongodb_services / patroni_services. Values are lists of source
+# CIDRs / IPs allowed to reach that port; the rule expands into one
+# ALLOW per source, and "from any" is dropped (default-deny on the
+# port for everything else).
+#
+# Defaults below restrict the four "members-only" ports based on
+# Ansible group membership:
+#
+#   ssh-trusted (port 22)    — always on; one ALLOW per
+#                              `_fw_trusted_sources` (controller IP +
+#                              firewall_trusted_sources). Survives a
+#                              maintenance lockdown of `ssh-any` below.
+#   mongod      (port 27018) — only mongodb_nodes (replica members)
+#   configsvr   (port 27019) — only mongodb_nodes (config replicaset)
+#   patroni-api (port 8008)  — only patroni_nodes (HAProxy lives there
+#                              and probes /master /replica)
+#   etcd-client (port 2379)  — only patroni_nodes (etcd colocated with
+#                              Patroni; no external clients)
+#
+# A SECOND SSH rule named `ssh-any` (open from any source) is emitted
+# alongside `ssh-trusted` — toggle via `firewall_ssh_open_to_any` below.
+# Operator can also `ufw delete` / `firewall-cmd --remove-port` the
+# any-rule manually mid-maintenance without re-running Ansible.
+#
+# Override piecemeal by setting individual keys to `[]` (= no allow,
+# port effectively closed) or to your own CIDR list. Set the whole map
+# to `{}` to revert to the legacy "open to any" behavior.
+firewall_service_source_map:
+  ssh-trusted: "{{ _fw_trusted_sources | default([]) }}"
+  mongod: >-
+    {{ groups['mongodb_nodes'] | default([])
+       | map('extract', hostvars, 'ansible_host') | list }}
+  configsvr: >-
+    {{ groups['mongodb_nodes'] | default([])
+       | map('extract', hostvars, 'ansible_host') | list }}
+  patroni-api: >-
+    {{ groups['patroni_nodes'] | default([])
+       | map('extract', hostvars, 'ansible_host') | list }}
+  etcd-client: >-
+    {{ groups['patroni_nodes'] | default([])
+       | map('extract', hostvars, 'ansible_host') | list }}
+
+# Emit the second SSH rule "open from any source" alongside the
+# trusted-only `ssh-trusted` rule. Default true (don't lock anyone out
+# accidentally). Set false in inventory + re-run the role to render
+# ssh-only-from-trusted; operator can also flip the live rule manually:
+#   ufw delete allow 22                              # ufw
+#   firewall-cmd --remove-port=22/tcp --permanent    # firewalld
+#                                                    # nft: rebuilds on next run
+firewall_ssh_open_to_any: true

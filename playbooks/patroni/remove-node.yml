@@ -1,0 +1,140 @@
+---
+# ─── Patroni: Remove a Cluster Member ───────────────────────────────────────
+#
+# Gracefully removes a Patroni node:
+#   1. If target is current leader, switchover first
+#   2. Stop containers on target, uninstall stack
+#   3. `patronictl remove` on a surviving node to drop from etcd
+#
+# Does NOT deprovision the VM — remove from inventory + vCenter separately.
+# Use -e prune=true to also delete Postgres/etcd data dirs on the target.
+#
+# Usage:
+#   ansible-playbook playbooks/patroni/remove-node.yml \
+#     -i inventories/<your-inventory>.yml \
+#     -e target_node=host3-lin-db
+#
+#   # Also wipe data:
+#   ansible-playbook playbooks/patroni/remove-node.yml \
+#     -i inventories/<your-inventory>.yml \
+#     -e target_node=host3-lin-db \
+#     -e prune=true
+
+- name: Setup patroni hosts
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - ansible.builtin.include_tasks: _setup.yml
+
+- name: Validate target
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Require target_node
+      ansible.builtin.assert:
+        that:
+          - target_node is defined
+          - target_node | length > 0
+          - target_node in (groups['patroni_nodes'] | default([]))
+        fail_msg: >-
+          Pass -e target_node=<hostname>. Available: {{ groups['patroni_nodes'] | default([]) }}.
+
+    - name: Ensure at least 2 nodes remain after removal
+      ansible.builtin.assert:
+        that:
+          - (groups['patroni_nodes'] | length) >= 3
+        fail_msg: >-
+          Refusing to remove from a 2-node cluster — would leave 1 member,
+          losing etcd quorum. Add a node before removing this one, or do
+          a full uninstall via playbooks/patroni/uninstall.yml.
+
+- name: Switchover off target if leader
+  hosts: "{{ target_node }}"
+  become: true
+  gather_facts: false
+  pre_tasks:
+    - ansible.builtin.include_role:
+        name: common
+        tasks_from: inherit_localhost_vars
+  tasks:
+    - name: Check if this node is the leader
+      community.docker.docker_container_exec:
+        container: patroni
+        command: >-
+          curl -sk --cert /etc/certs/patroni.crt --key /etc/certs/patroni.key
+          --cacert /etc/certs/ca.crt
+          https://127.0.0.1:{{ patroni_api_port }}/cluster
+      register: _cluster
+      changed_when: false
+      failed_when: false
+
+    - name: Switchover off this node (if leader)
+      community.docker.docker_container_exec:
+        container: patroni
+        command: >-
+          patronictl -c /etc/patroni/patroni.yml switchover --force
+          --leader {{ inventory_hostname_short }}
+      register: _switchover
+      changed_when: "'switched over' in (_switchover.stdout | default(''))"
+      when: >-
+        ((_cluster.stdout | default('{}') | from_json).members | default([])
+         | selectattr('role', 'equalto', 'leader') | map(attribute='name')
+         | first | default('')) == inventory_hostname_short
+
+    - name: Wait for leadership to move
+      community.docker.docker_container_exec:
+        container: patroni
+        command: >-
+          curl -sk --cert /etc/certs/patroni.crt --key /etc/certs/patroni.key
+          --cacert /etc/certs/ca.crt
+          https://127.0.0.1:{{ patroni_api_port }}/cluster
+      register: _post_switch
+      until: >-
+        ((_post_switch.stdout | from_json).members
+         | selectattr('role', 'equalto', 'leader') | map(attribute='name')
+         | first | default('')) != inventory_hostname_short
+      retries: 30
+      delay: 3
+      changed_when: false
+      when: _switchover is changed
+
+- name: Uninstall stack on the target node
+  hosts: "{{ target_node }}"
+  become: true
+  gather_facts: true
+  pre_tasks:
+    - ansible.builtin.include_role:
+        name: common
+        tasks_from: inherit_localhost_vars
+  tasks:
+    - name: Run patroni uninstall tasks
+      ansible.builtin.import_role:
+        name: patroni
+        tasks_from: uninstall.yml
+      vars:
+        patroni_skip_confirm: true
+
+- name: Drop member from Patroni/etcd on a surviving node
+  hosts: "{{ (groups['patroni_nodes'] | reject('equalto', target_node) | list | first) }}"
+  become: true
+  gather_facts: false
+  pre_tasks:
+    - ansible.builtin.include_role:
+        name: common
+        tasks_from: inherit_localhost_vars
+  tasks:
+    - name: patronictl remove
+      community.docker.docker_container_exec:
+        container: patroni
+        command: >-
+          patronictl -c /etc/patroni/patroni.yml remove {{ patroni_scope }}
+      register: _remove
+      changed_when: true
+      failed_when: false
+
+    - name: Summary
+      ansible.builtin.debug:
+        msg:
+          - "Removed {{ target_node }} from Patroni cluster '{{ patroni_scope }}'."
+          - "Remaining: {{ groups['patroni_nodes'] | reject('equalto', target_node) | list }}"
+          - "Next: drop {{ target_node }} from inventories/*.yml instances[] and destroy the VM."

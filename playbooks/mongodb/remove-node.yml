@@ -1,0 +1,115 @@
+---
+# ─── MongoDB: Remove a Replica Member ───────────────────────────────────────
+#
+# Gracefully removes a node from a MongoDB replica set:
+#   1. If target is current primary, stepDown first
+#   2. rs.remove() on a remaining member
+#   3. Stop containers + uninstall mongodb stack on the target
+#
+# Does NOT deprovision the VM itself — remove from inventory + vCenter separately.
+# Does NOT delete the node's data directory unless -e mongodb_destroy_prune=true.
+#
+# Usage:
+#   ansible-playbook playbooks/mongodb/remove-node.yml \
+#     -i inventories/<your-inventory>.yml \
+#     -e target_node=host3-lin-db
+#
+#   # Also wipe data:
+#   ansible-playbook playbooks/mongodb/remove-node.yml \
+#     -i inventories/<your-inventory>.yml \
+#     -e target_node=host3-lin-db \
+#     -e mongodb_destroy_prune=true
+
+- name: Setup mongodb hosts
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - ansible.builtin.include_tasks: _setup.yml
+
+- name: Validate target
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Require target_node
+      ansible.builtin.assert:
+        that:
+          - target_node is defined
+          - target_node | length > 0
+          - target_node in (groups['mongodb_nodes'] | default([]))
+        fail_msg: >-
+          Pass -e target_node=<hostname> where <hostname> is one of
+          {{ groups['mongodb_nodes'] | default([]) }}.
+        success_msg: "Removing node '{{ target_node }}' from mongodb_nodes."
+
+- name: Drop target from replica set
+  hosts: "{{ (groups['mongodb_nodes'] | reject('equalto', target_node) | list | first) }}"
+  become: true
+  gather_facts: false
+  pre_tasks:
+    - ansible.builtin.include_role:
+        name: common
+        tasks_from: inherit_localhost_vars
+  tasks:
+    - name: Set target IP
+      ansible.builtin.set_fact:
+        _target_ip: "{{ hostvars[target_node].ansible_host }}"
+
+    - name: Ask target to step down if primary (best-effort)
+      community.docker.docker_container_exec:
+        container: mongodb-mongod
+        command: >-
+          mongosh --port 27017 --quiet --tls
+          --tlsCertificateKeyFile /etc/mongo/ssl/healthcheck.pem
+          --tlsCAFile /etc/mongo/ssl/ca.pem
+          --authenticationMechanism MONGODB-X509
+          --authenticationDatabase '$external'
+          --eval "try {
+            if (rs.isMaster().primary.startsWith('{{ _target_ip }}'))
+              db.adminCommand({replSetStepDown: 60, secondaryCatchUpPeriodSecs: 30});
+          } catch(e) {}"
+      delegate_to: "{{ target_node }}"
+      failed_when: false
+      changed_when: false
+
+    - name: Wait a moment for failover
+      ansible.builtin.pause:
+        seconds: 5
+
+    - name: Remove target from replica set
+      community.docker.docker_container_exec:
+        container: mongodb-mongod
+        command: >-
+          mongosh --port 27017 --quiet --tls
+          --tlsCertificateKeyFile /etc/mongo/ssl/healthcheck.pem
+          --tlsCAFile /etc/mongo/ssl/ca.pem
+          --authenticationMechanism MONGODB-X509
+          --authenticationDatabase '$external'
+          --eval "rs.remove('{{ _target_ip }}:27017')"
+      register: _removed
+      changed_when: "'ok' in (_removed.stdout | default(''))"
+
+- name: Uninstall stack on the target node
+  hosts: "{{ target_node }}"
+  become: true
+  gather_facts: true
+  pre_tasks:
+    - ansible.builtin.include_role:
+        name: common
+        tasks_from: inherit_localhost_vars
+  tasks:
+    - ansible.builtin.import_role:
+        name: mongodb
+      vars:
+        mongodb_action: uninstall
+        mongodb_skip_confirm: true
+
+- name: Scale-down complete
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Summary
+      ansible.builtin.debug:
+        msg:
+          - "Removed {{ target_node }} ({{ hostvars[target_node].ansible_host }}) from the replica set."
+          - "Remaining members: {{ groups['mongodb_nodes'] | reject('equalto', target_node) | list }}"
+          - "Next: remove {{ target_node }} from inventories/*.yml instances[], then destroy the VM if no longer needed."

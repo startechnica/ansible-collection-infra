@@ -1,0 +1,46 @@
+---
+# Upgrade a single MongoDB container to a new image
+# Called with: container_name, new_image, target_host
+
+- name: "Stop {{ container_name }}"
+  community.docker.docker_container:
+    name: "{{ container_name }}"
+    state: stopped
+  when: ansible_host == target_host
+
+- name: "Update container image — {{ 'container=' ~ container_name ~ ', image=' ~ new_image }}"
+  ansible.builtin.command: >
+    docker container update --label com.docker.compose.image={{ new_image }} {{ container_name }}
+  when: ansible_host == target_host
+  changed_when: false
+  failed_when: false
+
+- name: "Remove old container — {{ container_name }}"
+  community.docker.docker_container:
+    name: "{{ container_name }}"
+    state: absent
+  when: ansible_host == target_host
+
+- name: "Recreate container with new image via compose — {{ container_name }}"
+  ansible.builtin.shell: |
+    cd {{ mongodb_root_dir }}
+    # Temporarily patch compose file for this container
+    sed -i 's|image: {{ mongodb_image_registry }}/{{ mongodb_image_repository }}:.*|image: {{ new_image }}|' docker-compose.yml
+    docker compose up -d {{ container_name }}
+  when: ansible_host == target_host
+
+- name: "Wait for container to be healthy — {{ container_name }}"
+  community.docker.docker_container_info:
+    name: "{{ container_name }}"
+  register: _upgraded_container
+  until: >
+    _upgraded_container.container.State.Status == 'running'
+    and (_upgraded_container.container.State.Health.Status | default('healthy')) in ['healthy', 'starting']
+  retries: 30
+  delay: 5
+  when: ansible_host == target_host
+
+- name: "Wait for container to rejoin replica set — {{ container_name }}"
+  ansible.builtin.pause:
+    seconds: 10
+  when: ansible_host == target_host and container_name != 'mongodb-mongos'

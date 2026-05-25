@@ -1,0 +1,58 @@
+---
+# Phase 2b: power on every VM AT THE SAME TIME. Each vmware_guest call is
+# fired async (poll: 0) so they run in parallel rather than the previous
+# per-VM-loop sequential pattern. With ~3 VMs each taking ~30s to power-cycle
+# and start cloud-init/ignition, this is the difference between a 90s wall
+# clock and ~30s.
+#
+# We don't need to wait for the async jobs to "finish" in the deep sense —
+# vmware_guest returns once vSphere acks the power-on request, well before
+# the guest OS is ready. Boot-readiness is verified later by configure_all.yml
+# (which checks IP / hostname / VMware Tools per-VM).
+#
+# Power-on itself is the SAME vSphere API call for cloud-init and ignition.
+# Only the per-init-type status bookkeeping (cloud_init_status vs
+# ignition_status) differs — handled by a tiny dispatched include below.
+
+- name: "Power on all VMs (async)"
+  community.vmware.vmware_guest:
+    hostname: "{{ vcenter_connect.hostname }}"
+    username: "{{ vcenter_connect.username }}"
+    password: "{{ vcenter_connect.password }}"
+    validate_certs: "{{ vcenter_connect.validate_certs }}"
+    datacenter: "{{ instance_datacenter }}"
+    folder: "{{ instance_folder_path }}"
+    name: "{{ instance.name }}"
+    state: poweredon
+  delegate_to: localhost
+  loop: "{{ instances_to_create }}"
+  loop_control:
+    loop_var: instance
+    label: "{{ instance.name }}"
+  async: 600
+  poll: 0
+  register: _poweron_jobs
+
+- name: "Wait for power-on commands to register"
+  ansible.builtin.async_status:
+    jid: "{{ job.ansible_job_id }}"
+  delegate_to: localhost
+  loop: "{{ _poweron_jobs.results }}"
+  loop_control:
+    loop_var: job
+    label: "{{ job.instance.name }}"
+  register: _poweron_results
+  until: _poweron_results.finished
+  retries: 30
+  delay: 2
+  when: job.ansible_job_id is defined
+  failed_when: false
+
+# Bookkeeping fact — the cloud-init / ignition cleanup tasks downstream
+# expect their respective `*_status[name].powered_on` flag set. Dispatch
+# into the relevant init-type role via computed name; the dedicated
+# `poweron_mark.yml` task there does ONLY the set_fact bookkeeping.
+- name: "Mark VMs as powered on (init-type bookkeeping)"
+  ansible.builtin.include_role:
+    name: "instance_{{ instance_init_type | replace('-', '_') }}"
+    tasks_from: poweron_mark.yml

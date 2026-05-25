@@ -1,0 +1,194 @@
+---
+# Configure VM hardware: CPU, memory, disk, network, boot firmware
+
+- name: "Get current hardware version of {{ item.name }}"
+  community.vmware.vmware_guest_info:
+    hostname: "{{ vcenter_connect.hostname }}"
+    username: "{{ vcenter_connect.username }}"
+    password: "{{ vcenter_connect.password }}"
+    validate_certs: "{{ vcenter_connect.validate_certs }}"
+    datacenter: "{{ instance_datacenter }}"
+    folder: "{{ instance_folder_path }}"
+    name: "{{ item.name }}"
+  delegate_to: localhost
+  register: deployed_vm_info
+
+# The boot_firmware task below (line ~120) consumes
+# deployed_vm_info.instance.hw_product_uuid with no default. If the lookup
+# above succeeded but returned an empty instance dict (stale cache / weird
+# permissions edge case), boot_firmware fails with a confusing "uuid is
+# required" error instead of pointing at the lookup.
+- name: "Assert hardware probe returned usable data for {{ item.name }}"
+  ansible.builtin.assert:
+    that:
+      - deployed_vm_info.instance is defined
+      - deployed_vm_info.instance.hw_product_uuid | default('') | length > 0
+    fail_msg: >-
+      vmware_guest_info returned but instance.hw_product_uuid is missing for
+      '{{ item.name }}'. Folder='{{ instance_folder_path }}'. Re-check the
+      VM exists in that folder and the credentials have System.Read on it.
+    success_msg: "Hardware probe OK for {{ item.name }} (uuid={{ deployed_vm_info.instance.hw_product_uuid | default('?') }})"
+    quiet: true
+
+- name: "Current hardware of {{ item.name }}"
+  ansible.builtin.debug:
+    msg: >-
+      {{ item.name }}:
+      hw_version={{ deployed_vm_info.instance.hw_version | default('unknown') }}
+      power={{ deployed_vm_info.instance.hw_power_status | default('unknown') }}
+      cpu={{ deployed_vm_info.instance.hw_cores_per_socket | default('?') }}x{{ deployed_vm_info.instance.hw_processor_count | default('?') }}
+      memory_mb={{ deployed_vm_info.instance.hw_memtotal_mb | default('?') }}
+  when: debug
+
+- name: Determine hardware version to apply
+  ansible.builtin.set_fact:
+    _desired_hw_version: "{{ item.vsphere_hw_version | default(vsphere_hw_version) }}"
+    _current_hw_version: "{{ deployed_vm_info.instance.hw_version | default('vmx-00') | regex_replace('vmx-', '') | int }}"
+
+# Map our per-NIC schema → community.vmware.vmware_guest's `networks:` list.
+# Inline `[... for nic in item.networks]` Jinja list comprehensions are
+# rejected by Ansible's Jinja env, so we build the list with a loop +
+# set_fact accumulator (same shape as the _enriched_instances pattern in
+# tasks/main.yml). Only the connection-shape fields are set here (portgroup,
+# NIC type, state, optional pinned MAC); the L3 config (ipv4/ipv6/gateway)
+# is injected later via cloud-init / ignition reading the same `networks:`.
+- name: "Reset vSphere NIC accumulator for {{ item.name }}"
+  ansible.builtin.set_fact:
+    _vsphere_networks: []
+
+- name: "Build vSphere NIC entry — {{ 'vm=' ~ item.name ~ ', nic=' ~ (nic.name | default(portgroup_name)) }}"
+  ansible.builtin.set_fact:
+    _vsphere_networks: >-
+      {{ _vsphere_networks + [_entry | combine({'mac': nic.mac} if nic.mac is defined else {})] }}
+  vars:
+    _entry:
+      name: "{{ nic.name | default(portgroup_name) }}"
+      device_type: vmxnet3
+      connected: true
+      start_connected: true
+  loop: "{{ item.networks }}"
+  loop_control:
+    loop_var: nic
+    label: "{{ nic.name | default(portgroup_name) }}"
+
+# Map per-VM disks → community.vmware.vmware_guest's `disk:` list. Same
+# loop+set_fact pattern as networks; per-disk entries are merged with the
+# role-level `instance_disks` defaults so a bare `disks: [{}]` (or omitted
+# entirely) yields one disk using the project's default size + type.
+- name: "Reset vSphere disk accumulator for {{ item.name }}"
+  ansible.builtin.set_fact:
+    _vsphere_disks: []
+
+- name: "Build vSphere disk entries for {{ item.name }}"
+  ansible.builtin.set_fact:
+    _vsphere_disks: "{{ _vsphere_disks + [instance_disks | combine(disk)] }}"
+  loop: "{{ item.disks | default([{}]) }}"
+  loop_control:
+    loop_var: disk
+    extended: true
+    label: "{{ ansible_loop.index }}: {{ (instance_disks | combine(disk)).size_gb | default('?') }}GB"
+
+# validate/input.yml only validates per-disk size_gb when `disks:` is set
+# explicitly. The default `disks: [{}]` path inherits everything from
+# `instance_disks`; if an inventory overrides `instance_disks: {}` (or drops
+# its size_gb), we'd silently ship a 0-size disk to vmware_guest. Catch it
+# at the accumulator level so the error names size_gb, not "Invalid disk
+# spec".
+- name: "Assert all disk entries have positive size_gb for {{ item.name }}"
+  ansible.builtin.assert:
+    that:
+      - _vsphere_disks | length > 0
+      - _vsphere_disks | rejectattr('size_gb', 'defined') | list | length == 0
+      - (_vsphere_disks | map(attribute='size_gb') | map('int') | min) > 0
+    fail_msg: >-
+      Disk spec for '{{ item.name }}' is missing size_gb on at least one
+      entry. Effective disks: {{ _vsphere_disks | to_json }}. Either set
+      `disks: [{size_gb: N}, ...]` per-VM, or set `instance_disks.size_gb`
+      at the role level.
+    success_msg: "Disk sizes OK for {{ item.name }} ({{ _vsphere_disks | map(attribute='size_gb') | list }} GB)"
+    quiet: true
+
+- name: "Configure hardware, disk, and network for {{ item.name }}"
+  community.vmware.vmware_guest:
+    hostname: "{{ vcenter_connect.hostname }}"
+    username: "{{ vcenter_connect.username }}"
+    password: "{{ vcenter_connect.password }}"
+    validate_certs: "{{ vcenter_connect.validate_certs }}"
+    datacenter: "{{ instance_datacenter }}"
+    folder: "{{ instance_folder_path }}"
+    name: "{{ item.name }}"
+    state: present
+    hardware: >-
+      {{
+        {
+          'memory_mb': item.memory_mb | default(instance_memory_mb),
+          'num_cpus': item.cpu | default(instance_cpu),
+          'scsi': 'paravirtual',
+        } | combine(
+          {'version': _desired_hw_version | int}
+          if (_desired_hw_version | string | length > 0 and _desired_hw_version | int > _current_hw_version | int)
+          else {}
+        )
+      }}
+    disk: "{{ _vsphere_disks }}"
+    networks: "{{ _vsphere_networks }}"
+  delegate_to: localhost
+
+- name: "Ensure VM is powered off before boot config — {{ item.name }}"
+  community.vmware.vmware_guest:
+    hostname: "{{ vcenter_connect.hostname }}"
+    username: "{{ vcenter_connect.username }}"
+    password: "{{ vcenter_connect.password }}"
+    validate_certs: "{{ vcenter_connect.validate_certs }}"
+    datacenter: "{{ instance_datacenter }}"
+    folder: "{{ instance_folder_path }}"
+    name: "{{ item.name }}"
+    state: poweredoff
+  delegate_to: localhost
+
+- name: "Set boot firmware for {{ item.name }}"
+  community.vmware.vmware_guest_boot_manager:
+    hostname: "{{ vcenter_connect.hostname }}"
+    username: "{{ vcenter_connect.username }}"
+    password: "{{ vcenter_connect.password }}"
+    validate_certs: "{{ vcenter_connect.validate_certs }}"
+    uuid: "{{ deployed_vm_info.instance.hw_product_uuid }}"
+    boot_firmware: "{{ item.boot_firmware | default(instance_boot_firmware) }}"
+  register: _boot_config
+  delegate_to: localhost
+
+# Verify the change actually landed (vCenter sometimes reports success on a
+# call that didn't take effect — e.g. when the VM is in a transitioning
+# power state). Doubles as the boot-firmware change report (success_msg).
+# `quiet:` is tied to the global `debug` flag so the output stays opt-in,
+# matching what the standalone debug used to do.
+#
+# Note on the `(_boot_config.status | default({})).foo | default('?')`
+# pattern: Ansible templates BOTH fail_msg and success_msg at task-finalize
+# time, regardless of which branch the assert routes to. So unsafe
+# attribute access in either message crashes the task before the assertion
+# even runs. The boot_manager module returns `.status` only when it
+# actually applied a change — on no-op runs `_boot_config` is a bare dict
+# without `.status`. Guard the parent dict, then default the leaf.
+- name: "Assert boot firmware applied for {{ item.name }}"
+  vars:
+    _bf_status: "{{ _boot_config.status | default({}) }}"
+    _bf_expected: "{{ item.boot_firmware | default(instance_boot_firmware) }}"
+    _bf_current: "{{ _bf_status.current_boot_firmware | default('') }}"
+  ansible.builtin.assert:
+    that:
+      - _bf_current == _bf_expected
+    fail_msg: >-
+      Boot firmware on '{{ item.name }}' is '{{ _bf_current | default('?') }}',
+      expected '{{ _bf_expected }}'. vmware_guest_boot_manager returned
+      without erroring but the change didn't land. Check the VM's power
+      state and re-run.
+    success_msg: >-
+      {{ item.name }}: boot_firmware={{ _bf_current }}
+      (was {{ _bf_status.previous_boot_firmware | default('n/a') }})
+    quiet: "{{ not (debug | bool) }}"
+  # Skip on no-op runs: when the module returns `changed=false` it means
+  # the desired firmware was already in place, and on that path the return
+  # shape doesn't include `.status`. Trust the module's own signal rather
+  # than re-probing.
+  when: _boot_config is changed

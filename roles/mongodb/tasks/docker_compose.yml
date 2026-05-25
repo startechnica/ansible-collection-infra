@@ -1,0 +1,41 @@
+---
+# Render compose with `--transitionToAuth` only on a true cold-start
+# (no bootstrap-complete marker). On every subsequent run we render with
+# `--auth` directly, so re-deploys are idempotent and don't bounce
+# containers into permissive mode.
+#
+# init_cluster.yml writes the marker after a successful auth-mode start.
+# Removing the marker manually forces re-bootstrap on the next run.
+
+- name: Check for bootstrap-complete marker
+  ansible.builtin.stat:
+    path: "{{ mongodb_root_dir }}/.bootstrap_complete"
+  register: _bootstrap_marker
+
+- name: Deploy docker-compose.yml
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ mongodb_root_dir }}/docker-compose.yml"
+    mode: "0644"
+  vars:
+    mongodb_bootstrap: "{{ not _bootstrap_marker.stat.exists }}"
+
+- name: Start MongoDB containers
+  community.docker.docker_compose_v2:
+    project_src: "{{ mongodb_root_dir }}"
+    state: present
+
+- name: Wait for containers to be running
+  community.docker.docker_container_info:
+    name: "{{ item }}"
+  loop:
+    - mongodb-mongod
+    - mongodb-configsvr
+    - mongodb-mongos
+  register: _container_state
+  until: _container_state.container.State.Status == 'running'
+  retries: 20
+  delay: 3
+
+- name: Restore SELinux contexts (no-op on non-SELinux hosts)
+  ansible.builtin.include_tasks: selinux_relabel.yml

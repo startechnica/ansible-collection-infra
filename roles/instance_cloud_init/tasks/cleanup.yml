@@ -1,0 +1,39 @@
+---
+# Clear cloud-init guestinfo data after successful boot.
+#
+# Invoked from deploy.yml's Stage 3.7, AFTER Stage 3.6 has confirmed
+# cloud-init done — by that point cloud-init has long since consumed
+# guestinfo.userdata / guestinfo.metadata, so clearing them is race-free.
+
+- name: "Clear cloud-init data for {{ item.name }}"
+  community.vmware.vmware_guest:
+    hostname: "{{ vcenter_connect.hostname }}"
+    username: "{{ vcenter_connect.username }}"
+    password: "{{ vcenter_connect.password }}"
+    validate_certs: "{{ vcenter_connect.validate_certs }}"
+    datacenter: "{{ instance_datacenter }}"
+    folder: "{{ instance_folder_path }}"
+    name: "{{ item.name }}"
+    advanced_settings:
+      - key: "guestinfo.userdata"
+        value: ""
+      - key: "guestinfo.userdata.encoding"
+        value: ""
+      - key: "guestinfo.metadata"
+        value: ""
+      - key: "guestinfo.metadata.encoding"
+        value: ""
+    vapp_properties:
+      - id: user-data
+        value: ""
+      - id: seedfrom
+        value: ""
+  delegate_to: localhost
+
+- name: "Record cloud-init cleanup status for {{ item.name }}"
+  ansible.builtin.set_fact:
+    cloud_init_status: >-
+      {{ cloud_init_status | default({}) | combine({
+        item.name: (cloud_init_status | default({}))[item.name] | default({})
+                   | combine({'cleaned_up': true})
+      }) }}

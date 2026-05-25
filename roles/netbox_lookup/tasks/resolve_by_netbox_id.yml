@@ -1,0 +1,77 @@
+---
+# Resolve VMs that only have netbox_id — fetch name, IP, specs from NetBox
+#
+# Input:  instances list with entries like [{netbox_id: 42}]
+# Output: instances list with resolved entries [{name, netbox_id, ipv4, cpu, ...}]
+
+- name: Find VMs that need resolving (have netbox_id but no name)
+  ansible.builtin.set_fact:
+    _instances_to_resolve: "{{ instances | selectattr('netbox_id', 'defined') | rejectattr('name', 'defined') | list }}"
+    _instances_complete: "{{ instances | selectattr('name', 'defined') | list }}"
+
+- name: Fetch VM details from NetBox by ID
+  uri:
+    url: "{{ netbox_connect.url }}/api/virtualization/virtual-machines/{{ vm_item.netbox_id }}/"
+    method: GET
+    headers:
+      Authorization: "Token {{ netbox_connect.token }}"
+    validate_certs: "{{ netbox_connect.validate_certs | default(false) }}"
+    status_code: [200]
+  delegate_to: localhost
+  check_mode: false
+  loop: "{{ _instances_to_resolve }}"
+  loop_control:
+    loop_var: vm_item
+    label: "netbox_id={{ vm_item.netbox_id }}"
+  register: _nb_resolved_vms
+
+- name: Fetch IP for resolved VMs
+  uri:
+    url: "{{ netbox_connect.url }}/api/ipam/ip-addresses/?virtual_machine_id={{ vm_item.netbox_id }}"
+    method: GET
+    headers:
+      Authorization: "Token {{ netbox_connect.token }}"
+    validate_certs: "{{ netbox_connect.validate_certs | default(false) }}"
+    status_code: [200]
+  delegate_to: localhost
+  check_mode: false
+  loop: "{{ _instances_to_resolve }}"
+  loop_control:
+    loop_var: vm_item
+    label: "netbox_id={{ vm_item.netbox_id }}"
+  register: _nb_resolved_ips
+
+- name: Build resolved VMs and merge with existing
+  ansible.builtin.set_fact:
+    instances: "{{ _instances_complete + (_resolved | from_yaml) }}"
+  vars:
+    _resolved: >-
+      {% set result = [] %}
+      {% for i in range(_nb_resolved_vms.results | length) %}
+      {%   set vm = _nb_resolved_vms.results[i].json %}
+      {%   set ips = _nb_resolved_ips.results[i].json.results | default([]) %}
+      {%   set ip = (ips | first).address | default('') if ips | length > 0 else '' %}
+      {%   set entry = {
+             'name': vm.name,
+             'netbox_id': vm.id,
+             'ipv4': ip
+           } %}
+      {%   set entry = entry | combine({'cpu': vm.vcpus | int} if vm.vcpus else {}) %}
+      {%   set entry = entry | combine({'memory_mb': vm.memory | int} if vm.memory else {}) %}
+      {%   set entry = entry | combine({'disks': [{'size_gb': vm.disk | int}]} if vm.disk else {}) %}
+      {%   set entry = entry | combine({'status': vm.status.value} if vm.status else {}) %}
+      {%   set entry = entry | combine({'platform': vm.platform.slug} if vm.platform else {}) %}
+      {%   set entry = entry | combine({'role': vm.role.slug} if vm.role else {}) %}
+      {%   set entry = entry | combine({'site': vm.site.slug} if vm.site else {}) %}
+      {%   set entry = entry | combine({'tenant': vm.tenant.slug} if vm.tenant else {}) %}
+      {%   set entry = entry | combine({'cluster': vm.cluster.name} if vm.cluster else {}) %}
+      {%   set entry = entry | combine({'tags': vm.tags | map(attribute='slug') | list} if vm.tags | default([]) | length > 0 else {}) %}
+      {%   set entry = entry | combine({'custom_fields': vm.custom_fields} if vm.custom_fields | default({}) | length > 0 else {}) %}
+      {%   set _ = result.append(entry) %}
+      {% endfor %}
+      {{ result }}
+
+- name: Display resolved VMs
+  ansible.builtin.debug:
+    msg: "Resolved {{ _instances_to_resolve | length }} VMs by netbox_id: {{ instances | selectattr('netbox_id', 'defined') | map(attribute='name') | list }}"
+  when: _instances_to_resolve | length > 0

@@ -1,0 +1,29 @@
+---
+# ─── MongoDB: Cluster Status ────────────────────────────────────────────────
+#
+# Displays current cluster health:
+#   - Container states (running/stopped)
+#   - Replica set topology (primary, secondaries)
+#   - TLS certificate expiry dates
+#
+# Usage:
+#   ansible-playbook playbooks/mongodb/status.yml -i inventories/<your-inventory>.yml
+
+- name: Setup mongodb hosts
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - ansible.builtin.include_tasks: _setup.yml
+
+- name: MongoDB cluster status
+  hosts: mongodb_nodes
+  become: true
+  gather_facts: true
+  pre_tasks:
+    - ansible.builtin.include_role:
+        name: common
+        tasks_from: inherit_localhost_vars
+  roles:
+    - role: mongodb
+      vars:
+        mongodb_action: status

@@ -1,0 +1,164 @@
+---
+# Host-level cleanup that's the same regardless of which container
+# engine ran the stack. Config dirs and host-side configs always go.
+# Data dirs gated on `patroni_destroy_prune` (default false) so an
+# accidental `patroni_action=uninstall` doesn't wipe production data.
+
+- name: Remove config directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ patroni_dir }}"
+    - "{{ haproxy_dir }}"
+    - "{{ pgbouncer_dir }}"
+    - "{{ keepalived_dir }}"
+    - "{{ vip_manager_dir }}"
+    - "{{ walg_dir }}"
+
+# Second-stage interactive prune confirm. Same dual-gate pattern as
+# instance/destroy.yml: the uninstall_confirm at the top of the play
+# gates SERVICE removal; this one gates DATA removal so a wrong
+# `patroni_destroy_prune=true` flag still gets a final IRREVERSIBLE
+# warning before wiping pg/etcd data.
+- name: Confirm prune (delete Patroni / etcd data directories)
+  ansible.builtin.pause:
+    prompt: >-
+      Services and configs removed. Type 'prune' to DELETE the data
+      directories ({{ postgresql_root_dir }}, {{ etcd_data_dir }}, etc.) — IRREVERSIBLE,
+      anything else to leave data on disk
+  register: _prune_confirm
+  run_once: true
+  when:
+    - patroni_destroy_prune | bool
+    - not (patroni_skip_confirm | bool)
+
+- name: Remove data directories (prune confirmed)
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ postgresql_root_dir }}"
+    - "{{ postgresql_log_dir }}"
+    - "{{ etcd_data_dir }}"
+    - "{{ postgresql_dir }}"
+    - "{{ etcd_dir }}"
+  when:
+    - patroni_destroy_prune | bool
+    - (patroni_skip_confirm | bool)
+      or ((_prune_confirm | default({})).user_input | default('') == 'prune')
+
+- name: Note prune was declined
+  ansible.builtin.debug:
+    msg: >-
+      Prune aborted by user — data directories left intact at
+      {{ postgresql_root_dir }} and {{ etcd_data_dir }}. Re-run with
+      -e patroni_skip_confirm=true to bypass both confirms in automated flows.
+  when:
+    - patroni_destroy_prune | bool
+    - not (patroni_skip_confirm | bool)
+    - (_prune_confirm | default({})).user_input | default('') != 'prune'
+
+- name: Remove sysctl config
+  ansible.builtin.file:
+    path: /etc/sysctl.d/99-patroni-postgres.conf
+    state: absent
+  notify: reload sysctl
+
+# Transparent HugePages disable IS preserved — `/etc/systemd/system/disable-thp.service`
+# is a single shared file used by multiple roles (mongodb installs the same path).
+# Removing it on patroni uninstall would also disable THP suppression for any
+# other DB stack co-located on the host. Operator can clean up manually if
+# this is the last DB service on the box.
+
+- name: Stat THP disable service
+  ansible.builtin.stat:
+    path: /etc/systemd/system/disable-thp.service
+  register: _leftover_thp
+
+- name: WARN about preserved THP service (manual removal instructions)
+  ansible.builtin.debug:
+    msg:
+      - "╔══════════════════════════════════════════════════════════════════╗"
+      - "║  THP DISABLE SERVICE PRESERVED                                   ║"
+      - "╠══════════════════════════════════════════════════════════════════╣"
+      - "║  /etc/systemd/system/disable-thp.service is shared with other    ║"
+      - "║  database roles (mongodb installs the same file). It was NOT     ║"
+      - "║  removed by this uninstall.                                      ║"
+      - "║                                                                  ║"
+      - "║  To remove manually after confirming no other DB on this host    ║"
+      - "║  needs THP suppression:                                          ║"
+      - "║                                                                  ║"
+      - "║    sudo systemctl disable --now disable-thp.service              ║"
+      - "║    sudo rm /etc/systemd/system/disable-thp.service               ║"
+      - "║    sudo systemctl daemon-reload                                  ║"
+      - "║                                                                  ║"
+      - "║  Status: {{ '%-56s' | format('present on disk' if _leftover_thp.stat.exists else 'already absent') }}║"
+      - "╚══════════════════════════════════════════════════════════════════╝"
+
+# etcd-snapshot scheduling moved from cron to systemd timer (see
+# shared/helper_scripts.yml). Stop + disable the timer, then remove
+# the unit files. failed_when:false so a partially-installed cluster
+# (where helper_scripts.yml didn't get to the timer step) still
+# uninstalls cleanly.
+- name: Stop and disable etcd-snapshot.timer
+  ansible.builtin.systemd:
+    name: etcd-snapshot.timer
+    state: stopped
+    enabled: false
+  failed_when: false
+
+- name: Remove etcd-snapshot timer + service unit files
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ item }}"
+    state: absent
+  loop:
+    - etcd-snapshot.timer
+    - etcd-snapshot.service
+  notify: reload systemd
+
+# walg-cron scheduling moved to host-level systemd timer (see
+# shared/walg.yml). Mirror the etcd-snapshot teardown.
+- name: Stop and disable walg-cron.timer
+  ansible.builtin.systemd:
+    name: walg-cron.timer
+    state: stopped
+    enabled: false
+  failed_when: false
+
+- name: Remove walg-cron timer + service unit files
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ item }}"
+    state: absent
+  loop:
+    - walg-cron.timer
+    - walg-cron.service
+  notify: reload systemd
+
+# Sweep any legacy crontab entry from earlier deployments that pre-date
+# the systemd-timer migration. cron module needs crontab on $PATH —
+# FCOS doesn't ship it, cloud-init hosts typically do.
+- name: Detect crontab availability
+  ansible.builtin.command: which crontab
+  register: _crontab_check
+  changed_when: false
+  failed_when: false
+
+- name: Remove legacy cron entry (if crontab is installed)
+  ansible.builtin.cron:
+    name: patroni-etcd-snapshot
+    state: absent
+  when: _crontab_check.rc | default(1) == 0
+
+- name: Display result
+  vars:
+    _data_was_pruned: >-
+      {{ (patroni_destroy_prune | bool)
+         and ((patroni_skip_confirm | bool)
+              or ((_prune_confirm | default({})).user_input | default('') == 'prune')) }}
+  ansible.builtin.debug:
+    msg: >-
+      {{ 'Full uninstall complete — all data removed.'
+         if _data_was_pruned
+         else 'Soft uninstall complete — data preserved at '
+              ~ postgresql_root_dir ~ ', ' ~ etcd_data_dir }}

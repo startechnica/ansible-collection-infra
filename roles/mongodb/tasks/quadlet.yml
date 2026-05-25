@@ -1,0 +1,171 @@
+---
+# Podman Quadlet path — used on Ignition-based hosts (FCOS, RHCOS, openSUSE
+# MicroOS) where Docker isn't available and Podman ships natively. Renders
+# .container files under /etc/containers/systemd/ on Network=host, then
+# asks systemd to materialize them as services and start them.
+#
+# Mirror of docker_compose.yml's contract:
+#   - Honors the bootstrap-complete marker (--transitionToAuth on cold start,
+#     --auth on every subsequent run) so re-deploys are idempotent.
+#   - init_cluster.yml flips the marker after a successful auth-mode start.
+#
+# To force a re-bootstrap: rm /opt/mongodb/.bootstrap_complete on every node
+# and re-run the deploy.
+
+- name: Check for bootstrap-complete marker
+  ansible.builtin.stat:
+    path: "{{ mongodb_root_dir }}/.bootstrap_complete"
+  register: _bootstrap_marker
+
+# `mongodb_bootstrap` lets a caller force a specific mode (e.g.,
+# init_cluster.yml's Phase 2 explicitly passes `mongodb_bootstrap: false`
+# to flip Quadlets into --auth mode mid-bootstrap, before the marker is
+# written). When unset, derive from the marker: present = auth, absent =
+# transitionToAuth.
+- name: Resolve bootstrap mode
+  ansible.builtin.set_fact:
+    _mongodb_bootstrap: "{{ mongodb_bootstrap | default(not _bootstrap_marker.stat.exists) }}"
+
+- name: Ensure /etc/containers/systemd exists
+  ansible.builtin.file:
+    path: /etc/containers/systemd
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Render mongodb shard (mongod) Quadlet
+  ansible.builtin.template:
+    src: quadlets/mongodb-mongod.container.j2
+    dest: /etc/containers/systemd/mongodb-mongod.container
+    owner: root
+    group: root
+    mode: "0644"
+  vars:
+    mongodb_bootstrap: "{{ _mongodb_bootstrap }}"
+  register: _q_mongod
+
+- name: Render mongodb configsvr Quadlet (sharded only)
+  ansible.builtin.template:
+    src: quadlets/mongodb-configsvr.container.j2
+    dest: /etc/containers/systemd/mongodb-configsvr.container
+    owner: root
+    group: root
+    mode: "0644"
+  vars:
+    mongodb_bootstrap: "{{ _mongodb_bootstrap }}"
+  register: _q_configsvr
+  when: mongodb_cluster_type == 'sharded'
+
+- name: Render mongodb mongos Quadlet (sharded only)
+  ansible.builtin.template:
+    src: quadlets/mongodb-mongos.container.j2
+    dest: /etc/containers/systemd/mongodb-mongos.container
+    owner: root
+    group: root
+    mode: "0644"
+  vars:
+    mongodb_bootstrap: "{{ _mongodb_bootstrap }}"
+  register: _q_mongos
+  when: mongodb_cluster_type == 'sharded'
+
+- name: Render mongodb-exporter Quadlet (when enabled)
+  ansible.builtin.template:
+    src: quadlets/mongodb-exporter.container.j2
+    dest: /etc/containers/systemd/mongodb-exporter.container
+    owner: root
+    group: root
+    mode: "0644"
+  register: _q_exporter
+  when: mongodb_exporter_enabled | bool
+
+# systemd-generators only convert .container files at daemon-reload (or boot).
+# Running it after every render is cheap and required when files change.
+- name: Reload systemd to materialize Quadlet units
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: >
+    _q_mongod.changed
+    or (_q_configsvr.changed | default(false))
+    or (_q_mongos.changed | default(false))
+    or (_q_exporter.changed | default(false))
+
+
+# Build the service list to enable + start. Order matters for cold-start
+# (configsvr before mongos, mongos before exporter) — but `Requires=` /
+# `After=` in the unit files already encode that, so we can ask systemd to
+# start them in any order.
+- name: Build service start list
+  ansible.builtin.set_fact:
+    _mongodb_services: >-
+      {{ ['mongodb-mongod.service']
+         + (['mongodb-configsvr.service', 'mongodb-mongos.service'] if mongodb_cluster_type == 'sharded' else [])
+         + (['mongodb-exporter.service'] if mongodb_exporter_enabled | bool else []) }}
+
+- name: Enable + start MongoDB services
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+  loop: "{{ _mongodb_services }}"
+  register: _start_result
+
+# If the Quadlet templates re-rendered (e.g., switching out of bootstrap
+# mode), restart the affected services so they pick up the new Exec=
+# args. Skip services that the previous task just brought from inactive
+# to active — those were started fresh after daemon-reload, so they
+# already loaded the new template. The restart only matters when the
+# service was already running before this play and now needs to pick
+# up new args.
+- name: Compute which services were already running before this play
+  ansible.builtin.set_fact:
+    _services_already_running: >-
+      {{ _start_result.results
+         | rejectattr('changed', 'equalto', true)
+         | map(attribute='item')
+         | list }}
+
+- name: Restart services whose Quadlet changed (skip ones started fresh)
+  ansible.builtin.systemd:
+    name: "{{ item.svc }}"
+    state: restarted
+  loop:
+    - { svc: mongodb-mongod.service,    changed: "{{ _q_mongod.changed }}" }
+    - { svc: mongodb-configsvr.service, changed: "{{ _q_configsvr.changed | default(false) }}" }
+    - { svc: mongodb-mongos.service,    changed: "{{ _q_mongos.changed | default(false) }}" }
+    - { svc: mongodb-exporter.service,  changed: "{{ _q_exporter.changed | default(false) }}" }
+  loop_control:
+    label: "{{ item.svc }}"
+  when:
+    - item.changed
+    - item.svc in _services_already_running
+    - item.svc != 'mongodb-exporter.service' or (mongodb_exporter_enabled | bool)
+    - item.svc != 'mongodb-configsvr.service' or (mongodb_cluster_type == 'sharded')
+    - item.svc != 'mongodb-mongos.service' or (mongodb_cluster_type == 'sharded')
+
+# Wait only for ports that bind unconditionally at process startup —
+# mongod and configsvr open their listeners as soon as the process is
+# up. mongos is intentionally NOT in this list: it refuses to open its
+# client port until it has read cluster metadata from a configsvr
+# primary, and the configsvr replica set isn't initialized until
+# init_cluster.yml runs `rs.initiate()` later. Including mongos here
+# creates a chicken-and-egg deadlock — Ansible waits for mongos, mongos
+# waits for configsvr primary, and configsvr is never initialized.
+# init_cluster.yml has its own targeted wait for the mongos port,
+# placed after the configsvr/shard rs.initiate calls.
+- name: Wait for MongoDB ports to be listening (mongod + configsvr)
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ port }}"
+    timeout: 120
+    state: started
+  loop: >-
+    {{ [mongodb_mongod_node_port]
+       + ([mongodb_configsvr_node_port] if mongodb_cluster_type == 'sharded' else [])
+    }}
+  loop_control:
+    loop_var: port
+    label: "port {{ port }}"
+
+- name: Restore SELinux contexts (no-op on non-SELinux hosts)
+  ansible.builtin.include_tasks: selinux_relabel.yml

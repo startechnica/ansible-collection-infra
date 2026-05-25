@@ -1,0 +1,86 @@
+---
+# Fixture data for cloud-init render tests. Loaded AFTER the role's
+# defaults/main.yml so these win on overlap.
+#
+# Instances cover the cases that actually broke recently:
+#   - single-NIC simple VM
+#   - multi-NIC + dual-stack (IPv4 + IPv6) + per-NIC mtu
+#   - DHCP NIC
+#   - per-VM overrides (cpu, memory, packages, runcmd, users)
+#   - hostname-only entry (name should default from hostname after normalize)
+
+instance_domain_name: test.local
+instance_timezone: UTC
+
+instance_dns_servers: [10.0.0.10, 10.0.0.11]
+instance_networks:
+  gateway4: 10.0.0.1
+  gateway6: "2001:db8::1"
+  mtu: 1500
+
+instance_disks:
+  size_gb: 40
+  type: thin
+  datastore: datastore01
+
+portgroup_name: pg-default
+
+instance_user_name: testuser
+instance_user_password: ""
+instance_user_ssh_authorized_keys:
+  - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAtest test@fixture"
+instance_user_sudo: "ALL=(ALL) NOPASSWD:ALL"
+instance_user_shell: /bin/bash
+instance_user_lock_passwd: true
+
+cloud_init_package_update: true
+cloud_init_package_upgrade: false
+
+instance_packages: [curl]
+instance_runcmds: []
+instance_extra_users: []
+instance_post_commands: []
+
+fixture_instances:
+  - hostname: simple-vm
+    name: simple-vm
+    networks:
+      - ipv4: 10.0.0.10/24
+
+  - hostname: multi-nic-vm
+    name: multi-nic-vm
+    networks:
+      - name: pg-mgmt
+        ipv4: 10.0.0.20/24
+        ipv6: "2001:db8::20/64"
+      - name: pg-data
+        ipv4: dhcp
+        mtu: 9000
+    disks:
+      - size_gb: 80
+      - size_gb: 200
+        type: thick
+
+  - hostname: dhcp-only
+    name: dhcp-only
+    networks:
+      - ipv4: dhcp
+
+  - hostname: hostname-only
+    # In production, `instance/tasks/validate/input.yml` runs a normalisation
+    # step that defaults `name` from `hostname` before templates render.
+    # Fixtures represent post-normalize state, so we set `name` explicitly
+    # to match what production would produce.
+    name: hostname-only
+    networks:
+      - ipv4: 10.0.0.40/24
+    cloud_init:
+      packages: [git, htop]
+      runcmd:
+        - echo "hostname-only fixture ready"
+      users:
+        - name: deploy
+          shell: /bin/bash
+          sudo: "ALL=(ALL) NOPASSWD:ALL"
+          ssh_authorized_keys:
+            - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAtest deploy@ci"

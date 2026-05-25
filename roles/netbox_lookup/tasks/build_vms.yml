@@ -1,0 +1,60 @@
+---
+# Build netbox_vm_list from NetBox query results.
+#
+# Output facts (generic — not tied to any provisioning role):
+#   netbox_vm_list:  List of VM dicts with NetBox data
+#     [{name, netbox_id, ipv4, cpu, memory_mb, disks,
+#       status, platform, role, site, tenant, tags, custom_fields}]
+#
+# Consumers (instance, etc.) can map these to their own vars:
+#   instances: "{{ netbox_vm_list }}"
+
+- name: Initialize netbox_vm_list
+  ansible.builtin.set_fact:
+    netbox_vm_list: []
+
+- name: Build netbox_vm_list from query results
+  ansible.builtin.set_fact:
+    netbox_vm_list: >-
+      {{ netbox_vm_list + [
+        {
+          'name': vm_item.name,
+          'netbox_id': vm_item.id,
+          'ipv4': (_nb_ip_map[vm_item.name] | first).address | default('')
+        }
+        | combine({'cpu': vm_item.vcpus | int} if vm_item.vcpus else {})
+        | combine({'memory_mb': vm_item.memory | int} if vm_item.memory else {})
+        | combine({'disks': [{'size_gb': vm_item.disk | int}]} if vm_item.disk else {})
+        | combine({'status': vm_item.status.value} if vm_item.status is defined else {})
+        | combine({'platform': vm_item.platform.slug} if vm_item.platform is defined and vm_item.platform else {})
+        | combine({'role': vm_item.role.slug} if vm_item.role is defined and vm_item.role else {})
+        | combine({'site': vm_item.site.slug} if vm_item.site is defined and vm_item.site else {})
+        | combine({'tenant': vm_item.tenant.slug} if vm_item.tenant is defined and vm_item.tenant else {})
+        | combine({'cluster': vm_item.cluster.name} if vm_item.cluster is defined and vm_item.cluster else {})
+        | combine({'tags': vm_item.tags | map(attribute='slug') | list} if vm_item.tags | default([]) | length > 0 else {})
+        | combine({'custom_fields': vm_item.custom_fields} if vm_item.custom_fields | default({}) | length > 0 else {})
+      ] }}
+  loop: "{{ netbox_vms }}"
+  loop_control:
+    loop_var: vm_item
+    label: "{{ vm_item.name }}"
+  when: _nb_ip_map[vm_item.name] | default([]) | length > 0
+
+- name: Warn about VMs without IP addresses
+  ansible.builtin.debug:
+    msg: "WARNING: {{ vm_item.name }} (netbox_id={{ vm_item.id }}) has no IP address in NetBox — skipped"
+  loop: "{{ netbox_vms }}"
+  loop_control:
+    loop_var: vm_item
+    label: "{{ vm_item.name }}"
+  when: _nb_ip_map[vm_item.name] | default([]) | length == 0
+
+# Set instances for backward compatibility (consumers can use netbox_vm_list directly)
+- name: Set instances from netbox_vm_list
+  ansible.builtin.set_fact:
+    instances: "{{ netbox_vm_list }}"
+  when: netbox_lookup_set_instances | bool
+
+- name: Display results
+  ansible.builtin.debug:
+    msg: "netbox_vm_list: {{ netbox_vm_list | length }} VMs — {{ netbox_vm_list | map(attribute='name') | list }}"

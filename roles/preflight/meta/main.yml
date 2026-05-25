@@ -1,0 +1,23 @@
+---
+galaxy_info:
+  role_name: preflight
+  author: firmansyahn (firmansyah@nainggolan.id)
+  description: Shared preflight checks for Docker-based database cluster roles
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Ubuntu
+      versions:
+        - jammy
+        - noble
+    - name: Fedora
+      versions:
+        - "41"
+        - "42"
+        - "43"
+  galaxy_tags:
+    - preflight
+    - docker
+    - validation
+
+dependencies: []

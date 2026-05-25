@@ -1,0 +1,323 @@
+---
+# tls_certificates.yml - Generate TLS certificates on the Ansible controller
+# using community.crypto modules, store in artifacts/certs/, distribute to nodes.
+#
+# Requires: community.crypto collection + cryptography Python library on controller.
+#
+# Variables used:
+#   patroni_local_certs_dir     – controller-side cert store (artifacts/certs)
+#   patroni_ca_dir, certs_dir
+#   etcd_certs_dir, patroni_certs_dir, haproxy_certs_dir, vip_manager_certs_dir
+#   node_ips            – list of cluster node IPs
+#   patroni_scope       – cluster name (used in cert subjects)
+#   etcd_uid, etcd_gid, patroni_uid, patroni_gid
+#   tls_cert_days       – certificate validity in days (e.g. 3650)
+
+###############################################################################
+# 0. Local directory structure (on the Ansible controller)
+###############################################################################
+- name: Create local certificate directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0700"
+  loop:
+    - "{{ patroni_local_certs_dir }}"
+    - "{{ patroni_local_certs_dir }}/ca"
+    - "{{ patroni_local_certs_dir }}/etcd"
+    - "{{ patroni_local_certs_dir }}/patroni"
+    - "{{ patroni_local_certs_dir }}/haproxy"
+    - "{{ patroni_local_certs_dir }}/pgbouncer"
+    - "{{ patroni_local_certs_dir }}/vip-manager"
+  delegate_to: localhost
+  run_once: true
+  become: false
+
+###############################################################################
+# 1. Build SAN lists for server certificates
+###############################################################################
+- name: Build SAN entries for server certificates
+  ansible.builtin.set_fact:
+    _san_ips: >-
+      {%- set ips = [] -%}
+      {%- for ip in node_ips -%}
+        {%- set _ = ips.append(ip) -%}
+      {%- endfor -%}
+      {%- set _ = ips.append('127.0.0.1') -%}
+      {%- set _ = ips.append('::1') -%}
+      {%- for h in groups['patroni_nodes'] -%}
+        {%- if hostvars[h].ansible_host_ipv6 is defined -%}
+          {%- set _ = ips.append(hostvars[h].ansible_host_ipv6 | split('/') | first) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ ips | unique }}
+    _san_dns: >-
+      {%- set dns = ['localhost'] -%}
+      {%- for host in groups['patroni_nodes'] -%}
+        {%- set _ = dns.append(hostvars[host].ansible_hostname) -%}
+        {%- if hostvars[host].ansible_fqdn != hostvars[host].ansible_hostname -%}
+          {%- set _ = dns.append(hostvars[host].ansible_fqdn) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ dns | unique }}
+  run_once: true
+
+###############################################################################
+# 2. Certificate Authority (generated locally)
+###############################################################################
+- name: Generate CA private key
+  community.crypto.openssl_privatekey:
+    path: "{{ patroni_local_certs_dir }}/ca/ca.key"
+    type: "{{ tls_key_type }}"
+    curve: "{{ tls_key_curve if tls_key_type == 'ECC' else omit }}"
+    size: "{{ tls_key_size if tls_key_type == 'RSA' else omit }}"
+    mode: "0400"
+  delegate_to: localhost
+  run_once: true
+  become: false
+
+- name: Generate CA CSR
+  community.crypto.openssl_csr:
+    path: "{{ patroni_local_certs_dir }}/ca/ca.csr"
+    privatekey_path: "{{ patroni_local_certs_dir }}/ca/ca.key"
+    common_name: "{{ patroni_scope }}-ca"
+    basic_constraints:
+      - "CA:TRUE"
+    basic_constraints_critical: true
+    key_usage:
+      - keyCertSign
+      - cRLSign
+    key_usage_critical: true
+  delegate_to: localhost
+  run_once: true
+  become: false
+
+- name: Generate self-signed CA certificate
+  community.crypto.x509_certificate:
+    path: "{{ patroni_local_certs_dir }}/ca/ca.crt"
+    csr_path: "{{ patroni_local_certs_dir }}/ca/ca.csr"
+    privatekey_path: "{{ patroni_local_certs_dir }}/ca/ca.key"
+    provider: selfsigned
+    selfsigned_not_after: "+{{ tls_cert_days }}d"
+    selfsigned_digest: "{{ tls_signature_digest }}"
+    mode: "0444"
+  delegate_to: localhost
+  run_once: true
+  become: false
+
+###############################################################################
+# 3. Leaf certificate specs
+###############################################################################
+- name: Define leaf certificate specs
+  ansible.builtin.set_fact:
+    _cert_specs:
+      - { name: etcd-server,      cn: etcd-server,      dir: etcd,        server: true,  client: true,  san: true  }
+      - { name: etcd-peer,        cn: etcd-peer,        dir: etcd,        server: true,  client: true,  san: true  }
+      - { name: etcd-healthcheck, cn: etcd-healthcheck,  dir: etcd,       server: false, client: true,  san: false }
+      - { name: patroni,          cn: patroni,          dir: patroni,     server: true,  client: true,  san: true  }
+      - { name: replicator,       cn: replicator,       dir: patroni,     server: false, client: true,  san: false }
+      - { name: haproxy,          cn: haproxy,          dir: haproxy,     server: false, client: true,  san: false }
+      - { name: pgbouncer,        cn: pgbouncer,        dir: pgbouncer,   server: true,  client: true,  san: true  }
+      - { name: vip-manager,      cn: vip-manager,      dir: vip-manager, server: false, client: true,  san: false }
+  run_once: true
+
+###############################################################################
+# 4. Generate private key, CSR, and signed certificate per spec
+###############################################################################
+- name: Generate leaf private keys
+  community.crypto.openssl_privatekey:
+    path: "{{ patroni_local_certs_dir }}/{{ item.dir }}/{{ item.name }}.key"
+    type: "{{ tls_key_type }}"
+    curve: "{{ tls_key_curve if tls_key_type == 'ECC' else omit }}"
+    size: "{{ tls_key_size if tls_key_type == 'RSA' else omit }}"
+    mode: "0400"
+  loop: "{{ _cert_specs }}"
+  loop_control:
+    label: "{{ item.name }}"
+  delegate_to: localhost
+  run_once: true
+  become: false
+
+- name: Generate leaf CSRs
+  community.crypto.openssl_csr:
+    path: "{{ patroni_local_certs_dir }}/{{ item.dir }}/{{ item.name }}.csr"
+    privatekey_path: "{{ patroni_local_certs_dir }}/{{ item.dir }}/{{ item.name }}.key"
+    common_name: "{{ item.cn }}"
+    subject_alt_name: >-
+      {{ ((_san_ips | map('regex_replace', '^', 'IP:') | list)
+        + (_san_dns | map('regex_replace', '^', 'DNS:') | list))
+        if item.san | bool else omit }}
+    key_usage:
+      - digitalSignature
+      - keyEncipherment
+    key_usage_critical: true
+    extended_key_usage: >-
+      {{ (['serverAuth'] if item.server | bool else [])
+       + (['clientAuth'] if item.client | bool else []) }}
+    basic_constraints:
+      - "CA:FALSE"
+  loop: "{{ _cert_specs }}"
+  loop_control:
+    label: "{{ item.name }}"
+  delegate_to: localhost
+  run_once: true
+  become: false
+
+- name: Sign leaf certificates with CA
+  community.crypto.x509_certificate:
+    path: "{{ patroni_local_certs_dir }}/{{ item.dir }}/{{ item.name }}.crt"
+    csr_path: "{{ patroni_local_certs_dir }}/{{ item.dir }}/{{ item.name }}.csr"
+    ownca_path: "{{ patroni_local_certs_dir }}/ca/ca.crt"
+    ownca_privatekey_path: "{{ patroni_local_certs_dir }}/ca/ca.key"
+    ownca_not_after: "+{{ tls_cert_days }}d"
+    ownca_digest: "{{ tls_signature_digest }}"
+    provider: ownca
+    mode: "0444"
+  loop: "{{ _cert_specs }}"
+  loop_control:
+    label: "{{ item.name }}"
+  delegate_to: localhost
+  run_once: true
+  become: false
+
+###############################################################################
+# 5. HAProxy combined PEM (cert + key)
+###############################################################################
+- name: Read haproxy certificate
+  ansible.builtin.slurp:
+    src: "{{ patroni_local_certs_dir }}/haproxy/haproxy.crt"
+  register: _haproxy_crt
+  delegate_to: localhost
+  run_once: true
+  become: false
+
+- name: Read haproxy key
+  ansible.builtin.slurp:
+    src: "{{ patroni_local_certs_dir }}/haproxy/haproxy.key"
+  register: _haproxy_key
+  delegate_to: localhost
+  run_once: true
+  become: false
+
+- name: Create haproxy-client.pem (cert + key bundle)
+  ansible.builtin.copy:
+    dest: "{{ patroni_local_certs_dir }}/haproxy/haproxy-client.pem"
+    content: |
+      {{ _haproxy_crt.content | b64decode }}{{ _haproxy_key.content | b64decode }}
+    mode: "0400"
+  delegate_to: localhost
+  run_once: true
+  become: false
+
+# Per-service map: directory + owner/group, leaf cert names. Single source
+# of truth — used to (a) create dirs with correct ownership, (b) copy CA
+# cert into each with correct ownership, (c) copy leaf certs with correct
+# ownership. Eliminates the previous 5 separate `Set <svc> certificate
+# ownership` recursive-chown tasks.
+- name: Define per-service certificate map
+  ansible.builtin.set_fact:
+    _cert_services:
+      - { dir: "{{ etcd_certs_dir }}",        owner: "{{ etcd_uid }}",      group: "{{ etcd_gid }}",      leaves: [etcd-server, etcd-peer, etcd-healthcheck] }
+      - { dir: "{{ patroni_certs_dir }}",     owner: "{{ patroni_uid }}",   group: "{{ patroni_gid }}",   leaves: [patroni, replicator] }
+      - { dir: "{{ haproxy_certs_dir }}",     owner: "{{ haproxy_uid }}",   group: "{{ haproxy_gid }}",   leaves: [haproxy] }
+      - { dir: "{{ pgbouncer_certs_dir }}",   owner: "{{ pgbouncer_uid }}", group: "{{ pgbouncer_gid }}", leaves: [pgbouncer] }
+      - { dir: "{{ vip_manager_certs_dir }}", owner: root,                  group: root,                  leaves: [vip-manager] }
+
+###############################################################################
+# 6. Create remote certificate directories with correct per-service ownership
+###############################################################################
+- name: Create CA / parent certificate directories (root-owned)
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - "{{ patroni_ca_dir }}"
+    - "{{ certs_dir }}"
+
+- name: Create per-service certificate directories (service-owned)
+  ansible.builtin.file:
+    path: "{{ item.dir }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.group }}"
+    mode: "0755"
+  loop: "{{ _cert_services }}"
+  loop_control:
+    label: "{{ item.dir }}"
+
+###############################################################################
+# 7. Distribute CA bundle (root-owned, kept under patroni_ca_dir)
+###############################################################################
+- name: Copy CA certificate
+  ansible.builtin.copy:
+    src: "{{ patroni_local_certs_dir }}/ca/ca.crt"
+    dest: "{{ patroni_ca_dir }}/ca.crt"
+    owner: root
+    group: root
+    mode: "0444"
+
+- name: Copy CA key
+  ansible.builtin.copy:
+    src: "{{ patroni_local_certs_dir }}/ca/ca.key"
+    dest: "{{ patroni_ca_dir }}/ca.key"
+    owner: root
+    group: root
+    mode: "0400"
+
+###############################################################################
+# 8. Distribute CA + leaf certificates to per-service directories with
+#    service-specific ownership in one shot.
+###############################################################################
+- name: Copy CA certificate into each service directory (service-owned)
+  ansible.builtin.copy:
+    src: "{{ patroni_local_certs_dir }}/ca/ca.crt"
+    dest: "{{ item.dir }}/ca.crt"
+    owner: "{{ item.owner }}"
+    group: "{{ item.group }}"
+    mode: "0444"
+  loop: "{{ _cert_services }}"
+  loop_control:
+    label: "{{ item.dir }}"
+
+- name: Copy leaf certificate files to remote nodes (service-owned)
+  vars:
+    # Flatten _cert_services into one entry per (leaf × ext). Local source
+    # dir matches the basename of the remote dir for every service (see
+    # patroni/defaults/main.yml :: *_certs_dir), so we can derive both
+    # paths from `svc.dir` and never have to repeat directory names here.
+    _cert_dist: >-
+      {%- set out = [] -%}
+      {%- for svc in _cert_services -%}
+      {%-   for leaf in svc.leaves -%}
+      {%-     for ext in ['.crt', '.key'] -%}
+      {%-       set _ = out.append({
+                  'src':   patroni_local_certs_dir ~ '/' ~ (svc.dir | basename) ~ '/' ~ leaf ~ ext,
+                  'dest':  svc.dir ~ '/' ~ leaf ~ ext,
+                  'owner': svc.owner,
+                  'group': svc.group,
+                  'mode':  '0400' if ext == '.key' else '0444'
+                }) -%}
+      {%-     endfor -%}
+      {%-   endfor -%}
+      {%- endfor -%}
+      {{ out }}
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    owner: "{{ item.owner }}"
+    group: "{{ item.group }}"
+    mode: "{{ item.mode }}"
+  loop: "{{ _cert_dist }}"
+  loop_control:
+    label: "{{ item.dest }}"
+
+- name: Copy haproxy-client.pem to remote nodes
+  ansible.builtin.copy:
+    src: "{{ patroni_local_certs_dir }}/haproxy/haproxy-client.pem"
+    dest: "{{ haproxy_certs_dir }}/haproxy-client.pem"
+    owner: "{{ haproxy_uid }}"
+    group: "{{ haproxy_gid }}"
+    mode: "0400"

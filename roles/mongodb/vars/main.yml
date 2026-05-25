@@ -1,0 +1,25 @@
+---
+# Computed values derived from `defaults/main.yml`. These aren't user
+# inputs — they're convenience compositions referenced by many task
+# files. Keeping them here (lazily evaluated on each reference) instead
+# of as `set_fact` removes a runtime task and makes them available
+# from the moment the role loads, before any of `tasks/main.yml`'s
+# guard / dispatch logic runs.
+#
+# Inventory-derived values that need a one-shot snapshot (e.g.
+# `mongodb_nodes`) stay in `tasks/main.yml`'s set_fact instead — see
+# the comment there for why.
+
+# Fully-qualified container image reference.
+mongodb_image: "{{ mongodb_image_registry }}/{{ mongodb_image_repository }}:{{ mongodb_image_tag }}"
+
+# Per-service port to use for `<engine> exec ... mongosh --port`.
+# Docker uses bridge networking, so each container internally binds
+# 27017 regardless of what host-side port is published. Podman uses
+# Network=host, so the container shares the host's network namespace
+# and `localhost:27017` always reaches mongos — to talk to mongod or
+# configsvr from inside their own container we have to use the actual
+# port the service is bound to on host.
+mongodb_mongod_exec_port: "{{ 27017 if (container_engine | default('docker')) == 'docker' else mongodb_mongod_node_port }}"
+mongodb_configsvr_exec_port: "{{ 27017 if (container_engine | default('docker')) == 'docker' else mongodb_configsvr_node_port }}"
+mongodb_mongos_exec_port: "{{ 27017 if (container_engine | default('docker')) == 'docker' else mongodb_mongos_node_port }}"

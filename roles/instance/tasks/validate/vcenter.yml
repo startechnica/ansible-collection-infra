@@ -1,0 +1,23 @@
+---
+# vCenter credential check — runs first in tasks/main.yml because every
+# subsequent step (folder, datastore lookup, template lookup, deploys)
+# depends on valid vCenter creds. Pure-data assert; no API call.
+
+- name: Validate vCenter credentials
+  ansible.builtin.assert:
+    that:
+      - vcenter_connect.hostname is defined
+      - vcenter_connect.hostname | length > 0
+      - vcenter_connect.username is defined
+      - vcenter_connect.username | length > 0
+      - vcenter_connect.password is defined
+      - vcenter_connect.password | length > 0
+    fail_msg: >
+      vCenter credentials are incomplete.
+      Required variables:
+        - vcenter_connect.hostname
+        - vcenter_connect.username
+        - vcenter_connect.password
+    success_msg: >
+      vCenter credential validation passed: {{ vcenter_connect.hostname }}
+      ({{ vcenter_connect.username }})

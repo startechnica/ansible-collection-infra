@@ -1,0 +1,33 @@
+---
+galaxy_info:
+  role_name: patroni
+  author: firmansyahn (firmansyah@nainggolan.id)
+  company: StarTechnica
+  website: https://firmansyah.nainggolan.id
+  description: Deploy and manage Patroni HA PostgreSQL cluster with etcd, HAProxy, PgBouncer, and TLS
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Ubuntu
+      versions:
+        - noble
+        - jammy
+    - name: Fedora
+      versions:
+        - "41"
+        - "42"
+        - "43"
+  galaxy_tags:
+    - patroni
+    - postgresql
+    - database
+    - docker
+    - cluster
+
+dependencies: []
+# `preflight` was previously a hard dependency, which made it run on EVERY
+# action including uninstall / status / health (wasted ~30s of system
+# checks before tearing things down). Now invoked explicitly from
+# tasks/main.yml gated on `patroni_action`, so it only fires when the
+# action actually needs the system to be ready (provision, backup,
+# manage-databases — not uninstall/status/health/switchover).

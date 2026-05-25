@@ -1,0 +1,70 @@
+---
+# vCenter-state checks: query existing VMs in the target folder and
+# bucket the inventory `instances:` into instances_to_create vs
+# instances_to_skip. Required real vCenter access — pure-data validation
+# lives in `validate/input.yml` and runs first in tasks/main.yml.
+#
+# Sets:
+#   existing_vms_info  — raw vmware_vm_info return
+#   existing_vm_names  — list of `guest_name` strings
+#   instances_to_create — entries from `instances` whose name isn't on vCenter
+#   instances_to_skip   — entries from `instances` whose name IS on vCenter
+
+- name: Get all existing VMs in folder
+  community.vmware.vmware_vm_info:
+    hostname: "{{ vcenter_connect.hostname }}"
+    username: "{{ vcenter_connect.username }}"
+    password: "{{ vcenter_connect.password }}"
+    validate_certs: "{{ vcenter_connect.validate_certs }}"
+    folder: "{{ instance_folder_path }}"
+  delegate_to: localhost
+  run_once: true
+  register: existing_vms_info
+  ignore_errors: true
+
+# Without this, an auth/network/SSL failure on the query above is silently
+# turned into "no VMs exist" by `default([])` below, and every inventory
+# entry gets routed to instances_to_create — risking duplicate provisioning.
+- name: Assert vCenter VM-folder query succeeded
+  ansible.builtin.assert:
+    that:
+      - existing_vms_info is defined
+      - not (existing_vms_info.failed | default(false))
+    fail_msg: >-
+      Could not query vCenter for existing VMs in
+      {{ instance_folder_path }}:
+      {{ existing_vms_info.msg | default('unknown error') }}
+    success_msg: >-
+      Folder {{ instance_folder_path }} reachable
+      ({{ existing_vms_info.virtual_machines | default([]) | length }} VM[s] found)
+  run_once: true
+
+- name: Debug folder query result
+  ansible.builtin.debug:
+    msg: >-
+      Folder: {{ instance_folder_path }} |
+      Found {{ existing_vms_info.virtual_machines | default([]) | length }} VMs |
+      Failed: {{ existing_vms_info.failed | default(false) }}
+  when:
+    - debug | bool
+
+- name: Build list of existing VM names
+  ansible.builtin.set_fact:
+    existing_vm_names: "{{ existing_vms_info.virtual_machines | default([]) | map(attribute='guest_name') | list }}"
+  run_once: true
+
+- name: Identify created vs skipped instances
+  ansible.builtin.set_fact:
+    instances_to_create: "{{ instances | rejectattr('name', 'in', existing_vm_names) | list }}"
+    instances_to_skip: "{{ instances | selectattr('name', 'in', existing_vm_names) | list }}"
+  run_once: true
+
+- name: Report existing VMs (skipped)
+  ansible.builtin.debug:
+    msg: "Instances already exist (will skip): {{ instances_to_skip | map(attribute='name') | list }}"
+  when: instances_to_skip | length > 0
+
+- name: Report instances to create
+  ansible.builtin.debug:
+    msg: "Instances to create: {{ instances_to_create | map(attribute='name') | list }}"
+  when: instances_to_create | length > 0

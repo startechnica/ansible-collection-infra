@@ -1,0 +1,115 @@
+---
+argument_specs:
+  main:
+    short_description: Register VMs, interfaces, IPs, and services in NetBox
+    description:
+      - Writes each VM in the `instances` list into NetBox (create or update),
+        along with its primary interface, IP, and optional services.
+      - Backward-write counterpart to netbox_lookup.
+    options:
+      debug:
+        type: bool
+        default: false
+        description: Verbose / introspection output. Defensive `| bool` filter still used in tasks because CLI `-e debug=true` arrives as a string.
+      netbox_connect:
+        type: dict
+        required: true
+        description: NetBox API connection. Reused from netbox_lookup.
+        options:
+          url:
+            type: str
+            required: true
+          token:
+            type: str
+            required: true
+            no_log: true
+          validate_certs:
+            type: bool
+            default: false
+
+      instances:
+        type: list
+        elements: dict
+        required: true
+        description: >-
+          VM entries to register. Each needs at minimum `name`. Optional fields
+          include ipv4 (CIDR), cpu, memory_mb, disks (list of per-disk dicts
+          like `[{size_gb, type}]`), status, platform, role, site, tenant,
+          cluster_name, tags, custom_fields, netbox_id, interface.
+
+      # ── Defaults applied when a VM entry omits a field ──
+      instance_cpu:
+        type: int
+        description: Fallback vCPUs when vm.cpu is unset.
+      instance_memory_mb:
+        type: int
+        description: Fallback memory in MB.
+      instance_datacenter:
+        type: str
+        description: vCenter instance_datacenter (used to resolve VM UUID / MAC).
+      instance_folder:
+        type: str
+        description: vCenter folder path (for UUID lookup + cf_vcenter_folder).
+      instance_cluster_name:
+        type: str
+
+      # ── netbox_device_* (flat — partial overrides on a dict silently
+      #    drop unspecified keys, so each field is a top-level variable) ──
+      netbox_device_name:
+        type: str
+        default: ""
+        description: >-
+          NetBox device name for the ESXi host the VMs run on. Falls back to
+          `vsphere_esxi_hostname` when empty. Decoupled from `vsphere_esxi_hostname` because
+          the connection address (IP/hostname used by the VMware API) often
+          differs from the canonical asset name in NetBox.
+      netbox_device_role:
+        type: str
+        default: ""
+      netbox_device_vm_status:
+        type: str
+        default: active
+        choices: [active, staged, planned, decommissioning, offline]
+      netbox_device_interface_name:
+        type: str
+        default: ens192
+      netbox_device_platform:
+        type: str
+        default: ubuntu-24-04-lts
+
+      netbox_cluster_name:
+        type: str
+        default: ""
+        description: >-
+          NetBox Cluster the VMs are registered into. Kept separate from the
+          netbox_device_* set because the Cluster name is often independent of
+          the underlying ESXi device name. Resolution chain (most-specific
+          wins): item.cluster_name -> netbox_cluster_name -> instance_cluster_name.
+
+      netbox_site_slug:
+        type: str
+        default: ""
+        description: NetBox site slug owning the VM. Empty = no site assignment.
+      netbox_tenant_slug:
+        type: str
+        default: ""
+        description: NetBox tenant slug owning the VM. Empty = no tenant assignment.
+      instance_tags:
+        type: list
+        elements: str
+        default: []
+        description: Tag slugs applied when a vm entry has no tags.
+      netbox_custom_fields:
+        type: dict
+        default: {}
+      netbox_vrf:
+        type: str
+        default: ""
+
+      vcenter_connect:
+        type: dict
+        description: vCenter creds used to fetch VM UUID/MAC for custom fields (optional).
+
+      netbox_register_enabled:
+        type: bool
+        default: true

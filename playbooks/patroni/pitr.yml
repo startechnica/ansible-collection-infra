@@ -1,0 +1,166 @@
+---
+# ─── Patroni: Point-in-Time Recovery (WAL-G) ────────────────────────────────
+#
+# Performs PITR into an **isolated scratch Postgres** on one node:
+#   1. wal-g backup-fetch LATEST (or -e backup_name=...) to scratch dir
+#   2. Write recovery.signal + postgresql.auto.conf with recovery_target_time
+#      and restore_command pointing at wal-g wal-fetch
+#   3. Start a disposable Postgres pointed at the scratch dir, let it recover
+#      up to the target time, then promote
+#   4. Smoke-check the result; print how to extract and how to tear down
+#
+# The live Patroni cluster is NOT touched.
+#
+# Requires S3/WAL-G to be configured (s3_bucket set in inventory).
+#
+# Usage:
+#   ansible-playbook playbooks/patroni/pitr.yml \
+#     -i inventories/<your-inventory>.yml \
+#     -e target_time='2026-04-22 14:30:00+00'
+#
+# Optional:
+#   -e backup_name=base_000000...  (default: LATEST)
+#   -e target_time_inclusive=false (default: true)
+
+- name: Setup patroni hosts
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - ansible.builtin.include_tasks: _setup.yml
+
+- name: Validate PITR inputs
+  hosts: patroni_nodes[0]
+  gather_facts: false
+  pre_tasks:
+    - ansible.builtin.include_role:
+        name: common
+        tasks_from: inherit_localhost_vars
+  tasks:
+    - name: Require s3_bucket for WAL-G PITR
+      ansible.builtin.assert:
+        that:
+          - (s3_bucket | default('')) | length > 0
+          - target_time is defined
+          - target_time | length > 0
+        fail_msg: >
+          Patroni PITR requires WAL-G (set s3_bucket + s3_* in inventory) and a
+          target_time. Example: -e target_time='2026-04-22 14:30:00+00'
+        success_msg: "PITR inputs OK (s3_bucket={{ s3_bucket }}, target_time={{ target_time }})."
+
+- name: PITR restore to scratch Postgres
+  hosts: patroni_nodes[0]
+  become: true
+  gather_facts: true
+  pre_tasks:
+    - ansible.builtin.include_role:
+        name: common
+        tasks_from: inherit_localhost_vars
+  tasks:
+    - name: Create scratch restore directory
+      ansible.builtin.file:
+        path: /opt/patroni/pitr-restore
+        state: directory
+        owner: "{{ patroni_uid }}"
+        group: "{{ patroni_gid }}"
+        mode: "0700"
+
+    - name: Fetch base backup with wal-g (backup-fetch)
+      community.docker.docker_container_exec:
+        container: patroni
+        command: >
+          /opt/walg/wal-g backup-fetch /var/lib/postgresql/pitr-restore
+          {{ backup_name | default('LATEST') }}
+      changed_when: false
+
+    - name: Write recovery.signal
+      ansible.builtin.copy:
+        dest: /opt/patroni/pitr-restore/recovery.signal
+        content: ""
+        owner: "{{ patroni_uid }}"
+        group: "{{ patroni_gid }}"
+        mode: "0600"
+
+    - name: Configure PITR recovery target
+      ansible.builtin.copy:
+        dest: /opt/patroni/pitr-restore/postgresql.auto.conf
+        owner: "{{ patroni_uid }}"
+        group: "{{ patroni_gid }}"
+        mode: "0600"
+        content: |
+          # PITR overrides (scratch only — never applied to the live cluster)
+          archive_mode = 'off'
+          archive_command = ''
+          restore_command = '/opt/walg/wal-g wal-fetch "%f" "%p"'
+          recovery_target_time = '{{ target_time }}'
+          recovery_target_inclusive = '{{ target_time_inclusive | default(true) | string | lower }}'
+          recovery_target_action = 'promote'
+
+    - name: Start disposable Postgres for PITR
+      community.docker.docker_container:
+        name: patroni-pitr
+        image: "{{ patroni_image }}"
+        state: started
+        recreate: true
+        user: "{{ patroni_uid }}:{{ patroni_gid }}"
+        command: >
+          postgres -D /var/lib/postgresql/pitr-restore
+          -p 55434 -c listen_addresses=127.0.0.1
+          -c archive_mode=off
+        env:
+          WALG_S3_PREFIX: "s3://{{ s3_bucket }}"
+          AWS_ENDPOINT: "{{ s3_endpoint }}"
+          AWS_ACCESS_KEY_ID: "{{ s3_access_key }}"
+          AWS_SECRET_ACCESS_KEY: "{{ s3_secret_key }}"
+          AWS_REGION: "{{ s3_region | default('us-east-1') }}"
+          AWS_S3_FORCE_PATH_STYLE: "{{ s3_force_path_style | default('true') | string }}"
+        volumes:
+          - "/opt/patroni/pitr-restore:/var/lib/postgresql/pitr-restore"
+          - "/opt/walg:/opt/walg:ro"
+        network_mode: bridge
+        detach: true
+        cleanup: false
+
+    - name: Wait for scratch Postgres to recover + promote (may take minutes depending on WAL volume)
+      community.postgresql.postgresql_query:
+        login_host: 127.0.0.1
+        login_port: 55434
+        login_user: postgres
+        login_db: postgres
+        ssl_mode: disable
+        query: SELECT pg_is_in_recovery() AS in_recovery
+      register: _in_recovery
+      until: (_in_recovery.query_result[0].in_recovery | default(true)) == false
+      retries: 120
+      delay: 10
+      changed_when: false
+      failed_when: false
+
+    - name: Smoke check — last applied WAL + database list
+      community.postgresql.postgresql_query:
+        login_host: 127.0.0.1
+        login_port: 55434
+        login_user: postgres
+        login_db: postgres
+        ssl_mode: disable
+        query: >-
+          SELECT pg_last_wal_replay_lsn() AS replay_lsn,
+            (SELECT string_agg(datname, ',') FROM pg_database WHERE NOT datistemplate) AS dbs
+      register: _summary
+      changed_when: false
+
+    - name: PITR report
+      ansible.builtin.debug:
+        msg:
+          - "PITR source: WAL-G backup {{ backup_name | default('LATEST') }} + WAL replay"
+          - "Target time: {{ target_time }}"
+          - "Scratch container: patroni-pitr on {{ inventory_hostname }} (port 55434)"
+          - "Summary: {{ _summary.query_result[0] | default({}) }}"
+          - ""
+          - "Next steps:"
+          - "  - Inspect:  docker exec -it patroni-pitr psql -h 127.0.0.1 -p 55434 -U postgres"
+          - "  - Extract:  docker exec patroni-pitr pg_dump -h 127.0.0.1 -p 55434 -U postgres -d <db> > ./db.sql"
+          - "  - Clean up: docker rm -f patroni-pitr && rm -rf /opt/patroni/pitr-restore"
+          - ""
+          - "To restore into the live cluster, stop Patroni on all nodes, replace"
+          - "pgdata with this scratch dir, and let Patroni re-bootstrap — that's a"
+          - "separate destructive operation; do it deliberately, not automatically."

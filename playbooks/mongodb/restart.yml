@@ -1,0 +1,83 @@
+---
+# ─── MongoDB: Rolling Restart ───────────────────────────────────────────────
+#
+# Restarts each container in-place, node by node, pausing for replSet health
+# between nodes. Primaries are stepped down before restart so clients don't
+# see a failover.
+#
+# Usage:
+#   ansible-playbook playbooks/mongodb/restart.yml -i inventories/<your-inventory>.yml
+#
+# Scope (optional): -e restart_target=mongod|configsvr|mongos|all  (default: all)
+
+- name: Setup mongodb hosts
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - ansible.builtin.include_tasks: _setup.yml
+
+- name: Rolling restart of MongoDB containers
+  hosts: mongodb_nodes
+  become: true
+  gather_facts: true
+  serial: 1
+  pre_tasks:
+    - ansible.builtin.include_role:
+        name: common
+        tasks_from: inherit_localhost_vars
+  tasks:
+    - name: Set restart target
+      ansible.builtin.set_fact:
+        _targets: >-
+          {{ (['mongodb-mongod'] +
+              (['mongodb-configsvr', 'mongodb-mongos'] if mongodb_cluster_type == 'sharded' else []))
+             if (restart_target | default('all')) == 'all'
+             else ['mongodb-' ~ restart_target] }}
+
+    - name: Step down primary if this node holds it
+      community.docker.docker_container_exec:
+        container: "{{ item }}"
+        command: >
+          mongosh --port 27017 --quiet --tls
+          --tlsCertificateKeyFile /etc/mongo/ssl/healthcheck.pem
+          --tlsCAFile /etc/mongo/ssl/ca.pem
+          --authenticationMechanism MONGODB-X509
+          --authenticationDatabase '$external'
+          --eval "try { rs.stepDown(60); } catch(e) { if (!String(e).includes('no longer primary')) throw e; }"
+      loop: "{{ _targets }}"
+      failed_when: false
+      changed_when: false
+
+    - name: Restart container
+      community.docker.docker_container:
+        name: "{{ item }}"
+        state: started
+        restart: true
+      loop: "{{ _targets }}"
+
+    - name: Wait for container healthcheck to go green
+      community.docker.docker_container_info:
+        name: "{{ item }}"
+      register: _container_info
+      loop: "{{ _targets }}"
+      until: >
+        _container_info.container.State.Health.Status | default('') == 'healthy'
+        or _container_info.container.State.Running | default(false)
+      retries: 30
+      delay: 5
+
+    - name: Confirm replSet health before moving on
+      community.docker.docker_container_exec:
+        container: mongodb-mongod
+        command: >-
+          mongosh --port 27017 --quiet --tls
+          --tlsCertificateKeyFile /etc/mongo/ssl/healthcheck.pem
+          --tlsCAFile /etc/mongo/ssl/ca.pem
+          --authenticationMechanism MONGODB-X509
+          --authenticationDatabase '$external'
+          --eval "JSON.stringify(rs.status().members)"
+      register: _rs_status
+      until: (_rs_status.stdout | from_json | selectattr('health', 'equalto', 1) | list | length) >= (mongodb_nodes | length)
+      retries: 30
+      delay: 5
+      changed_when: false

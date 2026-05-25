@@ -1,0 +1,62 @@
+---
+# firewalld — RHEL / Rocky / Alma / CentOS Stream / Fedora
+#
+# Installs firewalld, starts + enables the service, then applies
+# declared ports and trusted sources as rich rules. Uses the default
+# 'public' zone; move targets to other zones manually if needed.
+
+- name: Ensure firewalld is installed
+  ansible.builtin.package:
+    name: firewalld
+    state: present
+
+- name: Start and enable firewalld
+  ansible.builtin.systemd:
+    name: firewalld
+    state: started
+    enabled: true
+
+- name: Set default zone target (incoming policy)
+  ansible.posix.firewalld:
+    zone: public
+    target: "{{ 'DROP' if firewall_default_incoming == 'deny' else 'default' }}"
+    permanent: true
+    state: present
+  notify: firewalld-reload
+
+# Trusted sources — blanket allow via rich rule.
+- name: Allow trusted sources (rich rule, any service)
+  ansible.posix.firewalld:
+    rich_rule: "rule family=ipv4 source address={{ item }} accept"
+    permanent: true
+    immediate: true
+    state: enabled
+  loop: "{{ _fw_trusted_sources | default([]) }}"
+
+# Declared ports WITHOUT a source — open to any.
+- name: Allow declared ports (any source)
+  ansible.posix.firewalld:
+    port: "{{ item.port | int }}/{{ item.protocol | default('tcp') }}"
+    permanent: true
+    immediate: true
+    state: enabled
+  loop: "{{ _fw_rules }}"
+  loop_control:
+    label: "{{ item.port }}/{{ item.protocol | default('tcp') }}"
+  when: (item.source | default('')) | length == 0
+
+# Declared ports WITH a source — rich rule (firewalld can't combine port+source otherwise).
+- name: Allow declared ports (scoped by source)
+  ansible.posix.firewalld:
+    rich_rule: >-
+      rule family=ipv4
+      source address={{ item.source }}
+      port port={{ item.port | int }} protocol={{ item.protocol | default('tcp') }}
+      accept
+    permanent: true
+    immediate: true
+    state: enabled
+  loop: "{{ _fw_rules }}"
+  loop_control:
+    label: "{{ item.port }}/{{ item.protocol | default('tcp') }} from {{ item.source | default('any') }}"
+  when: (item.source | default('')) | length > 0

@@ -1,0 +1,268 @@
+---
+# ── Manual confirmation before destructive operation ──
+
+- name: Display uninstall warning
+  ansible.builtin.debug:
+    msg:
+      - "╔══════════════════════════════════════════════════════════════╗"
+      - "║  WARNING: MongoDB UNINSTALL on {{ inventory_hostname }}"
+      - "║  Engine:     {{ container_engine | default('docker') }}"
+      - "║  Data root:  {{ mongodb_root_dir }}"
+      - "║  Prune data: {{ mongodb_destroy_prune }}"
+      - "╚══════════════════════════════════════════════════════════════╝"
+  run_once: true
+
+- name: Confirm uninstall
+  ansible.builtin.pause:
+    prompt: "Type 'prune' to confirm MongoDB uninstall on {{ mongodb_nodes | map(attribute='ipv4') | join(', ') }}"
+  register: _uninstall_confirm
+  run_once: true
+  when: not (mongodb_skip_confirm | default(false) | bool)
+
+- name: Note uninstall was declined
+  ansible.builtin.debug:
+    msg: >-
+      Uninstall aborted by user
+      (input was {{ ((_uninstall_confirm | default({})).user_input | default('') | string) | to_json }}
+      — expected 'prune'). No changes made.
+  when:
+    - not (mongodb_skip_confirm | default(false) | bool)
+    - (_uninstall_confirm | default({})).user_input | default('') != 'prune'
+  run_once: true
+
+# Graceful exit on decline (rc=0). Same pattern as instance/destroy.yml
+# — typing anything other than 'prune' is a deliberate cancel, not a
+# failure condition.
+- name: End play (uninstall declined)
+  ansible.builtin.meta: end_play
+  when:
+    - not (mongodb_skip_confirm | default(false) | bool)
+    - (_uninstall_confirm | default({})).user_input | default('') != 'prune'
+
+# ── Stop and remove containers ────────────────────────────────────────
+# Two branches matching the runtime selected at install time. Each is
+# defensive (`failed_when: false`) so a partially-installed cluster
+# can still be torn down without the playbook erroring on missing
+# containers/units/files.
+
+- name: Stop and remove containers (docker)
+  community.docker.docker_compose_v2:
+    project_src: "{{ mongodb_root_dir }}"
+    state: absent
+    remove_orphans: true
+  failed_when: false
+  when: container_engine | default('docker') == 'docker'
+
+- name: Remove Docker network (docker)
+  community.docker.docker_network:
+    name: "{{ mongodb_network }}"
+    state: absent
+  failed_when: false
+  when: container_engine | default('docker') == 'docker'
+
+# Podman / Quadlet path. Stop systemd services, disable them, remove
+# the Quadlet source files, daemon-reload. Containers run on
+# Network=host, so there's no podman network to drop. We list every
+# possible unit/file rather than computing from `mongodb_cluster_type`
+# / `mongodb_exporter_enabled` — those values may have changed between
+# install and uninstall, and an "extra" stop on a non-existent unit is
+# a no-op with `failed_when: false`.
+- name: Stop and remove Quadlet services (podman)
+  when: container_engine | default('docker') == 'podman'
+  block:
+    - name: Stop + disable Quadlet services
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: stopped
+        enabled: false
+      loop:
+        - mongodb-mongod.service
+        - mongodb-configsvr.service
+        - mongodb-mongos.service
+        - mongodb-exporter.service
+      loop_control:
+        label: "{{ item }}"
+      failed_when: false
+
+    - name: Remove Quadlet source files
+      ansible.builtin.file:
+        path: "/etc/containers/systemd/{{ item }}"
+        state: absent
+      loop:
+        - mongodb-mongod.container
+        - mongodb-configsvr.container
+        - mongodb-mongos.container
+        - mongodb-exporter.container
+      loop_control:
+        label: "{{ item }}"
+
+    # Generator only re-evaluates /etc/containers/systemd at
+    # daemon-reload — without this, removed unit files linger as
+    # "loaded" until the next boot.
+    - name: Reload systemd (Quadlet generator)
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Reset failed state for removed units
+      ansible.builtin.command: systemctl reset-failed {{ item }}
+      loop:
+        - mongodb-mongod.service
+        - mongodb-configsvr.service
+        - mongodb-mongos.service
+        - mongodb-exporter.service
+      loop_control:
+        label: "{{ item }}"
+      failed_when: false
+      changed_when: false
+
+    # Force-remove any stragglers that systemd's stop-via-Quadlet
+    # might have missed (e.g., orphaned containers from manual
+    # `podman run` invocations during debugging).
+    - name: Force-remove any straggler containers (podman)
+      containers.podman.podman_container:
+        name: "{{ item }}"
+        state: absent
+        force: true
+      loop:
+        - mongodb-mongod
+        - mongodb-configsvr
+        - mongodb-mongos
+        - mongodb-exporter
+      loop_control:
+        label: "{{ item }}"
+      failed_when: false
+
+# ── Shared cleanup (host-level config, regardless of engine) ──────────
+
+- name: Remove THP disable service
+  ansible.builtin.systemd:
+    name: disable-thp
+    enabled: false
+    state: stopped
+  failed_when: false
+
+- name: Delete THP service file
+  ansible.builtin.file:
+    path: /etc/systemd/system/disable-thp.service
+    state: absent
+
+- name: Remove sysctl config
+  ansible.builtin.file:
+    path: /etc/sysctl.d/99-mongodb.conf
+    state: absent
+  notify: reload sysctl
+
+- name: Remove ulimits config
+  ansible.builtin.file:
+    path: /etc/security/limits.d/99-mongodb.conf
+    state: absent
+
+- name: Remove docker-compose.yml (docker)
+  ansible.builtin.file:
+    path: "{{ mongodb_root_dir }}/docker-compose.yml"
+    state: absent
+  when: container_engine | default('docker') == 'docker'
+
+- name: Remove bootstrap-complete marker
+  ansible.builtin.file:
+    path: "{{ mongodb_root_dir }}/.bootstrap_complete"
+    state: absent
+
+# Second-stage interactive prune confirm. Same dual-gate pattern as
+# instance/destroy.yml: the first confirm at the top of this file gates
+# CONTAINER/CONFIG removal; this one gates DATA removal, so a wrong
+# `mongodb_destroy_prune=true` flag still gets a final IRREVERSIBLE
+# warning before wiping the data directory.
+- name: Confirm prune (delete MongoDB data directory)
+  ansible.builtin.pause:
+    prompt: >-
+      Containers and configs removed. Type 'prune' to DELETE the data
+      directory {{ mongodb_root_dir }} (IRREVERSIBLE),
+      anything else to leave data on disk
+  register: _prune_confirm
+  run_once: true
+  when:
+    - mongodb_destroy_prune | bool
+    - not (mongodb_skip_confirm | default(false) | bool)
+
+- name: Remove data directory (prune confirmed)
+  ansible.builtin.file:
+    path: "{{ mongodb_root_dir }}"
+    state: absent
+  when:
+    - mongodb_destroy_prune | bool
+    - (mongodb_skip_confirm | default(false) | bool)
+      or ((_prune_confirm | default({})).user_input | default('') == 'prune')
+
+- name: Note prune was declined
+  ansible.builtin.debug:
+    msg: >-
+      Prune aborted by user — data directory {{ mongodb_root_dir }}
+      left intact. Re-run with -e mongodb_skip_confirm=true to bypass
+      both confirms in automated flows.
+  when:
+    - mongodb_destroy_prune | bool
+    - not (mongodb_skip_confirm | default(false) | bool)
+    - (_prune_confirm | default({})).user_input | default('') != 'prune'
+
+- name: Warn about data directory
+  ansible.builtin.debug:
+    msg: >
+      Data directory {{ mongodb_root_dir }} was NOT removed.
+      Re-run with -e mongodb_destroy_prune=true to delete.
+  when: not (mongodb_destroy_prune | bool)
+
+- name: Check mongodb user before removal
+  ansible.builtin.command: getent passwd mongodb
+  register: _mongodb_user
+  changed_when: false
+  failed_when: false
+
+- name: "Remove mongodb user (UID-aware)"
+  when: _mongodb_user.rc == 0
+  vars:
+    _existing_uid: "{{ _mongodb_user.stdout.split(':')[2] | int }}"
+  block:
+    - name: Remove mongodb user
+      ansible.builtin.user:
+        name: mongodb
+        state: absent
+        remove: false
+      when: _existing_uid == (mongodb_uid | int)
+
+    - name: Skip mongodb user removal (UID mismatch)
+      ansible.builtin.debug:
+        msg: >-
+          Skipping removal of 'mongodb' user — UID is {{ _existing_uid }},
+          expected {{ mongodb_uid }}. This user may belong to another service.
+      when: _existing_uid != (mongodb_uid | int)
+
+- name: Check mongodb group before removal
+  ansible.builtin.command: getent group mongodb
+  register: _mongodb_group
+  changed_when: false
+  failed_when: false
+
+- name: "Remove mongodb group (GID-aware)"
+  when: _mongodb_group.rc == 0
+  vars:
+    _existing_gid: "{{ _mongodb_group.stdout.split(':')[2] | int }}"
+  block:
+    - name: Remove mongodb group
+      ansible.builtin.group:
+        name: mongodb
+        state: absent
+      when: _existing_gid == (mongodb_gid | int)
+
+    - name: Skip mongodb group removal (GID mismatch)
+      ansible.builtin.debug:
+        msg: >-
+          Skipping removal of 'mongodb' group — GID is {{ _existing_gid }},
+          expected {{ mongodb_gid }}. This group may belong to another service.
+      when: _existing_gid != (mongodb_gid | int)
+
+- name: Uninstall complete
+  ansible.builtin.debug:
+    msg: >-
+      MongoDB cluster uninstalled from {{ inventory_hostname }}
+      (engine={{ container_engine | default('docker') }}).

@@ -1,0 +1,15 @@
+---
+- name: "Deploy VM from content library (vm-template) — {{ item.name }}"
+  vmware.vmware.deploy_content_library_template:
+    hostname: "{{ vcenter_connect.hostname }}"
+    username: "{{ vcenter_connect.username }}"
+    password: "{{ vcenter_connect.password }}"
+    validate_certs: "{{ vcenter_connect.validate_certs }}"
+    datacenter: "{{ instance_datacenter }}"
+    datastore: "{{ instance_disks.datastore }}"
+    folder: "{{ instance_folder }}"
+    library_item_id: "{{ _content_library_item_id }}"
+    library_id: "{{ _content_library_id }}"
+    vm_name: "{{ item.name }}"
+    cluster: "{{ instance_cluster_name }}"
+  delegate_to: localhost

@@ -1,0 +1,143 @@
+scope: {{ patroni_scope }}
+name: {{ node_name }}
+
+restapi:
+  listen: 0.0.0.0:{{ patroni_api_port }}
+  connect_address: {{ node_ip }}:{{ patroni_api_port }}
+  certfile: /etc/certs/patroni.crt
+  keyfile: /etc/certs/patroni.key
+  cafile: /etc/certs/ca.crt
+
+etcd3:
+  hosts:
+{% for ip in node_ips %}
+    - {{ ip }}:{{ etcd_client_port }}
+{% endfor %}
+  protocol: https
+  cacert: /etc/certs/ca.crt
+  cert: /etc/certs/patroni.crt
+  key: /etc/certs/patroni.key
+
+bootstrap:
+  dcs:
+    ttl: 30
+    loop_wait: 10
+    retry_timeout: 10
+    maximum_lag_on_failover: 1048576
+    postgresql:
+      use_pg_rewind: true
+      use_slots: true
+      parameters:
+        password_encryption: scram-sha-256
+        ssl: "on"
+        ssl_cert_file: /etc/certs/patroni.crt
+        ssl_key_file: /etc/certs/patroni.key
+        ssl_ca_file: /etc/certs/ca.crt
+        wal_level: replica
+        hot_standby: "on"
+        max_connections: 200
+        max_wal_senders: 10
+        max_replication_slots: 10
+        wal_keep_size: "1GB"
+        archive_mode: "on"
+{% if patroni_extensions | default([]) | length > 0 %}
+        shared_preload_libraries: "{{ patroni_extensions | join(',') }}"
+{% endif %}
+{% if walg_enabled %}
+        archive_command: "/opt/walg/wal-g wal-push %p"
+        restore_command: "/opt/walg/wal-g wal-fetch %f %p"
+{% else %}
+        archive_command: "test -f /wal_archive/%f || cp %p /wal_archive/%f"
+        restore_command: "cp /wal_archive/%f %p"
+{% endif %}
+        # Memory — auto-calculated from host RAM
+        shared_buffers: "{{ pg_shared_buffers }}"
+        effective_cache_size: "{{ pg_effective_cache }}"
+        work_mem: "{{ pg_work_mem }}"
+        maintenance_work_mem: "{{ pg_maint_mem }}"
+        wal_buffers: "64MB"
+        huge_pages: "try"
+        # WAL / checkpoints
+        checkpoint_completion_target: 0.9
+        min_wal_size: "1GB"
+        max_wal_size: "4GB"
+        # Storage — SSD-optimized defaults
+        random_page_cost: 1.1
+        effective_io_concurrency: 200
+        # Logging
+{% if postgresql_log_destination == "file" %}
+        logging_collector: "on"
+        log_directory: /var/log/postgresql
+        log_filename: "postgresql-%Y-%m-%d_%H%M%S.log"
+{% elif postgresql_log_destination == "stdout" %}
+        logging_collector: "off"
+{% elif postgresql_log_destination == "both" %}
+        logging_collector: "on"
+        log_directory: /var/log/postgresql
+        log_filename: "postgresql-%Y-%m-%d_%H%M%S.log"
+        log_destination: "stderr,csvlog"
+{% endif %}
+  post_bootstrap: "psql -c 'CREATE ROLE replicator WITH REPLICATION LOGIN'"
+  initdb:
+    - encoding: UTF8
+    - data-checksums
+  pg_hba:
+    # ── Replication: peers only, TLS required ──
+{% for ip in node_ips %}
+{% if postgresql_replication_password %}
+    - hostssl replication replicator {{ ip }}/32 scram-sha-256
+{% else %}
+    - hostssl replication replicator {{ ip }}/32 cert
+{% endif %}
+{% endfor %}
+    # ── PgBouncer + Ansible (runs in host network on this node) ──
+    # hostssl: PgBouncer container connects with TLS via server_tls_sslmode=prefer
+    # host:    Ansible postgresql_* tasks (manage_databases, pgbouncer_auth, etc.)
+    #          connect from localhost with ssl_mode=disable. No network exposure
+    #          since 127.0.0.1 only.
+    - hostssl all all 127.0.0.1/32 scram-sha-256
+    - host    all all 127.0.0.1/32 scram-sha-256
+    # ── Other cluster nodes (Patroni REST, ad-hoc psql between members) ──
+{% for ip in node_ips %}
+    - hostssl all all {{ ip }}/32 scram-sha-256
+{% endfor %}
+{% if postgresql_admin_cidrs | default([]) | length > 0 %}
+    # ── Admin / external direct PG access (set postgresql_admin_cidrs) ──
+{% for cidr in postgresql_admin_cidrs %}
+    - hostssl all all {{ cidr }} scram-sha-256
+{% endfor %}
+{% endif %}
+    # No catch-all; everything else implicitly denied.
+
+postgresql:
+  listen: 0.0.0.0:{{ postgresql_port }}
+  connect_address: {{ node_ip }}:{{ postgresql_port }}
+  proxy_address: {{ node_ip }}:{{ pgbouncer_port }}
+  data_dir: /var/lib/postgresql/pg_data
+  config_dir: /var/lib/postgresql/pg_data
+  authentication:
+    superuser:
+      username: postgres
+      password: "{{ postgresql_postgres_password }}"
+{% if postgresql_replication_password %}
+    replication:
+      username: replicator
+      password: "{{ postgresql_replication_password }}"
+      sslmode: verify-ca
+      sslcert: /etc/certs/replicator.crt
+      sslkey: /etc/certs/replicator.key
+      sslrootcert: /etc/certs/ca.crt
+{% else %}
+    replication:
+      username: replicator
+      sslmode: verify-ca
+      sslcert: /etc/certs/replicator.crt
+      sslkey: /etc/certs/replicator.key
+      sslrootcert: /etc/certs/ca.crt
+{% endif %}
+
+tags:
+  nofailover: false
+  noloadbalance: false
+  clonefrom: false
+  nosync: false

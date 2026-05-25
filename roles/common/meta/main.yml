@@ -1,0 +1,15 @@
+---
+galaxy_info:
+  role_name: common
+  author: firmansyahn (firmansyah@nainggolan.id)
+  description: Reusable utility tasks — SSH probe, localhost var inheritance, add_host from instances
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Ubuntu
+      versions: [all]
+  galaxy_tags:
+    - utility
+    - helpers
+
+dependencies: []

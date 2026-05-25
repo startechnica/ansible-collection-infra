@@ -1,0 +1,92 @@
+---
+# WAL-G provisioning — password gen + env file render.
+# Caller (configs.yml) gates this include on walg_enabled, so everything
+# below runs unconditionally when entered.
+
+- name: Generate walg auth password (idempotent — reuses existing file)
+  ansible.builtin.set_fact:
+    walg_auth_password: >-
+      {{ walg_auth_password if walg_auth_password != ''
+         else lookup('password',
+           walg_credentials_file ~ ' length=64 chars=ascii_letters,digits') }}
+  run_once: true
+  no_log: true
+
+- name: Deploy walg.env
+  ansible.builtin.template:
+    src: walg.env.j2
+    dest: "{{ walg_dir }}/walg.env"
+    mode: "0600"
+  notify: restart walg
+
+- name: Deploy walg Dockerfile (local build — no upstream image published)
+  ansible.builtin.template:
+    src: dockerfiles/walg.Dockerfile.j2
+    dest: "{{ walg_dir }}/Dockerfile"
+    mode: "0644"
+  when: walg_build_local
+
+# ── Scheduled backup: host-level systemd timer + helper script ──────────
+# Replaces the old in-container sleep loop with the same pattern used by
+# etcd-snapshot. Persistent=true on the timer means a missed run (host
+# offline at the scheduled time) gets caught up on next boot.
+
+- name: Deploy walg-backup helper script
+  ansible.builtin.template:
+    src: walg-backup.sh.j2
+    dest: "{{ patroni_dir }}/walg-backup.sh"
+    mode: "0755"
+
+- name: Install walg-cron.service unit
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/walg-cron.service
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=WAL-G scheduled backup (oneshot)
+      Documentation=man:systemd.timer(5)
+      After=patroni.service
+      Requires=patroni.service
+
+      [Service]
+      Type=oneshot
+      ExecStart={{ patroni_dir }}/walg-backup.sh
+      StandardOutput=append:/var/log/walg-backup.log
+      StandardError=append:/var/log/walg-backup.log
+  notify: reload systemd
+  when: walg_schedule | length > 0
+
+- name: Install walg-cron.timer unit
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/walg-cron.timer
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Schedule WAL-G backups
+      Documentation=man:systemd.timer(5)
+
+      [Timer]
+      OnCalendar={{ walg_schedule }}
+      Persistent=true
+      Unit=walg-cron.service
+
+      [Install]
+      WantedBy=timers.target
+  notify: reload systemd
+  when: walg_schedule | length > 0
+
+- name: Enable and start walg-cron.timer
+  ansible.builtin.systemd:
+    name: walg-cron.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: walg_schedule | length > 0
+
+- name: Disable walg-cron.timer if scheduling is empty
+  ansible.builtin.systemd:
+    name: walg-cron.timer
+    enabled: false
+    state: stopped
+  failed_when: false
+  when: walg_schedule | length == 0

@@ -1,0 +1,19 @@
+---
+# Syntax-only scaffold: import_role + when: false statically parses the role
+# (catches YAML errors, undefined defaults, malformed argument_specs) but
+# doesn't actually hit NetBox. A functional scenario needs a mock NetBox
+# endpoint — see molecule/default/README.md.
+
+- name: Converge
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Parse-check netbox_lookup
+      ansible.builtin.import_role:
+        name: netbox_lookup
+      when: false
+
+    - name: Placeholder — replace with functional test once NetBox mock is wired
+      ansible.builtin.debug:
+        msg: "netbox_lookup loaded cleanly."

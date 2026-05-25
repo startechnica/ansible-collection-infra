@@ -1,0 +1,85 @@
+---
+# Create application databases and users defined in mongodb_databases
+# Uses community.mongodb.mongodb_user for idempotent user management.
+
+- name: Skip if no databases defined
+  ansible.builtin.debug:
+    msg: "No application databases defined (mongodb_databases is empty)"
+  when: mongodb_databases | length == 0
+  run_once: true
+
+- name: Create application users
+  community.mongodb.mongodb_user:
+    login_host: localhost
+    login_port: "{{ _client_port }}"
+    login_user: "{{ mongodb_admin_user }}"
+    login_password: "{{ mongodb_admin_password }}"
+    login_database: admin
+    database: "{{ item.1.auth_db | default(item.0.name) }}"
+    name: "{{ item.1.name }}"
+    password: "{{ item.1.password }}"
+    roles: "{{ item.1.roles }}"
+    state: present
+    ssl: true
+    ssl_certfile: "{{ mongodb_tls_dir }}/healthcheck.pem"
+    ssl_ca_certs: "{{ mongodb_tls_dir }}/ca.pem"
+  loop: >-
+    {{ mongodb_databases | subelements('users') }}
+  loop_control:
+    label: "{{ item.1.name }}@{{ item.1.auth_db | default(item.0.name) }}"
+  run_once: true
+  no_log: true
+  when: mongodb_databases | length > 0
+
+# ── Save credentials and URIs to artifacts directory ─────────────────────────
+
+- name: Create artifacts directory
+  ansible.builtin.file:
+    path: "{{ hostvars['localhost'].artifacts_dir }}/mongodb"
+    state: directory
+    mode: "0700"
+  delegate_to: localhost
+  become: false
+  run_once: true
+  when: mongodb_databases | length > 0
+
+- name: Build mongos host list
+  ansible.builtin.set_fact:
+    _mongos_hosts: "{{ mongodb_nodes | map(attribute='ipv4') | map('regex_replace', '^(.*)$', '\\1:' ~ _client_port) | join(',') }}"
+  run_once: true
+  when: mongodb_databases | length > 0
+
+- name: Save database credentials and URIs
+  ansible.builtin.template:
+    src: user-credentials.txt.j2
+    dest: "{{ hostvars['localhost'].artifacts_dir }}/mongodb/{{ item.0.name }}-{{ item.1.name }}.txt"
+    mode: "0600"
+  vars:
+    _db: "{{ item.0 }}"
+    _user: "{{ item.1 }}"
+  loop: >-
+    {{ mongodb_databases | subelements('users') }}
+  loop_control:
+    label: "{{ item.1.name }}@{{ item.0.name }}"
+  delegate_to: localhost
+  become: false
+  run_once: true
+  no_log: true
+  when: mongodb_databases | length > 0
+
+- name: Save admin credentials to artifacts
+  ansible.builtin.template:
+    src: admin-credentials-artifact.txt.j2
+    dest: "{{ hostvars['localhost'].artifacts_dir }}/mongodb/admin.txt"
+    mode: "0600"
+  delegate_to: localhost
+  become: false
+  run_once: true
+  no_log: true
+  when: mongodb_databases | length > 0
+
+- name: Display artifacts location
+  ansible.builtin.debug:
+    msg: "Credentials saved to {{ hostvars['localhost'].artifacts_dir }}/mongodb/"
+  run_once: true
+  when: mongodb_databases | length > 0

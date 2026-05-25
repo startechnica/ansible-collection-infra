@@ -1,0 +1,26 @@
+---
+# Reusable: Import an OVF/OVA from a URL into a content library item.
+#
+# Required vars (set before calling):
+#   _cl_item_name:   Content library item name
+#   _cl_source_url:  URL to import from (vCenter pulls directly)
+#   _cl_description: Description for the imported item
+#
+# Side effect: updates content_library_template to _cl_item_name
+
+- name: "Import to content library (vCenter pulls from URL) — {{ _cl_item_name }}"
+  vmware.vmware.import_content_library_ovf:
+    hostname: "{{ vcenter_connect.hostname }}"
+    username: "{{ vcenter_connect.username }}"
+    password: "{{ vcenter_connect.password }}"
+    validate_certs: "{{ vcenter_connect.validate_certs }}"
+    library_name: "{{ content_library_name }}"
+    dest: "{{ _cl_item_name }}"
+    src: "{{ _cl_source_url }}"
+    description: "{{ _cl_description | default('Imported by Ansible') }}"
+    state: present
+  delegate_to: localhost
+
+- name: Set content library template to imported item
+  ansible.builtin.set_fact:
+    content_library_template: "{{ _cl_item_name }}"

@@ -1,0 +1,24 @@
+---
+extends: default
+
+rules:
+  line-length:
+    max: 180
+    level: warning
+  indentation:
+    spaces: 2
+    indent-sequences: consistent
+  comments:
+    min-spaces-from-content: 1
+  comments-indentation: disable
+  truthy:
+    allowed-values: ['true', 'false', 'yes', 'no']
+  braces:
+    max-spaces-inside: 1
+  document-start: disable
+
+ignore: |
+  .cache/
+  .github/
+  playbooks/artifacts/
+  artifacts/

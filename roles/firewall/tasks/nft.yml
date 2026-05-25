@@ -1,0 +1,89 @@
+---
+# nftables — direct nftables management for systems without firewalld
+# (FCOS, RHCOS, minimal Fedora, etc.). Coexists with docker's own
+# nftables tables: we own only the `inet startechnica` table; docker
+# owns its `ip filter` / `ip nat` / `bridge filter` tables and the
+# `DOCKER-USER` chain, which this role doesn't touch.
+#
+# Persistence is via a dedicated systemd oneshot service (not by
+# replacing /etc/sysconfig/nftables.conf, which the nftables package
+# manages). On boot, startechnica-firewall.service runs
+#   `nft -f /etc/nftables/startechnica.nft`
+# which deletes and recreates our table from scratch.
+
+- name: Verify nft binary present
+  ansible.builtin.command: nft --version
+  register: _nft_version
+  changed_when: false
+
+- name: Ensure /etc/nftables exists
+  ansible.builtin.file:
+    path: /etc/nftables
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Render startechnica nftables ruleset
+  ansible.builtin.template:
+    src: startechnica.nft.j2
+    dest: /etc/nftables/startechnica.nft
+    owner: root
+    group: root
+    mode: "0644"
+  register: _nft_ruleset
+
+- name: Install startechnica-firewall.service
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/startechnica-firewall.service
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Apply startechnica firewall rules (nftables)
+      Documentation=man:nft(8)
+      Wants=network-pre.target
+      Before=network-pre.target shutdown.target
+      Conflicts=shutdown.target
+      # Run after docker.service so docker's tables are already in place
+      # — we don't want to land before them and have policy=drop in our
+      # input chain bounce before docker registers its own hooks.
+      After=docker.service
+
+      [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      ExecStart=/usr/sbin/nft -f /etc/nftables/startechnica.nft
+      ExecReload=/usr/sbin/nft -f /etc/nftables/startechnica.nft
+      ExecStop=/usr/sbin/nft delete table inet startechnica
+
+      [Install]
+      WantedBy=multi-user.target
+  register: _nft_service
+
+- name: Reload systemd if unit changed
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: _nft_service is changed
+
+- name: Enable and start startechnica-firewall.service
+  ansible.builtin.systemd:
+    name: startechnica-firewall.service
+    enabled: true
+    state: started
+
+- name: Reload startechnica-firewall.service if ruleset changed
+  ansible.builtin.systemd:
+    name: startechnica-firewall.service
+    state: reloaded
+  when: _nft_ruleset is changed
+
+- name: Show active nftables ruleset (informational)
+  ansible.builtin.command: nft list table inet startechnica
+  register: _nft_list
+  changed_when: false
+
+- name: Display table summary
+  ansible.builtin.debug:
+    msg: "{{ _nft_list.stdout_lines | select('match', '^\\s+(tcp|udp|ip|comment)') | list | length }} accept rules active in inet startechnica."

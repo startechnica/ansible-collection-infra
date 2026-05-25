@@ -1,0 +1,79 @@
+---
+# Render Butane configs and convert to Ignition JSON for each VM.
+# Only runs when: instance_init_type == 'ignition'
+
+- name: Check that butane CLI is available on the controller
+  ansible.builtin.command: which butane
+  register: _butane_check
+  changed_when: false
+  failed_when: false
+  delegate_to: localhost
+  run_once: true
+
+- name: Assert butane CLI is available on the controller
+  ansible.builtin.assert:
+    that:
+      - _butane_check.rc == 0
+    fail_msg:
+      - "The `butane` CLI is not installed on the Ansible controller, but is"
+      - "required to convert Butane (.bu) configs into Ignition JSON for FCOS."
+      - ""
+      - "Install one of:"
+      - ""
+      - "    # Linux (single static binary, no deps)"
+      - "    sudo curl -L -o /usr/local/bin/butane \\"
+      - "      https://github.com/coreos/butane/releases/latest/download/butane-x86_64-unknown-linux-gnu"
+      - "    sudo chmod +x /usr/local/bin/butane"
+      - ""
+      - "    # macOS"
+      - "    brew install butane"
+      - ""
+      - "    # Fedora / RHEL"
+      - "    sudo dnf install butane"
+      - ""
+      - "    # Or run from the official container (no host install)"
+      - "    # — set ignition.butane_via_docker: true in inventory (not yet wired)"
+      - ""
+      - "Verify with: butane --version"
+    success_msg: "butane CLI found at {{ _butane_check.stdout | default('?') }}"
+    quiet: true
+  delegate_to: localhost
+  run_once: true
+
+- name: Render Butane config for each VM
+  template:
+    src: "{{ ignition_flavour_default.butane_template }}"
+    dest: "{{ ignition_tmp_dir }}/{{ instance.name }}.bu"
+  loop: "{{ instances_to_create }}"
+  loop_control:
+    loop_var: instance
+    label: "{{ instance.name }}"
+  delegate_to: localhost
+
+- name: Convert Butane to Ignition JSON
+  command: >
+    butane
+    {{ '--strict' if (ignition_flavour_default.butane_strict | bool) else '' }}
+    {{ ignition_tmp_dir }}/{{ instance.name }}.bu
+    --output {{ ignition_tmp_dir }}/{{ instance.name }}.ign
+  loop: "{{ instances_to_create }}"
+  loop_control:
+    loop_var: instance
+    label: "{{ instance.name }}"
+  delegate_to: localhost
+  changed_when: true
+
+- name: Record ignition render paths per VM
+  ansible.builtin.set_fact:
+    ignition_status: >-
+      {{ ignition_status | default({}) | combine({
+        instance.name: (ignition_status | default({}))[instance.name] | default({})
+                 | combine({
+                   'butane_rendered': (ignition_tmp_dir ~ '/' ~ instance.name ~ '.bu'),
+                   'ignition_file': (ignition_tmp_dir ~ '/' ~ instance.name ~ '.ign')
+                 })
+      }) }}
+  loop: "{{ instances_to_create }}"
+  loop_control:
+    loop_var: instance
+    label: "{{ instance.name }}"

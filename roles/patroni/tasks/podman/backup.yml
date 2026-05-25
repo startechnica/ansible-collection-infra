@@ -1,0 +1,70 @@
+---
+# On-demand backup (podman) — WAL-G (when S3 configured) or pg_basebackup (local).
+# Caller must handle serialisation via `serial:` on the play.
+
+- name: Check patroni is running
+  containers.podman.podman_container_info:
+    name: patroni
+  register: patroni_container
+  failed_when: >-
+    (patroni_container.containers | length) == 0
+    or ((patroni_container.containers | first).State.Status | default('') != 'running')
+
+- name: Run WAL-G backup (S3)
+  when: walg_enabled
+  block:
+    - name: Execute wal-g backup-push
+      containers.podman.podman_container_exec:
+        name: patroni
+        command: /opt/walg/wal-g backup-push /var/lib/postgresql/pg_data
+      register: walg_backup
+
+    - name: Enforce retention policy
+      containers.podman.podman_container_exec:
+        name: patroni
+        command: /opt/walg/wal-g delete retain FULL {{ walg_retention }} --confirm
+
+    - name: List backups
+      containers.podman.podman_container_exec:
+        name: patroni
+        command: /opt/walg/wal-g backup-list
+      register: backup_list
+
+    - name: Display backup list
+      ansible.builtin.debug:
+        msg: "{{ backup_list.stdout_lines }}"
+      when: debug
+
+- name: Run pg_basebackup (local)
+  when: not walg_enabled
+  block:
+    - name: Set backup label
+      ansible.builtin.set_fact:
+        backup_label: "backup-{{ ansible_date_time.iso8601_basic_short }}"
+
+    - name: Create backup directory
+      ansible.builtin.file:
+        path: "{{ patroni_backup_dir }}/{{ backup_label }}"
+        state: directory
+        owner: "{{ patroni_uid }}"
+        group: "{{ patroni_gid }}"
+
+    - name: Execute pg_basebackup
+      containers.podman.podman_container_exec:
+        name: patroni
+        command: >
+          pg_basebackup
+          -h 127.0.0.1 -p {{ postgresql_port }} -U replicator
+          -D "/var/lib/postgresql/backups/{{ backup_label }}"
+          --checkpoint=fast --progress --wal-method=stream -X stream
+      register: basebackup_result
+
+    - name: Display backup result
+      ansible.builtin.debug:
+        msg: "Backup complete: {{ patroni_backup_dir }}/{{ backup_label }}"
+
+    - name: Prune old backups (keep last 5)
+      ansible.builtin.shell: |
+        cd {{ patroni_backup_dir }} || exit 1
+        ls -1dt backup-* 2>/dev/null | tail -n +6 | xargs -r rm -rf
+      changed_when: false

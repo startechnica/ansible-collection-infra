@@ -1,0 +1,79 @@
+# Reference .gitlab-ci.yml for a consumer repo that uses startechnica.infra.
+# Adapt paths, branch rules, and the schedule. The key pieces are:
+#   - vault password loaded from a masked CI variable VAULT_PASSWORD
+#   - requirements installed in `before_script`
+#   - one job per operation; scheduled jobs use `only: schedules`.
+
+image: python:3.12-slim
+
+variables:
+  ANSIBLE_FORCE_COLOR: "1"
+  ANSIBLE_HOST_KEY_CHECKING: "False"
+
+before_script:
+  - apt-get update -qq && apt-get install -y -qq git openssh-client
+  - pip install --quiet 'ansible-core>=2.16'
+  - ansible-galaxy collection install -r requirements.yml
+  - echo "$VAULT_PASSWORD" > "$CI_PROJECT_DIR/.vault"
+  - chmod 600 "$CI_PROJECT_DIR/.vault"
+  - export ANSIBLE_VAULT_PASSWORD_FILE="$CI_PROJECT_DIR/.vault"
+
+stages:
+  - validate
+  - deploy
+  - scheduled
+
+# ── CI on every push: validate only ─────────────────────────────────────────
+validate:
+  stage: validate
+  script:
+    - ansible-playbook startechnica.infra.deploy -i inventories/prod.yml --tags validate
+  except:
+    - schedules
+
+# ── Manual deploy (protected branch only) ───────────────────────────────────
+deploy:
+  stage: deploy
+  script:
+    - ansible-playbook startechnica.infra.deploy -i inventories/prod.yml --diff
+  when: manual
+  only:
+    - main
+
+# ── Nightly backup (via pipeline schedule) ──────────────────────────────────
+.backup_template: &backup_template
+  stage: scheduled
+  only:
+    - schedules
+
+backup-mongodb:
+  <<: *backup_template
+  script:
+    - ansible-playbook playbooks/mongodb/backup.yml -i inventories/prod.yml
+  rules:
+    - if: '$SCHEDULE_TYPE == "backup"'
+
+backup-patroni:
+  <<: *backup_template
+  script:
+    - ansible-playbook playbooks/patroni/backup.yml -i inventories/prod.yml
+  rules:
+    - if: '$SCHEDULE_TYPE == "backup"'
+
+verify-backup-mongodb:
+  <<: *backup_template
+  script:
+    - ansible-playbook playbooks/mongodb/verify-backup.yml -i inventories/prod.yml
+  rules:
+    - if: '$SCHEDULE_TYPE == "verify"'
+
+verify-backup-patroni:
+  <<: *backup_template
+  script:
+    - ansible-playbook playbooks/patroni/verify-backup.yml -i inventories/prod.yml
+  rules:
+    - if: '$SCHEDULE_TYPE == "verify"'
+
+# Schedule these in GitLab CI/CD → Schedules:
+#   - "nightly-backups"  with SCHEDULE_TYPE=backup   at 02:00 UTC daily
+#   - "verify-backups"   with SCHEDULE_TYPE=verify   at 04:00 UTC daily

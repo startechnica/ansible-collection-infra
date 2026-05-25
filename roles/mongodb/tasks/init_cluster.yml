@@ -1,0 +1,509 @@
+---
+# ════════════════════════════════════════════════════════════════════════════
+# Initialize MongoDB cluster (sharded or replicaset)
+# ════════════════════════════════════════════════════════════════════════════
+#
+# Two-phase bootstrap using --transitionToAuth:
+#
+#   Phase 1 (docker_compose.yml / quadlet.yml): Containers start with --transitionToAuth,
+#     accepting both authenticated and unauthenticated connections.
+#     No keyfile — x509 handles all member-to-member auth.
+#
+#   Phase 2 (this file): Initialize replica sets, create admin user,
+#     add shards — all via community.mongodb modules over the network.
+#     Then re-deploy containers with --auth (full enforcement).
+# ════════════════════════════════════════════════════════════════════════════
+
+- name: Set cluster-type derived variables
+  ansible.builtin.set_fact:
+    _is_sharded: "{{ mongodb_cluster_type == 'sharded' }}"
+    _client_port: "{{ mongodb_mongos_node_port if mongodb_cluster_type == 'sharded' else mongodb_mongod_node_port }}"
+    _client_container: "{{ 'mongodb-mongos' if mongodb_cluster_type == 'sharded' else 'mongodb-mongod' }}"
+    # Engine-aware port for `<engine> exec ... mongosh --port` against
+    # the client container. See main.yml for why docker and podman
+    # need different values here.
+    _client_exec_port: >-
+      {{ (mongodb_mongos_exec_port if mongodb_cluster_type == 'sharded'
+          else mongodb_mongod_exec_port) }}
+  run_once: true
+
+# Up-front wait excludes mongos. mongos refuses to bind its client
+# port until it has read cluster metadata from a configsvr primary,
+# and we haven't called rs.initiate() yet. Waiting for it here would
+# deadlock — see the comment in quadlet.yml's port-wait block. mongos
+# gets its own targeted wait further down, after configsvr's rs.initiate.
+- name: Build port wait list (mongod + configsvr; mongos waits for its own gate)
+  ansible.builtin.set_fact:
+    _wait_ports: >-
+      {{ [mongodb_mongod_node_port] +
+         ([mongodb_configsvr_node_port] if _is_sharded | bool else []) }}
+  run_once: true
+
+- name: Wait for MongoDB ports to be ready
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ port }}"
+    timeout: 120
+    state: started
+  loop: "{{ _wait_ports }}"
+  loop_control:
+    loop_var: port
+    label: "port {{ port }}"
+  run_once: true
+
+# Skip the replica-set init / primary-wait block on a re-run against an
+# already-bootstrapped cluster. After bootstrap the containers run with
+# --auth (not --transitionToAuth), so the unauthenticated mongodb_*
+# module calls below would fail with "No credentials to authenticate" —
+# and re-initializing a healthy RS is pointless anyway. The downstream
+# user-management tasks use admin creds (or x509) and stay idempotent.
+- name: Check for bootstrap-complete marker (gates first-bootstrap-only tasks)
+  ansible.builtin.stat:
+    path: "{{ mongodb_root_dir }}/.bootstrap_complete"
+  register: _mongodb_init_marker
+
+# ── Init configReplSet (sharded only) ──
+
+- name: Initialize configReplSet
+  community.mongodb.mongodb_replicaset:
+    login_host: localhost
+    login_port: "{{ mongodb_configsvr_node_port }}"
+    replica_set: "{{ mongodb_config_replset }}"
+    members: >-
+      {{ mongodb_nodes | map(attribute='ipv4')
+         | map('regex_replace', '^(.*)$', '\1:' ~ mongodb_configsvr_node_port)
+         | list }}
+    ssl: true
+    ssl_certfile: "{{ mongodb_tls_dir }}/healthcheck.pem"
+    ssl_ca_certs: "{{ mongodb_tls_dir }}/ca.pem"
+  run_once: true
+  when:
+    - _is_sharded | bool
+    - not _mongodb_init_marker.stat.exists
+
+- name: Wait for configReplSet primary
+  community.mongodb.mongodb_status:
+    login_host: localhost
+    login_port: "{{ mongodb_configsvr_node_port }}"
+    replica_set: "{{ mongodb_config_replset }}"
+    ssl: true
+    ssl_certfile: "{{ mongodb_tls_dir }}/healthcheck.pem"
+    ssl_ca_certs: "{{ mongodb_tls_dir }}/ca.pem"
+    poll: 5
+    interval: 30
+  run_once: true
+  when:
+    - _is_sharded | bool
+    - not _mongodb_init_marker.stat.exists
+
+# ── Init shard replica set ──
+
+- name: Initialize shard replica set
+  community.mongodb.mongodb_replicaset:
+    login_host: localhost
+    login_port: "{{ mongodb_mongod_node_port }}"
+    replica_set: "{{ mongodb_shard_replset }}"
+    members: >-
+      {{ mongodb_nodes | map(attribute='ipv4')
+         | map('regex_replace', '^(.*)$', '\1:' ~ mongodb_mongod_node_port)
+         | list }}
+    ssl: true
+    ssl_certfile: "{{ mongodb_tls_dir }}/healthcheck.pem"
+    ssl_ca_certs: "{{ mongodb_tls_dir }}/ca.pem"
+  run_once: true
+  when: not _mongodb_init_marker.stat.exists
+
+- name: Wait for shard primary
+  community.mongodb.mongodb_status:
+    login_host: localhost
+    login_port: "{{ mongodb_mongod_node_port }}"
+    replica_set: "{{ mongodb_shard_replset }}"
+    ssl: true
+    ssl_certfile: "{{ mongodb_tls_dir }}/healthcheck.pem"
+    ssl_ca_certs: "{{ mongodb_tls_dir }}/ca.pem"
+    poll: 5
+    interval: 30
+  run_once: true
+  when: not _mongodb_init_marker.stat.exists
+
+# ── Wait for mongos to bind ─────────────────────────────────────────
+# Now that configsvr has a primary, mongos can read cluster metadata
+# and finally open its client port. Until rs.initiate(configsvr) ran
+# above, mongos was alive but with no listener — that's the chicken-
+# and-egg that the up-front wait skipped. Sharded mode only.
+- name: Wait for mongos client port to bind (sharded only)
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ mongodb_mongos_node_port }}"
+    timeout: 120
+    state: started
+  run_once: true
+  when: _is_sharded | bool
+
+# ── Create admin user ──
+
+- name: Create admin user (localhost exception)
+  ansible.builtin.include_tasks: _container_exec.yml
+  vars:
+    _ce_purpose: "create admin user"
+    _ce_container: "{{ _client_container }}"
+    _ce_changed_marker: USER_CREATED
+    _ce_command: >
+      mongosh --port {{ _client_exec_port }} --quiet --eval "
+      try {
+        db.getSiblingDB('admin').createUser({
+          user: '{{ mongodb_admin_user }}',
+          pwd: '{{ mongodb_admin_password }}',
+          roles: [
+            { role: 'root', db: 'admin' },
+            { role: 'userAdminAnyDatabase', db: 'admin' },
+            { role: 'clusterAdmin', db: 'admin' }
+          ]
+        });
+        print('USER_CREATED');
+      } catch(e) {
+        if (e.message.includes('already exists')) {
+          print('USER_EXISTS');
+        } else {
+          throw e;
+        }
+      }"
+  run_once: true
+
+- name: Save admin credentials
+  ansible.builtin.template:
+    src: admin-credentials.txt.j2
+    dest: "{{ mongodb_root_dir }}/admin-credentials.txt"
+    owner: root
+    group: root
+    mode: "0400"
+  run_once: true
+
+# ── Add shard (sharded only) ──
+
+- name: Add shard to cluster
+  vars:
+    _shard_hosts: >-
+      {{ mongodb_nodes | map(attribute='ipv4')
+         | map('regex_replace', '^(.*)$', '\1:' ~ mongodb_mongod_node_port)
+         | join(',') }}
+  community.mongodb.mongodb_shard:
+    login_host: localhost
+    login_port: "{{ mongodb_mongos_node_port }}"
+    login_user: "{{ mongodb_admin_user }}"
+    login_password: "{{ mongodb_admin_password }}"
+    login_database: admin
+    shard: "{{ mongodb_shard_replset }}/{{ _shard_hosts }}"
+    state: present
+    ssl: true
+    ssl_certfile: "{{ mongodb_tls_dir }}/healthcheck.pem"
+    ssl_ca_certs: "{{ mongodb_tls_dir }}/ca.pem"
+  run_once: true
+  register: _add_shard
+  when: _is_sharded | bool
+
+- name: Show shard status
+  ansible.builtin.debug:
+    msg: "Shard {{ mongodb_shard_replset }}: {{ 'added' if _add_shard.changed else 'already exists' }}"
+  run_once: true
+  when: _is_sharded | bool
+
+# ── Create healthcheck x509 user on configsvr and shard ──
+# Two important details about the mongosh invocation:
+#
+# 1. NO --tlsCertificateKeyFile. We deliberately don't present a
+#    client cert. If we did, modern mongosh (and the underlying
+#    driver) tries SPECULATIVE MONGODB-X509 auth as the cert's
+#    subject during the TLS handshake. The user we're about to
+#    create doesn't exist yet, so speculative auth fails — and
+#    depending on driver / server version, that can leave mongosh
+#    in a state where the eval body never runs. Without a client
+#    cert, no auth is attempted, the connection lands as
+#    unauthenticated, and the eval runs cleanly.
+#
+# 2. No `-u admin -p ...`. The connection is unauth on purpose:
+#    - configsvr: in --transitionToAuth on first bootstrap (cluster
+#      hasn't flipped yet); unauth connections get implicit admin
+#      privileges, so createUser succeeds.
+#    - shard: same transitionToAuth on first bootstrap. After the
+#      flip, the shard's admin DB stays empty (admin user lives on
+#      configsvr only in sharded clusters), so the localhost
+#      exception applies and lets us create users on $external
+#      without auth.
+#
+# Gated on the bootstrap-complete marker so we only run this during
+# initial bootstrap. After the marker is written, the configsvr's
+# admin DB has the admin user (propagated via mongos), so unauth
+# privileged commands stop working on configsvr — re-running this
+# task without admin creds would just fail silently, contributing
+# nothing.
+
+- name: Create healthcheck x509 user on configsvr replica set
+  ansible.builtin.include_tasks: _container_exec.yml
+  vars:
+    _ce_purpose: "create healthcheck user on configsvr"
+    _ce_container: mongodb-configsvr
+    _ce_changed_marker: USER_CREATED
+    _ce_command: >
+      mongosh --port {{ mongodb_configsvr_exec_port }} --tls
+      --tlsCAFile /etc/mongo/ssl/ca.pem
+      --quiet --eval "
+      try {
+        db.getSiblingDB('\$external').createUser({
+          user: '{{ mongodb_healthcheck_x509_subject }}',
+          roles: [{ role: 'clusterMonitor', db: 'admin' }]
+        });
+        print('USER_CREATED');
+      } catch(e) {
+        if (e.message.includes('already exists')) {
+          print('USER_EXISTS');
+        } else if (e.message.includes('not primary')) {
+          print('USER_EXISTS');
+        } else {
+          throw e;
+        }
+      }"
+  when:
+    - _is_sharded | bool
+    - not _mongodb_init_marker.stat.exists
+
+- name: Create healthcheck x509 user on shard replica set
+  ansible.builtin.include_tasks: _container_exec.yml
+  vars:
+    _ce_purpose: "create healthcheck user on shard mongod"
+    _ce_container: mongodb-mongod
+    _ce_changed_marker: USER_CREATED
+    _ce_command: >
+      mongosh --port {{ mongodb_mongod_exec_port }} --tls
+      --tlsCAFile /etc/mongo/ssl/ca.pem
+      --quiet --eval "
+      try {
+        db.getSiblingDB('\$external').createUser({
+          user: '{{ mongodb_healthcheck_x509_subject }}',
+          roles: [{ role: 'clusterMonitor', db: 'admin' }]
+        });
+        print('USER_CREATED');
+      } catch(e) {
+        if (e.message.includes('already exists')) {
+          print('USER_EXISTS');
+        } else if (e.message.includes('not primary')) {
+          print('USER_EXISTS');
+        } else {
+          throw e;
+        }
+      }"
+  when: not _mongodb_init_marker.stat.exists
+
+# ── Switch to full auth mode ──
+#
+# Each node owns its own runtime state, so these tasks fan out per-node —
+# using run_once would only transition node 1 and leave the other replicas
+# stuck in --transitionToAuth.
+#
+# Two paths depending on container_engine:
+#   - docker: re-render docker-compose.yml + docker compose recreate
+#   - podman: re-render Quadlets via include + systemctl daemon-reload
+#            + restart (handled inside quadlet.yml)
+
+# ── container_engine=docker / Docker Compose path ──
+- name: Re-render compose with full auth
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ mongodb_root_dir }}/docker-compose.yml"
+    mode: "0644"
+  vars:
+    mongodb_bootstrap: false
+  register: _compose_auth
+  when: container_engine | default('docker') == 'docker'
+
+- name: Stop exporter before recreating (shares network namespace)
+  community.docker.docker_compose_v2:
+    project_src: "{{ mongodb_root_dir }}"
+    services:
+      - mongodb-exporter
+    state: stopped
+  when:
+    - container_engine | default('docker') == 'docker'
+    - _compose_auth.changed | default(false)
+  failed_when: false
+
+- name: Build service restart list
+  ansible.builtin.set_fact:
+    _restart_services: >-
+      {{ ['mongod'] +
+         (['configsvr', 'mongos'] if _is_sharded | bool else []) }}
+  when: container_engine | default('docker') == 'docker'
+
+- name: Restart MongoDB containers in auth mode
+  community.docker.docker_compose_v2:
+    project_src: "{{ mongodb_root_dir }}"
+    state: present
+    services: "{{ _restart_services }}"
+    recreate: always
+  when:
+    - container_engine | default('docker') == 'docker'
+    - _compose_auth.changed | default(false)
+  retries: 3
+  delay: 10
+  register: _compose_restart
+  until: _compose_restart is not failed
+
+- name: Wait for containers after auth restart
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ port }}"
+    timeout: 120
+    state: started
+  loop: "{{ _wait_ports }}"
+  loop_control:
+    loop_var: port
+    label: "port {{ port }}"
+  when:
+    - container_engine | default('docker') == 'docker'
+    - _compose_auth.changed | default(false)
+
+# ── container_engine=podman / Podman Quadlet path ──
+# quadlet.yml internally renders + daemon-reloads + restarts the services
+# whose .container files changed, then waits for ports.
+- name: Re-render Quadlets in full auth mode and restart services
+  ansible.builtin.include_tasks: quadlet.yml
+  vars:
+    mongodb_bootstrap: false
+  when: container_engine | default('docker') == 'podman'
+
+# wait_for only verifies the TCP port is bound. After the auth-mode restart,
+# mongos can briefly bind 27017, drop it while reconnecting to configsvr
+# (especially if all 3 configsvr nodes restart in parallel and there's a
+# split-second of no quorum), then re-bind. A mongosh `ping` proves the
+# process is actually serving authenticated queries — the right readiness
+# probe before we attempt createUser.
+- name: Wait for mongos to actually serve authenticated queries
+  ansible.builtin.include_tasks: _container_exec.yml
+  vars:
+    _ce_purpose: "mongos readiness ping"
+    _ce_container: mongodb-mongos
+    _ce_retries: 30
+    _ce_delay: 3
+    _ce_until_rc0: true
+    _ce_command: >
+      mongosh --port {{ mongodb_mongos_exec_port }}
+      -u '{{ mongodb_admin_user }}' -p '{{ mongodb_admin_password }}'
+      --authenticationDatabase admin --quiet
+      --eval "db.adminCommand('ping')"
+  run_once: true
+  when: _is_sharded | bool
+
+# ── Create healthcheck x509 user on mongos (sharded, after auth, needs admin creds) ──
+
+- name: Create healthcheck x509 user on mongos
+  ansible.builtin.include_tasks: _container_exec.yml
+  vars:
+    _ce_purpose: "create healthcheck user on mongos"
+    _ce_container: mongodb-mongos
+    _ce_changed_marker: USER_CREATED
+    _ce_retries: 15
+    _ce_delay: 5
+    _ce_until_rc0: true
+    _ce_command: >
+      mongosh --port {{ mongodb_mongos_exec_port }}
+      -u '{{ mongodb_admin_user }}' -p '{{ mongodb_admin_password }}'
+      --authenticationDatabase admin --quiet --eval "
+      try {
+        db.getSiblingDB('\$external').createUser({
+          user: '{{ mongodb_healthcheck_x509_subject }}',
+          roles: [{ role: 'clusterMonitor', db: 'admin' }]
+        });
+        print('USER_CREATED');
+      } catch(e) {
+        if (e.message.includes('already exists')) {
+          print('USER_EXISTS');
+        } else {
+          throw e;
+        }
+      }"
+  run_once: true
+  when: _is_sharded | bool
+
+- name: Create exporter x509 user
+  ansible.builtin.include_tasks: _container_exec.yml
+  vars:
+    _ce_purpose: "create exporter x509 user"
+    _ce_container: "{{ _client_container }}"
+    _ce_changed_marker: USER_CREATED
+    _ce_retries: 15
+    _ce_delay: 5
+    _ce_until_rc0: true
+    _ce_command: >
+      mongosh --port {{ _client_exec_port }}
+      -u '{{ mongodb_admin_user }}' -p '{{ mongodb_admin_password }}'
+      --authenticationDatabase admin --quiet --eval "
+      try {
+        db.getSiblingDB('\$external').createUser({
+          user: '{{ mongodb_exporter_x509_subject }}',
+          roles: [
+            { role: 'clusterMonitor', db: 'admin' },
+            { role: 'read', db: 'local' }
+          ]
+        });
+        print('USER_CREATED');
+      } catch(e) {
+        if (e.message.includes('already exists')) {
+          print('USER_EXISTS');
+        } else {
+          throw e;
+        }
+      }"
+  run_once: true
+  when: mongodb_exporter_enabled | bool
+
+# ── Create application databases and users ──
+
+- name: Create application databases and users
+  ansible.builtin.include_tasks: manage_users.yml
+  when: mongodb_databases | length > 0
+
+# ── Start remaining services (exporter) ──
+# On the Podman/Quadlet path, quadlet.yml already enabled + started every
+# service during the auth-mode re-render above (including the exporter),
+# so this step is a no-op there. Keep the Docker Compose path explicit.
+
+- name: Start all services including exporter (container_engine=docker)
+  community.docker.docker_compose_v2:
+    project_src: "{{ mongodb_root_dir }}"
+    state: present
+  when: container_engine | default('docker') == 'docker'
+
+# Touched on every node once bootstrap finishes successfully.
+# docker_compose.yml / quadlet.yml stat this marker on subsequent runs and
+# render --auth directly instead of --transitionToAuth, making re-deploys
+# idempotent. Delete the file on all nodes (or just one if you want a
+# partial rebuild) to force re-bootstrap.
+- name: Mark bootstrap complete
+  ansible.builtin.file:
+    path: "{{ mongodb_root_dir }}/.bootstrap_complete"
+    state: touch
+    mode: "0644"
+  changed_when: false
+
+- name: Publish service ports + register in NetBox
+  ansible.builtin.include_tasks: netbox_register_services.yml
+
+# ── Print connection strings ──
+
+- name: Show connection info
+  vars:
+    _node_hosts: >-
+      {{ mongodb_nodes | map(attribute='ipv4')
+         | map('regex_replace', '^(.*)$', '\1:' ~ _client_port)
+         | join(',') }}
+    _uri_base: "mongodb://{{ mongodb_admin_user }}:<password>@{{ _node_hosts }}"
+    _tls_opts: "tls=true&tlsAllowInvalidCertificates=true"
+    _replset_suffix: "{{ '&replicaSet=' ~ mongodb_shard_replset if not (_is_sharded | bool) else '' }}"
+  ansible.builtin.debug:
+    msg:
+      - "MongoDB {{ mongodb_cluster_type }} cluster initialized successfully!"
+      - "Connection URI (mongosh):"
+      - "  mongosh --quiet \"{{ _uri_base }}/admin?{{ _tls_opts }}{{ _replset_suffix }}\""
+      - "Connection URI (application, no TLS):"
+      - "  {{ _uri_base }}/?authSource=admin{{ _replset_suffix }}"
+  run_once: true

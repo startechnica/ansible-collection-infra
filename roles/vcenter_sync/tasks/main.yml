@@ -1,0 +1,51 @@
+---
+# ════════════════════════════════════════════════════════════════════
+# vCenter Sync to NetBox
+# ════════════════════════════════════════════════════════════════════
+#
+# Output facts (available to downstream roles/playbooks):
+#   vcenter_clusters:  [{name, site, tags}]
+#   vcenter_hosts:     [{name, cluster, site, role, tags, cpu, memory_mb}]
+
+- name: Validate connections
+  ansible.builtin.assert:
+    that:
+      - vcenter_connect.hostname | length > 0
+      - netbox_connect.url | length > 0
+      - netbox_connect.token | length > 0
+    fail_msg: "vcenter_connect.hostname, netbox_connect.url and netbox_connect.token are required"
+    success_msg: "vCenter ({{ vcenter_connect.hostname }}) + NetBox ({{ netbox_connect.url }}) connections configured."
+
+- name: Ensure NetBox types exist
+  ansible.builtin.include_tasks: ensure_types.yml
+
+- name: Auto-discover vCenter infrastructure
+  ansible.builtin.include_tasks: discover.yml
+  when: vcenter_sync_auto_discover | bool
+
+- name: Display sync plan
+  ansible.builtin.debug:
+    msg: |
+      {{ '== DRY-RUN ==' if (dry_run | bool) else '== SYNC PLAN ==' }}
+
+      Clusters ({{ vcenter_clusters | default([]) | length }}):
+      {% for c in vcenter_clusters | default([]) %}
+        - {{ c.name }} (site: {{ c.site | default('none') }})
+      {% endfor %}
+      {% if vcenter_clusters | default([]) | length == 0 %}
+        (none)
+      {% endif %}
+
+      ESXi Hosts ({{ vcenter_hosts | default([]) | length }}):
+      {% for h in vcenter_hosts | default([]) %}
+        - {{ h.name }} (cluster: {{ h.cluster | default('none') }}, cpu: {{ h.cpu | default('?') }}, mem: {{ h.memory_mb | default('?') }}MB)
+      {% endfor %}
+      {% if vcenter_hosts | default([]) | length == 0 %}
+        (none)
+      {% endif %}
+
+- name: Sync clusters to NetBox
+  ansible.builtin.include_tasks: sync_clusters.yml
+
+- name: Sync ESXi hosts to NetBox
+  ansible.builtin.include_tasks: sync_hosts.yml

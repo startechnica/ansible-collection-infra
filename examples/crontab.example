@@ -1,0 +1,36 @@
+# Reference crontab for scheduled maintenance on an Ansible controller that
+# has this collection installed. Adapt paths, inventory name, and schedule.
+#
+# Install with: crontab -e (as the Ansible controller user)
+#
+# Prerequisites:
+#   - Controller has `ansible-playbook` on PATH
+#   - The collection is installed or the working directory is set correctly
+#   - Vault password file configured (see docs/SECRETS.md)
+
+# Shared environment
+ANSIBLE_COLLECTIONS_PATH=/home/ansible/.ansible/collections
+PATH=/usr/bin:/usr/local/bin:/home/ansible/.venv/bin
+INV=/home/ansible/deploy/inventories/rockefeller.yml
+
+# ── MongoDB ─────────────────────────────────────────────────────────────────
+# Nightly backup (02:00 UTC)
+0 2 * * *   ansible-playbook playbooks/mongodb/backup.yml        -i $INV --vault-password-file ~/.vault  >> /var/log/mongodb-backup.log 2>&1
+
+# Backup-verify 04:00 UTC — restores latest dump into disposable container
+# and smoke-tests it. Catches silent corruption before you need the backup.
+0 4 * * *   ansible-playbook playbooks/mongodb/verify-backup.yml -i $INV --vault-password-file ~/.vault  >> /var/log/mongodb-verify.log 2>&1
+
+# Status check every 15 min (lightweight; no writes)
+*/15 * * * * ansible-playbook playbooks/mongodb/status.yml       -i $INV --vault-password-file ~/.vault  >> /var/log/mongodb-status.log 2>&1
+
+# ── Patroni ─────────────────────────────────────────────────────────────────
+# Nightly WAL-G / pg_basebackup (02:30 UTC — offset from Mongo to spread I/O)
+30 2 * * *  ansible-playbook playbooks/patroni/backup.yml        -i $INV --vault-password-file ~/.vault  >> /var/log/patroni-backup.log 2>&1
+
+# Verify backup 04:30 UTC
+30 4 * * *  ansible-playbook playbooks/patroni/verify-backup.yml -i $INV --vault-password-file ~/.vault  >> /var/log/patroni-verify.log 2>&1
+
+# Weekly cert-renew on Sunday 03:00 — idempotent, cheap if nothing to rotate
+0 3 * * 0   ansible-playbook playbooks/patroni/renew-certs.yml   -i $INV --vault-password-file ~/.vault  >> /var/log/patroni-certs.log 2>&1
+0 3 * * 0   ansible-playbook playbooks/mongodb/renew-certs.yml   -i $INV --vault-password-file ~/.vault  >> /var/log/mongodb-certs.log 2>&1

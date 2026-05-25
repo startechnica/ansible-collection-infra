@@ -1,0 +1,185 @@
+---
+# Provision databases, users, grants, and extensions on the Patroni primary.
+#
+# Connects DIRECTLY to PostgreSQL on `postgresql_port` on the current leader,
+# bypassing HAProxy → PgBouncer. This avoids any auth_query indirection
+# during writes and keeps the dependency chain pointing only at PG itself
+# (chicken-and-egg-free even if PgBouncer is unhealthy).
+#
+# Requires: psycopg2 on the controller-side delegate target (installed by
+# preflight.yml).
+
+- name: Discover Patroni leader
+  ansible.builtin.include_tasks: "../{{ container_engine | default('docker') }}/_detect_leader.yml"
+
+# Order matters: PostgreSQL roles are cluster-wide and must exist before
+# they can own a database. So users → databases → grants, not the other
+# way round. Users are created against the `postgres` maintenance DB
+# (not the per-DB target, since the target doesn't exist yet).
+- name: Create / update users (cluster-level roles)
+  community.postgresql.postgresql_user:
+    name: "{{ item.1.name }}"
+    password: "{{ item.1.password }}"
+    role_attr_flags: "{{ (item.1.roles | default(['LOGIN'])) | join(',') }}"
+    login_db: postgres
+    state: present
+    login_host: 127.0.0.1
+    login_port: "{{ postgresql_port }}"
+    login_user: postgres
+    login_password: "{{ postgresql_postgres_password }}"
+    ssl_mode: disable
+  loop: "{{ patroni_databases | subelements('users', skip_missing=True) }}"
+  loop_control:
+    label: "{{ item.1.name }}"
+  run_once: true
+  delegate_to: "{{ _patroni_leader_host }}"
+  no_log: true
+
+# Owners listed in `patroni_databases[].owner` must also be created up
+# front (they may not appear in the per-DB users list — e.g., a DB whose
+# owner is a system role / shared service account). Idempotent: if a
+# matching user task already created them above, this is a no-op.
+- name: Ensure database owners exist
+  community.postgresql.postgresql_user:
+    name: "{{ item.owner }}"
+    role_attr_flags: LOGIN
+    login_db: postgres
+    state: present
+    login_host: 127.0.0.1
+    login_port: "{{ postgresql_port }}"
+    login_user: postgres
+    login_password: "{{ postgresql_postgres_password }}"
+    ssl_mode: disable
+  loop: "{{ patroni_databases }}"
+  loop_control:
+    label: "{{ item.owner | default('(no owner)') }}"
+  when: item.owner is defined
+  run_once: true
+  delegate_to: "{{ _patroni_leader_host }}"
+
+- name: Create databases
+  community.postgresql.postgresql_db:
+    name: "{{ item.name }}"
+    owner: "{{ item.owner | default(omit) }}"
+    encoding: "{{ item.encoding | default('UTF8') }}"
+    lc_collate: "{{ item.lc_collate | default(omit) }}"
+    lc_ctype: "{{ item.lc_ctype | default(omit) }}"
+    template: "{{ item.template | default('template1') }}"
+    state: present
+    login_host: 127.0.0.1
+    login_port: "{{ postgresql_port }}"
+    login_user: postgres
+    login_password: "{{ postgresql_postgres_password }}"
+    # postgresql_db uses `maintenance_db` (NOT `login_db` — that's
+    # postgresql_query/postgresql_privs). The connection lands here while
+    # CREATE DATABASE / DROP DATABASE for the target runs.
+    maintenance_db: postgres
+    ssl_mode: disable
+  loop: "{{ patroni_databases }}"
+  loop_control:
+    label: "{{ item.name }}"
+  run_once: true
+  delegate_to: "{{ _patroni_leader_host }}"
+
+# PgBouncer's auth_query runs against the same database the client targets,
+# so every managed DB needs its own copy of pgbouncer.user_search. Without
+# this loop, clients connecting to a new DB hit "schema 'pgbouncer' does
+# not exist" from the auth_query and PgBouncer rejects them with
+# 'bouncer config error'.
+- name: Install pgbouncer.user_search into each managed database
+  ansible.builtin.include_tasks: _install_pgbouncer_function.yml
+  vars:
+    _target_db: "{{ item.name }}"
+  loop: "{{ patroni_databases }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Apply grants
+  community.postgresql.postgresql_privs:
+    login_db: "{{ _db.name }}"
+    roles: "{{ _user.name }}"
+    privs: "{{ _grant.privs }}"
+    type: "{{ _grant_type_map[_grant.on] }}"
+    objs: "{{ 'ALL_IN_SCHEMA' if _grant.on in ['all-tables', 'all-sequences'] else omit }}"
+    schema: "{{ _grant.schema | default('public') if _grant.on != 'database' else omit }}"
+    state: present
+    login_host: 127.0.0.1
+    login_port: "{{ postgresql_port }}"
+    login_user: postgres
+    login_password: "{{ postgresql_postgres_password }}"
+    ssl_mode: disable
+  vars:
+    _db: "{{ item.0 }}"
+    _user: "{{ item.1 }}"
+    _grant: "{{ item.2 }}"
+    _grant_type_map:
+      database: database
+      schema: schema
+      all-tables: table
+      all-sequences: sequence
+    _grant_tuples: >-
+      {%- set out = [] -%}
+      {%- for db in patroni_databases -%}
+        {%- for u in db.users | default([]) -%}
+          {%- for g in u.grants | default([]) -%}
+            {%- set _ = out.append([db, u, g]) -%}
+          {%- endfor -%}
+        {%- endfor -%}
+      {%- endfor -%}
+      {{ out }}
+  loop: "{{ _grant_tuples }}"
+  loop_control:
+    label: "{{ _db.name }}/{{ _user.name }}: {{ _grant.privs }} on {{ _grant.on }}"
+  run_once: true
+  delegate_to: "{{ _patroni_leader_host }}"
+
+- name: Install extensions in each database
+  community.postgresql.postgresql_ext:
+    name: "{{ item.1 }}"
+    login_db: "{{ item.0.name }}"
+    state: present
+    login_host: 127.0.0.1
+    login_port: "{{ postgresql_port }}"
+    login_user: postgres
+    login_password: "{{ postgresql_postgres_password }}"
+    ssl_mode: disable
+  loop: "{{ patroni_databases | product(patroni_extensions) | list }}"
+  loop_control:
+    label: "{{ item.1 }} on {{ item.0.name }}"
+  run_once: true
+  delegate_to: "{{ _patroni_leader_host }}"
+
+# ── Emit credentials artifact to the controller ──────────────────────────────
+
+- name: Ensure credentials artifact directory exists
+  ansible.builtin.file:
+    path: "{{ patroni_credentials_dir }}"
+    state: directory
+    mode: "0700"
+  delegate_to: localhost
+  become: false
+  run_once: true
+  when: patroni_databases | length > 0
+
+- name: Render per-database connection artifacts
+  ansible.builtin.template:
+    src: db-connections.txt.j2
+    dest: "{{ patroni_credentials_dir }}/{{ item.0.name }}-{{ item.1.name }}.txt"
+    mode: "0600"
+  vars:
+    _db: "{{ item.0 }}"
+    _user: "{{ item.1 }}"
+  loop: "{{ patroni_databases | subelements('users', skip_missing=True) }}"
+  loop_control:
+    label: "{{ item.1.name }}@{{ item.0.name }}"
+  delegate_to: localhost
+  become: false
+  run_once: true
+  no_log: true
+  when: patroni_databases | length > 0
+
+- name: Display artifacts location
+  ansible.builtin.debug:
+    msg: "Credentials written to {{ patroni_credentials_dir }}/"
+  run_once: true
+  when: patroni_databases | length > 0

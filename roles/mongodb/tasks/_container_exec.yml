@@ -1,0 +1,44 @@
+---
+# Generic "exec a command inside a running mongo container" helper.
+# Dispatches to the right module based on container_engine:
+#   - docker  → community.docker.docker_container_exec
+#   - podman  → containers.podman.podman_container_exec
+#
+# Caller passes vars (no positional args; everything is named):
+#   _ce_container        — container name (required)
+#   _ce_command          — command string (required; multi-line supported)
+#   _ce_changed_marker   — substring in stdout that signals "changed=true"
+#                          (optional; defaults to never-changed)
+#   _ce_retries          — retry count (default 1, no retry)
+#   _ce_delay            — delay between retries in seconds (default 0)
+#   _ce_until_rc0        — when true, retry until rc == 0 (default false)
+#
+# Caller can read the registered result as `_ce_result` after the include.
+
+- name: "Exec via docker — {{ _ce_purpose | default('mongo command') }}"
+  community.docker.docker_container_exec:
+    container: "{{ _ce_container }}"
+    command: "{{ _ce_command }}"
+  register: _ce_result
+  changed_when: >-
+    (_ce_changed_marker | default('') | length > 0)
+    and (_ce_changed_marker in (_ce_result.stdout | default('')))
+  failed_when: false
+  retries: "{{ _ce_retries | default(1) | int }}"
+  delay: "{{ _ce_delay | default(0) | int }}"
+  until: not (_ce_until_rc0 | default(false) | bool) or (_ce_result.rc | default(1) == 0)
+  when: container_engine | default('docker') == 'docker'
+
+- name: "Exec via podman — {{ _ce_purpose | default('mongo command') }}"
+  containers.podman.podman_container_exec:
+    name: "{{ _ce_container }}"
+    command: "{{ _ce_command }}"
+  register: _ce_result
+  changed_when: >-
+    (_ce_changed_marker | default('') | length > 0)
+    and (_ce_changed_marker in (_ce_result.stdout | default('')))
+  failed_when: false
+  retries: "{{ _ce_retries | default(1) | int }}"
+  delay: "{{ _ce_delay | default(0) | int }}"
+  until: not (_ce_until_rc0 | default(false) | bool) or (_ce_result.rc | default(1) == 0)
+  when: container_engine | default('docker') == 'podman'

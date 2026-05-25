@@ -1,0 +1,30 @@
+---
+# ════════════════════════════════════════════════════════════════════
+# routeros — populate /ip/firewall/address-list on a MikroTik device
+# ════════════════════════════════════════════════════════════════════
+#
+# Delegated to localhost — the role connects to RouterOS over its API
+# (librouteros). Target play can run against any host; all work is
+# controller-side.
+
+- name: Skip routeros role (routeros_enabled is false)
+  ansible.builtin.debug:
+    msg: "routeros_enabled=false — skipping MikroTik address-list update."
+  when: not (routeros_enabled | bool)
+
+- name: End role if disabled
+  ansible.builtin.meta: end_host
+  when: not (routeros_enabled | bool)
+
+- name: Validate RouterOS connection parameters
+  ansible.builtin.include_tasks: preflight.yml
+
+- name: Assemble address-list entries
+  ansible.builtin.include_tasks: build_entries.yml
+
+- name: Apply address-list to MikroTik
+  ansible.builtin.include_tasks: apply.yml
+
+- name: Prune stale entries (opt-in)
+  ansible.builtin.include_tasks: prune.yml
+  when: routeros_prune_stale | bool

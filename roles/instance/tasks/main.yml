@@ -1,0 +1,253 @@
+---
+# Promote role-scoped vars/defaults to localhost host facts, so later plays
+# (Stage 3.7 cleanup, anything calling instance_ignition/instance_cloud_init
+# outside this role's context) can read them without re-deriving the
+# values. Without this, those callers see `'<var>' is undefined` because
+# role vars/defaults don't survive the role's exit.
+#
+# Add a line here whenever a fact defined under instance/defaults or
+# instance/vars is read by a sibling role's tasks invoked from another
+# play.
+- name: Promote cross-stage vars to localhost host facts
+  ansible.builtin.set_fact:
+    instance_folder_path: "{{ instance_folder_path }}"
+    ignition_tmp_dir: "{{ ignition_tmp_dir }}"
+
+- name: Validate vCenter credentials
+  ansible.builtin.include_tasks: validate/vcenter.yml
+
+- name: Ensure instance folder exists (idempotent)
+  ansible.builtin.include_tasks: folder.yml
+
+- name: Validate inventory inputs (pure data — no vCenter calls)
+  ansible.builtin.include_tasks: validate/input.yml
+
+- name: Check vCenter for existing VMs in folder
+  ansible.builtin.include_tasks: validate/vms.yml
+
+# Even when all VMs already exist on vCenter, they might be powered off.
+# Without this, downstream Stage 3.5 (wait_for_ssh) times out because no
+# SSH listener is up. vmware_guest state=poweredon is idempotent — VMs
+# already running are a no-op (changed: false).
+- name: Ensure existing VMs are powered on
+  community.vmware.vmware_guest:
+    hostname: "{{ vcenter_connect.hostname }}"
+    username: "{{ vcenter_connect.username }}"
+    password: "{{ vcenter_connect.password }}"
+    validate_certs: "{{ vcenter_connect.validate_certs }}"
+    datacenter: "{{ instance_datacenter }}"
+    folder: "{{ instance_folder_path }}"
+    name: "{{ item.name }}"
+    state: poweredon
+  delegate_to: localhost
+  loop: "{{ instances }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when:
+    - not (validation_only)
+    - instances_to_create | length == 0
+
+# Powered-on != ready. On ignition / FCOS hosts, the bootstrap services
+# (open-vm-tools → python3 → docker-ce → reboot) can still be in flight
+# even though vCenter shows the VM as poweredOn. Without waiting here,
+# Stage 3.5+ runs against half-bootstrapped hosts and produces confusing
+# downstream failures (SSH up but rpm-ostree mid-transaction, docker not
+# yet started, etc.).
+#
+# This polls vCenter's guestinfo.startechnica.bootstrap_phase via the
+# VMware backdoor — no SSH dependency, works while the host is mid-reboot.
+# On a VM that already finished bootstrapping in a prior run, the phase
+# is already 'ready' and the poll completes on the first attempt.
+#
+# Cloud-init flow: bootstrap_phase isn't published; the wait is skipped
+# and Stage 3.5 (wait_for_ssh) + Stage 3.6 (wait_for_cloud_init) handle
+# readiness instead — those don't need to defer because cloud-init's
+# bringup time is dominated by SSH-up, which Stage 3.5 already gates on.
+- name: "Short-circuit when all VMs already exist"
+  when: instances_to_create | length == 0
+  block:
+    - name: "Wait for each existing VM to reach bootstrap_phase=ready"
+      ansible.builtin.include_role:
+        name: common
+        tasks_from: wait_for_vm_bootstrap
+      vars:
+        vm_bootstrap_target_phase: ready
+        vm_bootstrap_vm_name: "{{ item.name }}"
+        vm_bootstrap_retries: 120
+        vm_bootstrap_delay: 15
+      loop: "{{ instances }}"
+      loop_control:
+        label: "{{ item.name }}"
+      when:
+        - instance_init_type == 'ignition'
+        - docker_install | bool
+
+    - name: All VMs already exist, skipping provisioning
+      ansible.builtin.debug:
+        msg: >-
+          All {{ instances | length }} VMs already exist in vCenter — power-on
+          ensured{{ ', bootstrap=ready confirmed' if instance_init_type == 'ignition' else '' }},
+          skipping create / inject / configure phases.
+
+    - meta: end_role
+
+# For ignition + auto-import flows, fcos_prepare must run BEFORE validate.yml:
+# it's what populates `content_library_template` (the OVA name to import) by
+# fetching FCOS stream metadata. validate/template.yml then verifies the
+# imported item exists in the content library. Running validate first leaves
+# `content_library_template=''` and trips the pre-flight assert.
+#
+# Skip auto-import when the inventory has explicitly pinned
+# `content_library_template` — without this gate, fcos_prepare would
+# silently overwrite the user's pin with whatever the upstream FCOS
+# stream metadata reports as the latest release. Setting the var means
+# "use this exact version", and the user is responsible for ensuring
+# the OVA is already in the content library (or they want the role to
+# import a SPECIFIC version, not auto-track latest).
+- name: Prepare FCOS content library (ignition + auto_import only)
+  ansible.builtin.include_role:
+    name: instance_ignition
+    tasks_from: fcos_prepare.yml
+  when:
+    - instance_init_type == 'ignition'
+    - content_library_auto_import | bool
+    - (content_library_template | length) == 0
+
+- name: Validate infrastructure
+  ansible.builtin.include_tasks: validate.yml
+
+- name: Validate permission role
+  ansible.builtin.include_tasks: validate/role.yml
+  when: vcenter_principal_user | length > 0
+
+- name: Auto-create missing portgroups (portgroup_create=true)
+  ansible.builtin.include_tasks: network.yml
+  when: portgroup_create | bool
+
+# Butane render is the other half of the ignition prep — left here (after
+# network.yml) since it consumes per-VM network config when rendering. The
+# fcos_prepare half ran earlier (above validate.yml) for ordering reasons.
+- name: Render Butane configs to Ignition JSON
+  ansible.builtin.include_role:
+    name: instance_ignition
+    tasks_from: render_ignition.yml
+  when:
+    - instance_init_type == 'ignition'
+    - not (validation_only)
+
+# Phase 1: Deploy all VMs in parallel (async)
+- name: Deploy all VMs from content library
+  ansible.builtin.include_tasks: deploy_all.yml
+  when:
+    - not (validation_only)
+    - instances_to_create | length > 0
+
+# Phase 2a: Per-VM pre-boot setup — hardware reconfigure + first-boot config
+# inject. Sequential per VM, but each step is just a vSphere API call so it's
+# fast. MUST happen before power-on, otherwise cloud-init/ignition has no
+# config to consume on first boot.
+- name: Pre-boot setup (hardware + inject)
+  ansible.builtin.include_tasks: prepare_all.yml
+  loop: "{{ instances_to_create }}"
+  loop_control:
+    loop_var: instance
+    label: "{{ instance.name }}"
+  when:
+    - not (validation_only)
+    - instances_to_create | length > 0
+
+# Phase 2b: Fire power-on for ALL VMs at once (async). The OS boot now
+# happens in parallel across every VM instead of one-by-one — biggest wall-
+# clock saving in this role for clusters of 3+ nodes.
+- name: Power on all VMs in parallel
+  ansible.builtin.include_tasks: poweron_all.yml
+  when:
+    - not (validation_only)
+    - instances_to_create | length > 0
+
+# Phase 2b.5: wait for vmtools+IP on all VMs in a single batch query.
+# Folds N × ~17 min serial waits (the previous per-VM pattern in verify.yml)
+# into one parallel wait dominated by the slowest VM. After this completes,
+# the per-VM verify.yml waits succeed on first attempt — they stay as
+# defensive per-VM probes for the IP/hostname assertions.
+- name: Wait for boot completion on all VMs (parallel)
+  ansible.builtin.include_tasks: wait_for_boot_all.yml
+  when:
+    - not (validation_only)
+    - instances_to_create | length > 0
+
+# Phase 2c: Per-VM post-boot work (verify, detach CD-ROM, post-provision,
+# instance_ssh_configs). Sequential per VM, but the slow part — waiting for
+# OS boot — has already been folded across all VMs in 2b.5.
+- name: Post-boot configuration per VM
+  ansible.builtin.include_tasks: configure_all.yml
+  loop: "{{ instances_to_create }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when:
+    - not (validation_only)
+    - instances_to_create | length > 0
+
+- name: Assign permissions
+  ansible.builtin.include_tasks: permission.yml
+  when:
+    - not (validation_only)
+    - vcenter_principal_user | length > 0
+    - vcenter_permission_enabled
+
+# ── Write discovered IPs back into `instances[*].networks[0]` ───────────────
+# Fills in ipv4 on the first NIC for any instance whose first NIC was
+# `ipv4: dhcp` (or missing ipv4) — so build_host_groups + netbox_register
+# get a usable address without round-tripping through NetBox.
+#
+# Prefix fallback: /24. VMware Tools reports the bare IP but not the
+# subnet mask, so we can't recover the actual prefix here. Most networks
+# are /24; if yours isn't, set a static `ipv4: <addr>/<prefix>` on the
+# first NIC instead of relying on this discovery path.
+- name: Initialize enriched instances accumulator
+  ansible.builtin.set_fact:
+    _enriched_instances: []
+  when:
+    - not (validation_only)
+    - _provisioned_vm_facts is defined
+
+- name: Append each instance (with discovered IP merged into networks[0] when first NIC was DHCP/unset)
+  ansible.builtin.set_fact:
+    _enriched_instances: "{{ _enriched_instances + [item | combine(_overrides)] }}"
+  vars:
+    _fact_ipv4: "{{ (_provisioned_vm_facts | default({}))[item.name].ipv4 | default('') }}"
+    _first_nic: "{{ (item.networks | default([]))[0] | default({}) }}"
+    _first_nic_has_static: >-
+      {{ _first_nic.ipv4 is defined
+         and _first_nic.ipv4 != 'dhcp'
+         and '/' in (_first_nic.ipv4 | string) }}
+    _patched_first_nic: "{{ _first_nic | combine({'ipv4': _fact_ipv4 ~ '/24'}) }}"
+    _overrides: >-
+      {{ {'networks': [_patched_first_nic] + (item.networks | default([]))[1:]}
+         if (not _first_nic_has_static and _fact_ipv4 | length > 0)
+         else {} }}
+  loop: "{{ instances }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when:
+    - not (validation_only)
+    - _provisioned_vm_facts is defined
+
+- name: Replace instances with the enriched list
+  ansible.builtin.set_fact:
+    instances: "{{ _enriched_instances }}"
+  when:
+    - not (validation_only)
+    - _provisioned_vm_facts is defined
+
+# ── Publish role outputs for downstream consumers ────────────────────────────
+
+- name: Publish instance summary
+  ansible.builtin.set_fact:
+    instance_summary:
+      total: "{{ instances | length }}"
+      created: "{{ instances_to_create | default([]) | map(attribute='name') | list }}"
+      existing: >-
+        {{ (instances | map(attribute='name') | list)
+           | difference(instances_to_create | default([]) | map(attribute='name') | list) }}
+      facts: "{{ _provisioned_vm_facts | default({}) }}"

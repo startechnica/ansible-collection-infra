@@ -1,0 +1,9 @@
+# MongoDB recommended ulimits — managed by Ansible
+mongodb   soft   nofile   {{ mongodb_ulimit_nofile }}
+mongodb   hard   nofile   {{ mongodb_ulimit_nofile }}
+mongodb   soft   nproc    unlimited
+mongodb   hard   nproc    unlimited
+mongodb   soft   fsize    unlimited
+mongodb   hard   fsize    unlimited
+root      soft   nofile   {{ mongodb_ulimit_nofile }}
+root      hard   nofile   {{ mongodb_ulimit_nofile }}

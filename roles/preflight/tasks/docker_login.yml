@@ -1,0 +1,30 @@
+---
+# Authenticate to one or more Docker registries so subsequent image pulls
+# (patroni_image, mongodb_image, walg_image, …) work for private repos.
+# Credentials persist in /root/.docker/config.json on the target node and
+# are reused across role invocations.
+#
+# Idempotent: docker_login is a no-op when already authenticated, unless
+# `reauthorize: true` is set on the entry (use after rotating a token).
+#
+# Standalone use (e.g. to roll a new token without re-running anything else):
+#   ansible-playbook ... \
+#     -e '{"docker_registries":[{"registry":"ghcr.io","username":"bot","password":"..."}]}' \
+#     --tags docker
+#
+# Or include directly from another role:
+#   - ansible.builtin.include_role:
+#       name: preflight
+#       tasks_from: docker_login
+
+- name: Authenticate to Docker registries
+  community.docker.docker_login:
+    registry_url: "{{ item.registry }}"
+    username: "{{ item.username }}"
+    password: "{{ item.password }}"
+    reauthorize: "{{ item.reauthorize | default(false) | bool }}"
+    state: "{{ item.state | default('present') }}"
+  loop: "{{ docker_registries }}"
+  loop_control:
+    label: "{{ item.username }}@{{ item.registry }}"
+  no_log: true

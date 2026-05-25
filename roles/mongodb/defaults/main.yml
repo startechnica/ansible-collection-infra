@@ -1,0 +1,158 @@
+---
+
+debug: false
+# ─── MongoDB Cluster Role Defaults ────────────────────────────────────────────
+
+mongodb_enabled: false
+mongodb_version: "8.2.7"
+mongodb_cluster_type: sharded
+mongodb_cluster_name: "MongoDB Cluster"
+
+# Kernel-compatibility gate. mongod refuses to start on Linux 6.19+ —
+# https://jira.mongodb.org/browse/SERVER-121912 — so the role's preflight
+# fails fast on incompatible kernels rather than letting containers crash
+# in a restart loop. Bump `mongodb_unsupported_kernel` once upstream
+# publishes a fix; flip `mongodb_skip_kernel_check` to bypass entirely.
+mongodb_unsupported_kernel: "6.19"
+mongodb_skip_kernel_check: false
+
+# ── System user ──
+mongodb_uid: 999
+mongodb_gid: 999
+mongodb_root_dir: /opt/mongodb
+mongodb_mongod_data_dir: "{{ mongodb_root_dir }}/data/mongod"
+mongodb_configsvr_data_dir: "{{ mongodb_root_dir }}/data/configsvr"
+mongodb_tls_dir: "{{ mongodb_root_dir }}/ssl"
+
+# ── Container image ──
+mongodb_image_registry: docker.io
+mongodb_image_repository: mongo
+mongodb_image_tag: "{{ mongodb_version }}"
+
+# ── Container resources (MB) ──
+mongod_mem_limit_mb: 2048
+configsvr_mem_limit_mb: 512
+mongos_mem_limit_mb: 512
+
+# ── Networking ──
+mongodb_network: mongodb-cluster
+
+# ── Ports ──
+mongodb_mongos_node_port: 27017
+mongodb_configsvr_node_port: 27018
+mongodb_mongod_node_port: 27019
+
+# ── SSL/TLS ──
+ssl_days: 365
+ssl_ca_days: 3650
+# Key algorithm: ECC (ECDSA) by default — MongoDB 4.0+ / drivers all support it.
+# Set tls_key_type: RSA with tls_key_size: 4096 to fall back to RSA.
+tls_key_type: ECC
+tls_key_curve: secp256r1
+tls_key_size: 4096
+
+# ── PKI naming (single source for CSR subjects and MONGODB-X509 auth DNs) ──
+mongodb_pki_o: MongoDB
+mongodb_pki_member_ou: MongoDBCluster
+mongodb_pki_client_ou: MongoDBClient
+mongodb_pki_ca_cn: MongoDB-CA
+mongodb_healthcheck_cn: mongodb-healthcheck
+mongodb_exporter_cn: mongodb-exporter
+
+# ── Replica set names ──
+mongodb_shard_replset: rs0
+mongodb_config_replset: configReplSet
+
+# ── TLS mode ──
+# mongod/configsvr: always requireTLS for inter-member security
+# mongos: preferTLS so clients can optionally connect without TLS
+mongod_tls_mode: requireTLS
+configsvr_tls_mode: requireTLS
+mongos_tls_mode: preferTLS
+
+# ── Admin user ──
+mongodb_admin_user: admin
+mongodb_admin_password: ""  # Set in group_vars or vault
+
+# ── Healthcheck user (x509 cert auth, no password needed) ──
+mongodb_healthcheck_x509_subject: "CN={{ mongodb_healthcheck_cn }},OU={{ mongodb_pki_client_ou }},O={{ mongodb_pki_o }}"
+
+# ── Exporter user (x509 cert auth for mongodb_exporter) ──
+mongodb_exporter_x509_subject: "CN={{ mongodb_exporter_cn }},OU={{ mongodb_pki_client_ou }},O={{ mongodb_pki_o }}"
+
+# ── Application databases and users (created after cluster init) ──
+# Each entry creates a database and its users with specified roles.
+# Passwords can reference vault variables.
+#
+# mongodb_databases:
+#   - name: myapp
+#     users:
+#       - name: app_user
+#         password: "{{ vault_myapp_db_password }}"
+#         roles:
+#           - { role: readWrite, db: myapp }
+#       - name: readonly_user
+#         password: "{{ vault_readonly_password }}"
+#         roles:
+#           - { role: read, db: myapp }
+#   - name: analytics
+#     users:
+#       - name: etl_user
+#         password: "{{ vault_etl_password }}"
+#         auth_db: admin              # authenticate against admin, not analytics
+#         roles:
+#           - { role: readWrite, db: analytics }
+#           - { role: read, db: myapp }
+#
+mongodb_databases: []
+
+# ── Backup ──
+mongodb_backup_dir: "{{ mongodb_root_dir }}/backups"
+mongodb_backup_retain_days: 7
+
+# ── S3 remote backup (optional) ──
+# Shared across roles: set these at inventory/group_vars once; mongodb and
+# patroni both consume the same s3_* vars. Leaving s3_bucket empty disables
+# S3 upload for mongodb.
+s3_endpoint: ""
+s3_bucket: ""
+s3_access_key: ""
+s3_secret_key: ""
+s3_region: "us-east-1"
+# Path prefix inside the bucket (mongodb only).
+s3_prefix: "mongodb/{{ mongodb_network }}"
+# Retention for objects in S3 (days). 0 = never prune.
+s3_retain_days: "{{ mongodb_backup_retain_days }}"
+# Docker image used to run the S3 client (mc). No host install needed.
+s3_client_image: "minio/mc:latest"
+
+# ── Monitoring ──
+mongodb_exporter_enabled: true
+# Fully-qualified registry path is required for podman / Quadlet on
+# FCOS, which ships with short-name-mode=enforcing — `percona/...`
+# alone fails with "short-name resolution enforced but cannot prompt
+# without a TTY" inside a systemd service. docker is more forgiving
+# and auto-resolves bare names to docker.io, but explicit is better
+# than implicit.
+mongodb_exporter_image: "docker.io/percona/mongodb_exporter:0.51.0"
+mongodb_exporter_port: 9216
+
+# ── Kernel tuning ──
+mongodb_sysctl:
+  vm.swappiness: 1
+  vm.dirty_ratio: 15
+  vm.dirty_background_ratio: 5
+  net.core.somaxconn: 65535
+  net.ipv4.tcp_fin_timeout: 30
+  net.ipv4.tcp_keepalive_time: 120
+
+# ── Ulimits ──
+mongodb_ulimit_nofile: 64000
+
+# ── Local artifacts (on the Ansible controller) ──
+# artifacts_dir is set by playbooks/mongodb/_setup.yml on localhost only,
+# because add_host nodes have inventory_file == None.
+mongodb_local_certs_dir: "{{ hostvars['localhost'].artifacts_dir }}/mongodb/certs"
+
+# ── Uninstall safety ──
+mongodb_destroy_prune: false

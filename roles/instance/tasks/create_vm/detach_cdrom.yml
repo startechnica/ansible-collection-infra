@@ -1,0 +1,152 @@
+---
+# After cloud-init first boot, the OVF-environment ISO has served its purpose
+# (ovf-env.xml was already consumed). Switch each CD-ROM device's backing
+# from "Datastore ISO" to "Client Device" so vSphere stops reporting the
+# `[<datastore>] _ovfenv-<vm>.iso` mount.
+#
+# Why disconnect (type: client) instead of remove (state: absent):
+#   VMware allows hot-DISCONNECT of IDE media, but NOT hot-REMOVE of the
+#   IDE device itself ("CD-ROM attach to IDE controller not support
+#   hot-remove."). OVA imports often land the CD-ROM on IDE; powering
+#   the VM off just to remove a passive device isn't worth the
+#   disruption. The disconnect achieves the same operator-visible goal.
+#
+# Why query the raw vSphere device list (schema: vsphere) instead of
+# `instance.hw_cdrom`:
+#   `vmware_guest_info` default mode populates `hw_cdrom` inconsistently
+#   across community.vmware versions. The raw `config.hardware.device`
+#   list is authoritative — every VirtualCdrom entry exposes `key`,
+#   `controllerKey`, and `unitNumber`, which is what vmware_guest's
+#   `cdrom:` matcher needs to find the right device.
+#
+# vSphere controllerKey ↔ controller_type/number mapping:
+#   200, 201        → ide0, ide1
+#   15000–15999     → sata0..sataN  (sataN = controllerKey - 15000)
+#   1000–1099       → scsiN — rare for CD-ROMs but handled for completeness
+
+- name: "Discover CD-ROM devices on {{ item.name }}"
+  community.vmware.vmware_guest_info:
+    hostname: "{{ vcenter_connect.hostname }}"
+    username: "{{ vcenter_connect.username }}"
+    password: "{{ vcenter_connect.password }}"
+    validate_certs: "{{ vcenter_connect.validate_certs }}"
+    datacenter: "{{ instance_datacenter }}"
+    folder: "{{ instance_folder_path }}"
+    name: "{{ item.name }}"
+    schema: vsphere
+    properties:
+      - config.hardware.device
+  delegate_to: localhost
+  register: _vm_cdrom_info
+
+- name: "Extract CD-ROM devices for {{ item.name }}"
+  ansible.builtin.set_fact:
+    _cdrom_devices: >-
+      {{ (_vm_cdrom_info.instance.config.hardware.device | default([]))
+         | selectattr('_vimtype', 'defined')
+         | selectattr('_vimtype', 'equalto', 'vim.vm.device.VirtualCdrom')
+         | list }}
+
+- name: "CD-ROM count on {{ item.name }}"
+  ansible.builtin.debug:
+    msg: >-
+      Found {{ _cdrom_devices | length }} CD-ROM device(s) on {{ item.name }}
+      {%- if _cdrom_devices | length > 0 %} — keys=
+      [{{ _cdrom_devices | map(attribute='key') | list | join(',') }}]
+      controllerKeys=
+      [{{ _cdrom_devices | map(attribute='controllerKey') | list | join(',') }}]
+      {%- else %} — nothing to detach{%- endif %}
+
+# Build a vmware_guest cdrom spec list — one entry per discovered
+# CD-ROM. Critically, derive controller_number AND unit_number per-device
+# so the matcher targets the right slot on multi-controller VMs (e.g.,
+# OVA imports often land on ide1 unit 0, not ide0 unit 0).
+# `state: present` + `type: client` swaps the backing to "Client Device",
+# which is hot-applicable on IDE (unlike a full device remove).
+- name: "Build CD-ROM disconnect spec for {{ item.name }}"
+  ansible.builtin.set_fact:
+    _cdrom_disconnect_spec: >-
+      {%- set out = [] -%}
+      {%- for dev in _cdrom_devices -%}
+      {%-   set ck = dev.controllerKey | int -%}
+      {%-   if 200 <= ck < 300 -%}
+      {%-     set ctype = 'ide' -%}
+      {%-     set cnum  = ck - 200 -%}
+      {%-   elif 15000 <= ck < 16000 -%}
+      {%-     set ctype = 'sata' -%}
+      {%-     set cnum  = ck - 15000 -%}
+      {%-   elif 1000 <= ck < 1100 -%}
+      {%-     set ctype = 'scsi' -%}
+      {%-     set cnum  = ck - 1000 -%}
+      {%-   else -%}
+      {%-     set ctype = 'sata' -%}
+      {%-     set cnum  = 0 -%}
+      {%-   endif -%}
+      {%-   set _ = out.append({
+              'controller_type':   ctype,
+              'controller_number': cnum,
+              'unit_number':       dev.unitNumber | default(0) | int,
+              'state':             'present',
+              'type':              'client',
+            }) -%}
+      {%- endfor -%}
+      {{ out }}
+  when: _cdrom_devices | length > 0
+
+- name: "Disconnect CD-ROM ISO (switch to Client Device) — {{ item.name }}"
+  community.vmware.vmware_guest:
+    hostname: "{{ vcenter_connect.hostname }}"
+    username: "{{ vcenter_connect.username }}"
+    password: "{{ vcenter_connect.password }}"
+    validate_certs: "{{ vcenter_connect.validate_certs }}"
+    datacenter: "{{ instance_datacenter }}"
+    folder: "{{ instance_folder_path }}"
+    name: "{{ item.name }}"
+    cdrom: "{{ _cdrom_disconnect_spec }}"
+  delegate_to: localhost
+  when: _cdrom_devices | length > 0
+  register: _cdrom_disconnect
+
+# Verify — re-query and assert every CD-ROM's backing is no longer an
+# ISO file. Catches the case where vmware_guest's matcher silently
+# missed (controller mapping wrong) and the ISO is still mounted.
+- name: "Re-query CD-ROM state (post-disconnect) — {{ item.name }}"
+  community.vmware.vmware_guest_info:
+    hostname: "{{ vcenter_connect.hostname }}"
+    username: "{{ vcenter_connect.username }}"
+    password: "{{ vcenter_connect.password }}"
+    validate_certs: "{{ vcenter_connect.validate_certs }}"
+    datacenter: "{{ instance_datacenter }}"
+    folder: "{{ instance_folder_path }}"
+    name: "{{ item.name }}"
+    schema: vsphere
+    properties:
+      - config.hardware.device
+  delegate_to: localhost
+  register: _vm_cdrom_recheck
+  when: _cdrom_devices | length > 0
+
+- name: "Assert all CD-ROM ISOs disconnected from {{ item.name }}"
+  ansible.builtin.assert:
+    that:
+      - >-
+        ((_vm_cdrom_recheck.instance.config.hardware.device | default([]))
+         | selectattr('_vimtype', 'defined')
+         | selectattr('_vimtype', 'equalto', 'vim.vm.device.VirtualCdrom')
+         | selectattr('backing._vimtype', 'defined')
+         | selectattr('backing._vimtype', 'equalto', 'vim.vm.device.VirtualCdrom.IsoBackingInfo')
+         | list | length) == 0
+    fail_msg: >-
+      CD-ROM ISO disconnect failed on {{ item.name }}. CD-ROM(s) still
+      backed by ISO file:
+      {{ (_vm_cdrom_recheck.instance.config.hardware.device | default([]))
+         | selectattr('_vimtype', 'defined')
+         | selectattr('_vimtype', 'equalto', 'vim.vm.device.VirtualCdrom')
+         | selectattr('backing._vimtype', 'defined')
+         | selectattr('backing._vimtype', 'equalto', 'vim.vm.device.VirtualCdrom.IsoBackingInfo')
+         | map(attribute='backing.fileName') | list }}.
+      Check the controllerKey-to-controller_type mapping for the targeted
+      device (200-201=ide, 15000-15999=sata, 1000-1099=scsi); update
+      detach_cdrom.yml's spec block if a new range needs handling.
+    success_msg: "All {{ _cdrom_devices | length }} CD-ROM(s) on {{ item.name }} disconnected from ISO (now Client Device)."
+  when: _cdrom_devices | length > 0

@@ -1,0 +1,17 @@
+---
+galaxy_info:
+  role_name: routeros
+  author: firmansyahn (firmansyah@nainggolan.id)
+  description: Populate a MikroTik RouterOS /ip firewall address-list with cluster VM IPs and VIP
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Ubuntu
+      versions: [all]
+  galaxy_tags:
+    - routeros
+    - mikrotik
+    - firewall
+    - network
+
+dependencies: []

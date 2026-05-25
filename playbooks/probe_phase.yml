@@ -1,0 +1,77 @@
+---
+# Single-shot probe of the bootstrap phase published via vmware-rpctool to
+# guestinfo.startechnica.bootstrap_phase by the FCOS rpm-ostree-install-*
+# services (see roles/instance_ignition/templates/fcos.bu.j2).
+#
+# Usage:
+#   # single VM:
+#   ansible-playbook playbooks/probe_phase.yml -i inventories/<your-inventory>.yml \
+#     --ask-vault-pass -e vm=<vm-name>
+#
+#   # multiple VMs (JSON list):
+#   ansible-playbook playbooks/probe_phase.yml -i inventories/<your-inventory>.yml \
+#     --ask-vault-pass -e 'vms=["host1-lin-db","host2-lin-db"]'
+#
+#   # live tail (re-runs every 5s — pair with grep to keep the output tight):
+#   watch -n 5 'ansible-playbook playbooks/probe_phase.yml \
+#     -i inventories/<your-inventory>.yml --ask-vault-pass -e vm=<vm-name> 2>&1 \
+#     | grep -E "phase=|FAILED"'
+#
+# Phase order on a docker host:
+#   open-vm-tools-installing → open-vm-tools-done →
+#   python3-installing → python3-done →
+#   docker-ce-installing → docker-ce-done → ready
+
+- name: Probe FCOS bootstrap_phase via vCenter guestinfo
+  hosts: localhost
+  gather_facts: false
+  vars:
+    _vm_list: "{{ vms | default([vm | default('')]) | reject('eq', '') | list }}"
+    _phase_order:
+      - open-vm-tools-installing
+      - open-vm-tools-done
+      - python3-installing
+      - python3-done
+      - docker-ce-installing
+      - docker-ce-done
+      - ready
+  tasks:
+    - name: Validate input
+      ansible.builtin.assert:
+        that:
+          - _vm_list | length > 0
+        fail_msg: >-
+          Provide one of: -e vm=<name>, or -e 'vms=["a","b"]'.
+        success_msg: "Probing {{ _vm_list | join(', ') }}"
+        quiet: true
+
+    - name: Query vCenter for guestinfo on each VM
+      community.vmware.vmware_guest_info:
+        hostname: "{{ vcenter_connect.hostname }}"
+        username: "{{ vcenter_connect.username }}"
+        password: "{{ vcenter_connect.password }}"
+        validate_certs: "{{ vcenter_connect.validate_certs }}"
+        name: "{{ item }}"
+        schema: vsphere
+        properties:
+          - config.extraConfig
+      register: _info
+      loop: "{{ _vm_list }}"
+      changed_when: false
+      ignore_errors: true
+
+    - name: Show phase per VM
+      ansible.builtin.debug:
+        msg: >-
+          {{ result.item }}: phase={{ _phase | default('(not yet published)') }}
+          {% if _phase in _phase_order %}[{{ _phase_order.index(_phase) + 1 }}/{{ _phase_order | length }}]{% endif %}
+          {% if result.failed | default(false) %}(lookup failed: {{ result.msg | default('?') }}){% endif %}
+      vars:
+        _phase: >-
+          {{ (result.instance.config.extraConfig | default([]))
+             | selectattr('key', 'equalto', 'guestinfo.startechnica.bootstrap_phase')
+             | map(attribute='value') | first | default('') }}
+      loop: "{{ _info.results }}"
+      loop_control:
+        loop_var: result
+        label: "{{ result.item }}"

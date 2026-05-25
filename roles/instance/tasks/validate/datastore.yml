@@ -1,0 +1,30 @@
+---
+# Look up + assert. `failed_when` has no message slot, so we keep the
+# two-task pair to get a useful `fail_msg`. `quiet: true` on the assert
+# suppresses its per-test output on success — the assert still shows
+# "ok" but no per-condition lines.
+- name: "Look up datastore in instance_datacenter — {{ 'datastore=' ~ instance_disks.datastore ~ ', datacenter=' ~ instance_datacenter }}"
+  community.vmware.vmware_datastore_info:
+    hostname: "{{ vcenter_connect.hostname }}"
+    username: "{{ vcenter_connect.username }}"
+    password: "{{ vcenter_connect.password }}"
+    validate_certs: "{{ vcenter_connect.validate_certs }}"
+    datacenter: "{{ instance_datacenter }}"
+    name: "{{ instance_disks.datastore }}"
+  delegate_to: localhost
+  run_once: true
+  register: datastore_info
+  changed_when: false
+
+- name: "Assert datastore was found — {{ instance_disks.datastore }}"
+  ansible.builtin.assert:
+    that: datastore_info.datastores | default([]) | length > 0
+    fail_msg: >-
+      Datastore '{{ instance_disks.datastore }}' not found in instance_datacenter '{{ instance_datacenter }}'.
+      List available datastores with:
+        ansible localhost -m community.vmware.vmware_datastore_info
+        -a "instance_datacenter={{ instance_datacenter }} hostname={{ vcenter_connect.hostname }}
+            username={{ vcenter_connect.username }} password=*** validate_certs=false"
+    success_msg: "Datastore '{{ instance_disks.datastore }}' found in instance_datacenter '{{ instance_datacenter }}'."
+    quiet: true
+  run_once: true

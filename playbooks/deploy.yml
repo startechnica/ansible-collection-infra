@@ -1,0 +1,371 @@
+---
+# ─── Full Stack: validate → NetBox → VMs → Docker → MongoDB → Patroni ────────
+#
+# One-shot install: provisions VMs on vCenter, installs Docker, and deploys
+# whichever data services the inventory asks for (tagged "mongodb"/"patroni").
+#
+# VM → group routing (stage 3):
+#   - VMs tagged "mongodb" → mongodb_nodes
+#   - VMs tagged "patroni" → patroni_nodes
+#   - All VMs           → cluster_nodes (for Docker)
+# Tag source: per-VM `tags:` if set, otherwise the inventory-level `instance_tags:`.
+#
+# Usage:
+#   ansible-playbook playbooks/deploy.yml -i inventories/<your-inventory>.yml --ask-vault-pass
+#
+#   # Or from an installed collection:
+#   ansible-playbook startechnica.infra.deploy -i inventories/<your-inventory>.yml --ask-vault-pass
+#
+# Skip stages via --tags:
+#   --tags validate     Run inventory preconditions only (read-only, no side effects)
+#   --tags netbox       Query NetBox only (dry-run)
+#   --tags provision    Provision VMs + register in NetBox
+#   --tags docker       Install Docker (VMs must exist)
+#   --tags mongodb      Install Docker + MongoDB
+#   --tags patroni      Install Docker + Patroni
+#   --tags firewall     Apply firewall only (requires firewall_enabled=true)
+#   --tags routeros     Push cluster IPs to MikroTik address-list (requires routeros_enabled=true)
+
+# ── Stage 0: Inventory preconditions ─────────────────────────────────────────
+# Runs on every invocation (tag: always). Use `--skip-tags always` to bypass
+# or `--tags validate` to run only this stage.
+
+- name: "Stage 0: Validate inventory preconditions"
+  hosts: localhost
+  gather_facts: false
+  tags: [always, validate]
+  tasks:
+    - ansible.builtin.include_role:
+        name: common
+        tasks_from: validate_inventory
+
+# ── Stage 1: Gather facts from NetBox (optional) ─────────────────────────────
+
+- name: "Stage 1: Query NetBox for VMs"
+  hosts: localhost
+  gather_facts: false
+  tags: [netbox, provision, docker, mongodb, patroni, firewall, routeros]
+  tasks:
+    - name: Query NetBox for VMs
+      ansible.builtin.include_role:
+        name: netbox_lookup
+      when:
+        - netbox_enabled | default(false) | bool
+        - netbox_lookup_enabled | default(true) | bool
+
+# ── Stage 2: Provision VMs on vCenter ─────────────────────────────────────────
+
+- name: "Stage 2: Provision VMs on vCenter"
+  hosts: localhost
+  gather_facts: true
+  tags: [provision]
+  collections:
+    - community.vmware
+    - netbox.netbox
+  tasks:
+    - name: Provision VMs
+      ansible.builtin.include_role:
+        name: instance
+
+    - name: Register VMs in NetBox
+      ansible.builtin.include_role:
+        name: netbox_register
+      when:
+        - netbox_enabled | default(false) | bool
+        - netbox_connect.token | default('') | length > 0
+
+# ── Stage 3: Build dynamic host groups + set controller-only facts ───────────
+
+- name: "Stage 3: Build host groups"
+  hosts: localhost
+  gather_facts: false
+  tags: [docker, mongodb, patroni, firewall, routeros]
+  tasks:
+    - name: Build host groups from instances (tag-based)
+      ansible.builtin.include_role:
+        name: common
+        tasks_from: build_host_groups
+      vars:
+        use_tags: true
+
+    - name: Compute artifacts_dir on localhost (controller-only)
+      ansible.builtin.set_fact:
+        artifacts_dir: "{{ inventory_dir | dirname }}/playbooks/artifacts/{{ inventory_file | basename | splitext | first }}"
+
+    - name: "INFO: no mongodb-tagged VMs"
+      ansible.builtin.debug:
+        msg: "No VMs tagged 'mongodb' — stage 5 will be skipped."
+      when:
+        - mongodb_enabled | default(true) | bool
+        - groups['mongodb_nodes'] | default([]) | length == 0
+
+    - name: "INFO: no patroni-tagged VMs"
+      ansible.builtin.debug:
+        msg: "No VMs tagged 'patroni' — stage 6 will be skipped."
+      when:
+        - patroni_enabled | default(true) | bool
+        - groups['patroni_nodes'] | default([]) | length == 0
+
+# ── Stage 3.4: Wait for FCOS bootstrap to fully settle ──────────────────────
+# Polls vCenter's guestinfo.startechnica.bootstrap_phase via the VMware
+# backdoor (no SSH required). Gate before Stage 3.5 + 3.6 because:
+#
+#   * rpm-ostree-install-docker-ce.service runs `systemctl --no-block reboot`
+#     after layering Docker CE — meaning sshd briefly listens early in
+#     boot, then dies again when the reboot fires. Stage 3.5's TCP probe
+#     can pass during that window, only for Stage 3.6's `raw:` SSH calls
+#     to hit `kex_exchange_identification: Connection reset by peer`.
+#   * `bootstrap_phase=ready` is published by startechnica-bootstrap-ready.
+#     service AFTER the post-reboot boot has stabilised — so once we see
+#     it, sshd is back up legitimately and downstream stages can rely on
+#     SSH staying up.
+#
+# Cloud-init hosts skip this (no phase publisher); their boot is dominated
+# by SSH-up time, which Stage 3.5 already gates on.
+#
+# Budget: 120 × 15s = 30 min per VM. Polled in parallel across the
+# cluster_nodes group via Ansible's per-host fan-out, so wall-clock is
+# the slowest single VM, not the sum.
+
+- name: "Stage 3.4: Wait for bootstrap=ready (FCOS hosts only)"
+  hosts: cluster_nodes
+  gather_facts: false
+  tags: [docker, mongodb, patroni]
+  tasks:
+    - name: Inherit localhost vars
+      ansible.builtin.include_role:
+        name: common
+        tasks_from: inherit_localhost_vars
+      when: instance_init_type | default('ignition') == 'ignition'
+
+    - name: Wait for bootstrap_phase=ready
+      ansible.builtin.include_role:
+        name: common
+        tasks_from: wait_for_vm_bootstrap
+      vars:
+        vm_bootstrap_target_phase: ready
+        vm_bootstrap_retries: 120
+        vm_bootstrap_delay: 15
+      when:
+        - instance_init_type | default('ignition') == 'ignition'
+        - docker_install | default(false) | bool
+
+# ── Stage 3.5: Wait for SSH on every node ────────────────────────────────────
+
+- name: "Stage 3.5: Wait for SSH + verify connectivity"
+  hosts: localhost
+  gather_facts: false
+  tags: [docker, mongodb, patroni]
+  vars:
+    ssh_wait_group: cluster_nodes
+    ssh_wait_timeout: 300
+  tasks:
+    - ansible.builtin.include_role:
+        name: common
+        tasks_from: wait_for_ssh
+
+# ── Stage 3.6: Wait for python3 on every node ────────────────────────────────
+# Cloud-init distros ship python3; FCOS / RHCOS / Flatcar layer it at first
+# boot via Ignition. `raw:` doesn't need Python on the target, so we can
+# safely poll until the binary exists. Without this, `gather_facts` in
+# subsequent stages fails on Ignition hosts that haven't finished bootstrap.
+#
+# Budget: 180 * 5s = 15 min. Worst case on FCOS is open-vm-tools (~3 min)
+# followed by python3 (~2 min) = ~5 min, but rpm-ostree download speed
+# varies wildly, so 3x headroom. (Stage 4 docker_install_fcos.yml has its
+# own vCenter-side guestinfo wait that's independent of this.)
+
+- name: "Stage 3.6: Wait for python3 + cloud-init on cluster_nodes"
+  hosts: cluster_nodes
+  gather_facts: false
+  tags: [docker, mongodb, patroni]
+  tasks:
+    - name: Wait for /usr/bin/python3
+      ansible.builtin.raw: test -x /usr/bin/python3
+      register: _python_check
+      changed_when: false
+      retries: 180
+      delay: 5
+      until: _python_check.rc == 0
+
+    # cloud-init's package_upgrade keeps running after SSH is up;
+    # downstream apt tasks (Stage 4 docker install) hit transient sudo
+    # timeouts and dpkg lock contention if we don't wait for done.
+    # No-op on Ignition hosts — they signal readiness via guestinfo.
+    - name: Wait for cloud-init to finish
+      ansible.builtin.include_role:
+        name: common
+        tasks_from: wait_for_cloud_init
+
+# ── Stage 3.7: Clear first-boot guestinfo (race-free) ────────────────────────
+# This step used to live inside the per-VM configure_all.yml loop
+# immediately after verify.yml, but verify.yml's static-IP fast path
+# returns in ~10s — so cleanup raced with Ignition's initramfs-stage
+# read of guestinfo.ignition.config.data and produced silent
+# "Ignition: no config provided by user" failures on the VM console.
+#
+# Running it here is race-free because both readiness gates have already
+# passed by now:
+#   * Stage 3.4 confirmed bootstrap_phase=ready for ignition hosts —
+#     means Ignition consumed guestinfo, all rpm-ostree-install services
+#     completed, and the post-reboot boot has stabilised.
+#   * Stage 3.6 confirmed cloud-init done for cloud-init hosts — means
+#     cloud-init consumed guestinfo.userdata / guestinfo.metadata.
+# Whichever path the VM came up on, the relevant first-boot consumer has
+# already read its guestinfo, so we can safely clear it.
+
+- name: "Stage 3.7: Clear first-boot guestinfo"
+  hosts: localhost
+  gather_facts: false
+  # Tagged provision-only on purpose. Cleanup is a post-create step that
+  # makes sense exactly once per VM, right after the first boot consumed
+  # its guestinfo. Re-running with --tags docker/mongodb/patroni against
+  # already-provisioned hosts would re-clear keys that are already empty
+  # — and would also crash because Stage 2's `instances` normalization
+  # didn't run (it's also provision-tagged).
+  tags: [provision]
+  tasks:
+    - name: "Clear first-boot guestinfo per VM"
+      ansible.builtin.include_role:
+        name: "instance_{{ instance_init_type | replace('-', '_') }}"
+        tasks_from: cleanup.yml
+      loop: "{{ instances }}"
+      loop_control:
+        label: "{{ item.hostname }}"
+      when:
+        - not (validation_only | default(false))
+        - instances | default([]) | length > 0
+
+# ── Stage 4: Install Docker ──────────────────────────────────────────────────
+
+- name: "Stage 4: Install Docker"
+  hosts: cluster_nodes
+  become: true
+  # Defer fact-gathering so podman / opted-out hosts skip with no SSH cost.
+  gather_facts: false
+  tags: [docker, mongodb, patroni]
+  pre_tasks:
+    # Per-host early exit. `end_host` removes this host from the play (not the
+    # whole play — `end_play` would skip the rest of the run too). Both
+    # `instance_init_type` and `container_engine` were set on each host by Stage 3's
+    # build_host_groups via add_host, so they're available without
+    # inherit_localhost_vars yet.
+    # Skip cases:
+    #   1. docker_install: false                — operator opted out
+    #   2. container_engine: podman             — Quadlets path, no Docker
+    - name: Skip Docker install on this host
+      ansible.builtin.meta: end_host
+      when: >-
+        not (docker_install | default(false) | bool)
+        or (container_engine | default('docker') == 'podman')
+
+    - name: Gather facts
+      ansible.builtin.setup:
+
+    - name: Inherit localhost vars
+      ansible.builtin.include_role:
+        name: common
+        tasks_from: inherit_localhost_vars
+
+    # FCOS path: docker-ce was layered by Ignition's fcos-bootstrap.service.
+    # geerlingguy.docker assumes a writable package manager (apt/dnf to /usr)
+    # which rpm-ostree forbids — so we verify the layered engine here and
+    # `end_host` to skip the role for this host.
+    - name: Verify FCOS-layered Docker
+      ansible.builtin.include_role:
+        name: preflight
+        tasks_from: docker_install_fcos
+      when: instance_init_type | default('ignition') == 'ignition'
+
+    - name: Skip geerlingguy.docker on FCOS (already layered)
+      ansible.builtin.meta: end_host
+      when: instance_init_type | default('ignition') == 'ignition'
+  roles:
+    - role: geerlingguy.docker
+
+# ── Stage 5: Deploy MongoDB cluster ───────────────────────────────────────────
+
+- name: "Stage 5: Deploy MongoDB cluster"
+  hosts: mongodb_nodes
+  become: true
+  gather_facts: true
+  tags: [mongodb]
+  pre_tasks:
+    - name: Inherit localhost vars
+      ansible.builtin.include_role:
+        name: common
+        tasks_from: inherit_localhost_vars
+  roles:
+    - role: mongodb
+  any_errors_fatal: true
+
+# ── Stage 6: Deploy Patroni cluster ───────────────────────────────────────────
+
+- name: "Stage 6: Deploy Patroni cluster"
+  hosts: patroni_nodes
+  become: true
+  gather_facts: true
+  tags: [patroni]
+  pre_tasks:
+    - name: Inherit localhost vars
+      ansible.builtin.include_role:
+        name: common
+        tasks_from: inherit_localhost_vars
+  roles:
+    - role: patroni
+  any_errors_fatal: true
+
+# ── Stage 7: Firewall ────────────────────────────────────────────────────────
+# No-op unless firewall_enabled=true. Runs after services so the host facts
+# mongodb_services / patroni_services are available for auto-inclusion.
+
+- name: "Stage 7: Apply host firewall"
+  hosts: cluster_nodes
+  become: true
+  gather_facts: true
+  tags: [firewall, mongodb, patroni]
+  tasks:
+    - name: Inherit localhost vars
+      ansible.builtin.include_role:
+        name: common
+        tasks_from: inherit_localhost_vars
+      when: firewall_enabled | default(false) | bool
+
+    - name: Apply firewall role
+      ansible.builtin.include_role:
+        name: firewall
+      when: firewall_enabled | default(false) | bool
+
+# ── Stage 8: RouterOS address-list ───────────────────────────────────────────
+# No-op unless routeros_enabled=true. Controller-side; pushes VM IPs + VIP to
+# a named address-list on a MikroTik router so upstream firewall rules can
+# reference the cluster by list name.
+
+- name: "Stage 8: Update MikroTik address-list"
+  hosts: localhost
+  gather_facts: false
+  tags: [routeros]
+  tasks:
+    - name: Apply routeros role
+      ansible.builtin.include_role:
+        name: routeros
+      when: routeros_enabled | default(false) | bool
+
+# ── Stage 9: Report ──────────────────────────────────────────────────────────
+# Service registration in NetBox is owned by the mongodb and patroni roles
+# (see tasks/init_cluster.yml and tasks/start.yml respectively).
+
+- name: "Stage 9: Summary"
+  hosts: localhost
+  gather_facts: false
+  tags: [docker, mongodb, patroni]
+  tasks:
+    - name: Installation summary
+      ansible.builtin.debug:
+        msg:
+          - "Inventory: {{ inventory_file | basename }}"
+          - "VMs provisioned: {{ (instances | default([])) | length }}"
+          - "mongodb_nodes: {{ groups['mongodb_nodes'] | default([]) }}"
+          - "patroni_nodes: {{ groups['patroni_nodes'] | default([]) }}"
+          - "Artifacts: {{ artifacts_dir | default('(not set)') }}"
+          - "Status: COMPLETE"

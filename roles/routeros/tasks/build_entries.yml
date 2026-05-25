@@ -1,0 +1,75 @@
+---
+# Build the _routeros_entries list from instances[], the Patroni VIP (if set),
+# and any routeros_extra_entries. Output shape:
+#   [{ list, address, comment }, ...]
+
+- name: Start with empty entry list
+  ansible.builtin.set_fact:
+    _routeros_entries: []
+
+- name: Include cluster node IPs (via groups, most reliable post-provision)
+  ansible.builtin.set_fact:
+    _routeros_entries: >-
+      {{ _routeros_entries + [{
+           'list': routeros_address_list,
+           'address': hostvars[item].ansible_host,
+           'comment': item ~ ' - ' ~ routeros_address_list_comment
+         }] }}
+  loop: "{{ groups['cluster_nodes'] | default([]) }}"
+  loop_control:
+    label: "{{ item }} ({{ hostvars[item].ansible_host | default('?') }})"
+  when:
+    - routeros_include_instances | bool
+    - hostvars[item].ansible_host | default('') | length > 0
+
+# Fallback: if cluster_nodes group isn't populated (e.g. running routeros
+# standalone outside deploy.yml), read IPs straight from instances[].networks[0].ipv4.
+- name: Include VM IPv4 addresses (fallback — raw instances list)
+  vars:
+    _first_nic: "{{ (item.networks | default([{}]))[0] | default({}) }}"
+  ansible.builtin.set_fact:
+    _routeros_entries: >-
+      {{ _routeros_entries + [{
+           'list': routeros_address_list,
+           'address': _first_nic.ipv4 | split('/') | first,
+           'comment': item.name ~ ' - ' ~ routeros_address_list_comment
+         }] }}
+  loop: "{{ instances | default([]) | selectattr('networks', 'defined') | list }}"
+  loop_control:
+    label: "{{ item.name }} ({{ (item.networks | default([{}]))[0].ipv4 | default('') }})"
+  when:
+    - routeros_include_instances | bool
+    - groups['cluster_nodes'] | default([]) | length == 0
+    - (item.networks | default([{}]))[0].ipv4 | default('') | length > 0
+
+- name: Include VIP
+  ansible.builtin.set_fact:
+    _routeros_entries: >-
+      {{ _routeros_entries + [{
+           'list': routeros_address_list,
+           'address': patroni_vip_address | split('/') | first,
+           'comment': 'VIP - ' ~ routeros_address_list_comment
+         }] }}
+  when:
+    - routeros_include_vip | bool
+    - patroni_vip_address | default('') | length > 0
+
+- name: Include extra entries
+  ansible.builtin.set_fact:
+    _routeros_entries: >-
+      {{ _routeros_entries + [{
+           'list': routeros_address_list,
+           'address': item.address,
+           'comment': item.comment | default(routeros_address_list_comment)
+         }] }}
+  loop: "{{ routeros_extra_entries }}"
+  loop_control:
+    label: "{{ item.address }}"
+
+- name: Show effective address-list payload
+  ansible.builtin.debug:
+    msg:
+      - "RouterOS: {{ routeros_host }}"
+      - "address-list: {{ routeros_address_list }}"
+      - "entries ({{ _routeros_entries | length }}):"
+      - "{{ _routeros_entries | map(attribute='address') | list }}"

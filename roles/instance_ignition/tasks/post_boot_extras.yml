@@ -1,0 +1,58 @@
+---
+# Post-boot Ansible actions for Ignition-based VMs (FCOS / RHCOS / Flatcar /
+# openSUSE MicroOS). Dispatched from instance/tasks/configure_all.yml via:
+#   include_role: name=instance_{{ instance_init_type|replace('-','_') }}
+#                 tasks_from=post_boot_extras.yml
+
+# ── open-vm-tools /etc payload recovery ─────────────────────────────────────
+# When open-vm-tools is layered via Butane `extensions:` or a firstboot
+# rpm-ostree-install unit (rather than interactively from a running
+# system), rpm-ostree skips the package's %post scriptlet that copies
+# the /etc payload from /usr/etc/vmware-tools/ into /etc/vmware-tools/.
+# vgauthd then fails to start because vgauth.conf and the SAML XSD
+# schemas it needs are absent. We materialize the factory copies
+# idempotently — cp -n preserves any user-managed tools.conf override.
+
+- name: Check for open-vm-tools factory /etc payload
+  ansible.builtin.stat:
+    path: /usr/etc/vmware-tools
+  register: _ovt_factory_etc
+
+- name: Materialize open-vm-tools /etc factory copies (FCOS layered-install fix)
+  ansible.builtin.command:
+    cmd: cp -anr /usr/etc/vmware-tools/. /etc/vmware-tools/
+    creates: /etc/vmware-tools/vgauth/schemas/saml-schema-assertion-2.0.xsd
+  register: _ovt_etc_copy
+  when: _ovt_factory_etc.stat.exists
+
+# Apply SELinux file contexts even when SELinux is permissive — the labels
+# are silently set by `cp -a` from /usr/etc, but restorecon reasserts them
+# from the installed file_contexts policy (covers cases where /usr/etc
+# labels drift, or future enforcing-mode flips).
+- name: Restore SELinux contexts on /etc/vmware-tools
+  ansible.builtin.command:
+    cmd: restorecon -RF /etc/vmware-tools/
+  changed_when: false
+  when:
+    - _ovt_factory_etc.stat.exists
+    - _ovt_etc_copy is changed
+
+- name: Inspect vgauthd current state
+  ansible.builtin.systemd:
+    name: vgauthd.service
+  register: _vgauthd_state
+  when:
+    - _ovt_factory_etc.stat.exists
+    - _ovt_etc_copy is changed
+
+# Only restart if the unit is actively running or wedged in failed state.
+# If the operator deliberately disabled vgauthd (it's optional unless you
+# use VMware host-to-guest auth), respect that — don't bring it back up.
+- name: Restart vgauthd to pick up newly populated /etc payload
+  ansible.builtin.systemd:
+    name: vgauthd.service
+    state: restarted
+  when:
+    - _ovt_factory_etc.stat.exists
+    - _ovt_etc_copy is changed
+    - _vgauthd_state.status.ActiveState | default('') in ['active', 'failed']

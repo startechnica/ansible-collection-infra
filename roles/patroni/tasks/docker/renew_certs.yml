@@ -1,0 +1,59 @@
+---
+# Rolling cert rotation (docker). Cert generation itself runs in
+# shared/tls_certificates.yml (called from main.yml just before this);
+# this file's job is the rolling restart so containers pick up the
+# new on-disk certs, plus the post-rotation expiry summary.
+
+# -- Rolling restart (leaf rotation) ----------------------------------------
+- name: Rolling restart services
+  when: not (rotate_ca | default(false) | bool)
+  block:
+    - name: Restart etcd
+      community.docker.docker_compose_v2:
+        project_src: "{{ patroni_dir }}"
+        state: restarted
+        services:
+          - etcd
+
+    - name: Wait for etcd
+      ansible.builtin.pause:
+        seconds: 5
+
+    - name: Restart patroni
+      community.docker.docker_compose_v2:
+        project_src: "{{ patroni_dir }}"
+        state: restarted
+        services:
+          - patroni
+
+    - name: Wait for patroni
+      ansible.builtin.pause:
+        seconds: 10
+
+    - name: Restart haproxy
+      community.docker.docker_compose_v2:
+        project_src: "{{ patroni_dir }}"
+        state: restarted
+        services:
+          - haproxy
+
+# -- Full restart (CA rotation) ---------------------------------------------
+- name: Full restart (CA rotation)
+  when: rotate_ca | default(false) | bool
+  community.docker.docker_compose_v2:
+    project_src: "{{ patroni_dir }}"
+    state: restarted
+
+# -- Display expiry info ----------------------------------------------------
+- name: Read certificate expiry dates
+  community.crypto.x509_certificate_info:
+    path: "{{ item }}"
+  register: _cert_info
+  loop: "{{ patroni_certs_to_inspect }}"
+  loop_control:
+    label: "{{ item }}"
+  when: (patroni_certs_to_inspect) | length > 0
+
+- name: Display rotation summary
+  ansible.builtin.debug:
+    msg: "Certificate rotation complete ({{ 'CA + leaves' if (rotate_ca | default(false) | bool) else 'leaves only' }})."

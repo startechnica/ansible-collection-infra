@@ -1,0 +1,45 @@
+---
+# Docker engine + Compose v2 plugin. Counterpart to podman.yml —
+# included from main.yml only when container_engine='docker'. Engine
+# installation is delegated to geerlingguy.docker (cloud-init) or the
+# rpm-ostree layer applied at first boot (FCOS). This file only
+# validates that the daemon is up, the version is high enough, and
+# the compose plugin is present. Then triggers any configured
+# registry logins.
+
+- name: Check Docker is installed and running
+  community.docker.docker_host_info:
+  register: _docker_info
+  failed_when: not _docker_info.host_info
+
+- name: Assert Docker version >= 24
+  ansible.builtin.assert:
+    that:
+      - _docker_info.host_info.ServerVersion is version('24.0', '>=')
+    fail_msg: >-
+      Docker {{ _docker_info.host_info.ServerVersion }} is too old.
+      Cluster roles rely on Docker Compose V2 (Docker >= 24). Upgrade the engine.
+    success_msg: >-
+      Docker version {{ _docker_info.host_info.ServerVersion }} is compatible.
+
+- name: Check Docker Compose plugin
+  ansible.builtin.command: docker compose version --short
+  changed_when: false
+  failed_when: false
+  register: _docker_compose_check
+
+- name: Assert Docker Compose plugin available
+  ansible.builtin.assert:
+    that:
+      - _docker_compose_check.rc == 0
+    fail_msg: "Docker Compose plugin not found — 'docker compose up' will fail. Install docker-compose-plugin."
+    success_msg: "Docker Compose {{ _docker_compose_check.stdout | default('') | trim }} OK"
+    quiet: true
+
+# Optional: log in to private container registries before the calling role
+# pulls images. The `when` gate skips the include entirely when no
+# registries are configured, so no separate tag is needed — running the
+# `docker` tag covers it whenever it's relevant.
+- name: Authenticate to private Docker registries
+  ansible.builtin.include_tasks: docker_login.yml
+  when: docker_registries | length > 0

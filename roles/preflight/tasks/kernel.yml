@@ -1,0 +1,67 @@
+---
+# Kernel version + required modules. Override service_kernel_modules in
+# inventory to extend (e.g. add nf_conntrack, vhost_net, ip_vs).
+
+- name: Assert kernel >= 5.4
+  ansible.builtin.assert:
+    that:
+      - ansible_kernel is version('5.4', '>=')
+    fail_msg: >-
+      Kernel {{ ansible_kernel }} is too old. MongoDB and Patroni containers
+      require kernel >= 5.4 for stable cgroup v2 + overlay behavior.
+      Upgrade the host OS.
+    success_msg: "Kernel {{ ansible_kernel }} meets the >= 5.4 requirement."
+
+- name: Check required kernel modules
+  ansible.builtin.command: "lsmod"
+  register: _lsmod
+  changed_when: false
+
+- name: Warn about missing kernel modules
+  ansible.builtin.debug:
+    msg: >-
+      Kernel module '{{ item }}' is not loaded — loading now and persisting
+      via /etc/modules-load.d/{{ item }}.conf.
+  loop: "{{ service_kernel_modules }}"
+  when: item not in _lsmod.stdout
+
+- name: Load and persist required kernel modules
+  community.general.modprobe:
+    name: "{{ item }}"
+    state: present
+    persistent: present
+  loop: "{{ service_kernel_modules }}"
+
+# Verify the side effect actually landed. modprobe can return success in
+# corner cases where the runtime load didn't happen — alias-only resolution,
+# persistent file written but module not in this boot's kernel image, etc.
+# Re-reading lsmod and asserting each required module is now visible closes
+# the loop. Skipped when service_kernel_modules is empty (valid override
+# meaning "no modules required" — `selectattr` then returns []).
+- name: Re-read kernel modules after modprobe
+  ansible.builtin.command: lsmod
+  register: _lsmod_post
+  changed_when: false
+  when: service_kernel_modules | length > 0
+
+- name: Assert all required kernel modules are loaded
+  vars:
+    _missing_modules: >-
+      {{ service_kernel_modules
+         | default([])
+         | reject('in', _lsmod_post.stdout | default(''))
+         | list }}
+  ansible.builtin.assert:
+    that:
+      - _missing_modules | length == 0
+    fail_msg: >-
+      Kernel module(s) {{ _missing_modules | to_json }} not present in lsmod
+      after `modprobe --persistent`. The module(s) may not exist in this
+      kernel image — check `modinfo <name>` and `find /lib/modules/{{ ansible_kernel }} -name '*.ko*'`.
+      For FCOS, missing modules typically mean a layered kernel package is
+      needed (rpm-ostree install kernel-modules-extra) and a reboot.
+    success_msg: >-
+      All required kernel modules loaded
+      ({{ service_kernel_modules | join(', ') }})
+    quiet: true
+  when: service_kernel_modules | length > 0

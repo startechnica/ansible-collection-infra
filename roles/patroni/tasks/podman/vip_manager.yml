@@ -1,0 +1,21 @@
+---
+# vip-manager — podman path. Build local image + render Quadlet.
+# Caller (podman/deploy.yml) gates on `patroni_vip_enabled and use_vip_manager`.
+
+- name: Build vip-manager image (etcd-aware VIP, podman)
+  containers.podman.podman_image:
+    name: "localhost/vip-manager"
+    tag: "v{{ vip_manager_version }}"
+    path: "{{ vip_manager_dir }}"
+    build:
+      format: oci
+      force_rm: true
+
+- name: Render vip-manager Quadlet
+  ansible.builtin.template:
+    src: quadlets/vip-manager.container.j2
+    dest: /etc/containers/systemd/vip-manager.container
+    owner: root
+    group: root
+    mode: "0644"
+  register: _q_vip_manager

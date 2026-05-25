@@ -1,0 +1,29 @@
+---
+# All MongoDB directories created in one task with the correct ownership.
+# /opt/mongodb itself stays root:root (the standard /opt/<service> umbrella
+# convention — prevents another user from creating sibling files there).
+# Everything underneath is mongodb-owned because that's where the daemon
+# actually reads/writes.
+#
+# Previously the inner dirs were created explicitly but /opt/mongodb and
+# /opt/mongodb/data got auto-created as parents of the leaves, so /data
+# ended up root:root despite holding mongodb-owned children.
+
+- name: Create mongodb directories with correct ownership/mode
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner | default(mongodb_uid) }}"
+    group: "{{ item.group | default(mongodb_gid) }}"
+    mode: "{{ item.mode | default('0750') }}"
+  loop:
+    # Umbrella dir: root:root 0755, system convention for /opt/<service>.
+    - { path: "{{ mongodb_root_dir }}", owner: root, group: root, mode: "0755" }
+    # /opt/mongodb/data and its per-instance children — mongodb-owned.
+    - { path: "{{ mongodb_root_dir }}/data" }
+    - { path: "{{ mongodb_mongod_data_dir }}" }
+    - { path: "{{ mongodb_configsvr_data_dir }}" }
+    # mongodb_tls_dir is tighter — keys live here.
+    - { path: "{{ mongodb_tls_dir }}", mode: "0700" }
+  loop_control:
+    label: "{{ item.path }}"

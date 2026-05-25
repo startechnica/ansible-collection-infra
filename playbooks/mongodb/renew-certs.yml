@@ -1,0 +1,28 @@
+---
+# ─── MongoDB: Renew TLS Certificates ────────────────────────────────────────
+#
+# Regenerates member certificates (mongod, configsvr, mongos) using the
+# existing CA, distributes them to all nodes, and restarts containers.
+# The CA itself is NOT rotated — only leaf certs are renewed.
+#
+# Usage:
+#   ansible-playbook playbooks/mongodb/renew-certs.yml -i inventories/<your-inventory>.yml
+
+- name: Setup mongodb hosts
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - ansible.builtin.include_tasks: _setup.yml
+
+- name: MongoDB renew certificates
+  hosts: mongodb_nodes
+  become: true
+  gather_facts: true
+  pre_tasks:
+    - ansible.builtin.include_role:
+        name: common
+        tasks_from: inherit_localhost_vars
+  roles:
+    - role: mongodb
+      vars:
+        mongodb_action: renew-certs

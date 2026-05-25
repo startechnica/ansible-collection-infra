@@ -1,0 +1,540 @@
+---
+## @section Debug and Validation Parameters
+## @description Control debug output and validation-only mode.
+
+## @param debug [default: false] Enable verbose debug output for all tasks.
+##
+debug: false
+
+## @param debug_validation [default: false] Enable debug output specifically for validation steps.
+## Shows available networks, required networks, folder paths, template info, etc.
+##
+debug_validation: false
+
+## @param validation_only [default: false] Run only validation tasks without creating any VMs.
+## Useful for dry-run checks before actual provisioning.
+##
+validation_only: false
+
+## @section vCenter Connection
+## @description vCenter credentials. Typically loaded via vars_files from a vault-encrypted file.
+## See group_vars/all/vcenter.yml.
+##
+## @param vcenter_connect.hostname [required] vCenter hostname or IP.
+## @param vcenter_connect.username [required] vCenter username.
+## @param vcenter_connect.password [required] vCenter password.
+## @param vcenter_connect.validate_certs [default: false] Validate vCenter SSL certificate.
+## Default is false because most lab/internal vCenters use self-signed certs.
+## Override to true in inventory for production vCenters with a trusted CA chain.
+##
+vcenter_connect:
+  hostname: ""
+  username: ""
+  password: ""
+  validate_certs: false
+
+## @section Infrastructure Parameters
+## @description Core vCenter infrastructure settings.
+
+## @param instance_datacenter [default: ""] Name of the vCenter instance_datacenter.
+##
+instance_datacenter: ""
+
+## @param instance_domain_name [default: ""] Domain name appended to VM hostnames.
+## Set to empty string to use short hostnames only.
+## e.g. "vm-01" becomes "vm-01.id-central-1.compute.internal"
+##
+instance_domain_name: ""
+
+## @param instance_dns_servers [default: [8.8.8.8, 1.1.1.1]] DNS servers configured in the guest OS.
+##
+instance_dns_servers:
+  - 8.8.8.8
+  - 1.1.1.1
+
+## @param instance_timezone [default: ""] Timezone for the guest OS.
+## e.g. "Asia/Jakarta", "UTC", "America/New_York"
+## Leave empty to use the OS default (typically UTC).
+##
+instance_timezone: ""
+
+## Datastore: set inside `instance_disks.datastore` (per-disk override
+## via `disks[i].datastore`). One source of truth — the role and
+## consumers (validate_datastore, deploy_*, register_vm) all read
+## `instance_disks.datastore`.
+
+## @param instance_folder [default: ""] VM folder path in vCenter. Created automatically if missing.
+## e.g. "MyProject", "Production/WebServers"
+##
+instance_folder: ""
+
+## @param instance_cluster_name [default: ""] vSphere cluster name for cluster-based deployments.
+## Mutually exclusive with vsphere_esxi_hostname. Set one or the other.
+## e.g. "ProductionCluster", "Deviruchi"
+##
+instance_cluster_name: ""
+
+## @param vsphere_esxi_hostname [default: ""] Standalone ESXi host for direct host deployments.
+## Mutually exclusive with instance_cluster_name. Set one or the other.
+## e.g. "192.168.1.100", "esxi01.example.com"
+##
+vsphere_esxi_hostname: ""
+
+## @section Per-NIC network defaults
+## @description Merged into every entry of a VM's `networks:` list at
+## template/configure time. Per-NIC keys override these.
+##
+##   Effective NIC config = instance_networks | combine(networks[i])
+##
+## Recognized keys:
+##   gateway4 (str)  — IPv4 default gateway (e.g. "10.0.0.1")
+##                     Required if any NIC declares a static ipv4 address.
+##   gateway6 (str)  — IPv6 default gateway (e.g. "2001:db8::1")
+##                     Required if any NIC declares a static ipv6 address.
+##   mtu      (int)  — MTU applied to every NIC (default 1500). Override
+##                     per-NIC for jumbo-frame storage networks etc.
+##
+## A flat (non-dict-keyed-by-name) shape is intentional: the common case
+## is a single L2 segment shared by every NIC. If you ever need per-network
+## differentiation, migrating to a dict-keyed-by-name shape is mechanical.
+##
+instance_networks:
+  mtu: 1500
+  # gateway4: ""           # set in inventory
+  # gateway6: ""           # set in inventory if dual-stack
+
+## @section Content Library Parameters
+## @description VM template source from vCenter Content Library.
+
+## @param content_library_name [default: ""] Name of the vCenter Content Library.
+## e.g. "ubuntu-images", "Fedora-CoreOS"
+##
+## @param content_library_template [default: ""] Template name within the content library.
+## e.g. "noble-server-cloudimg-amd64", "fedora-coreos-43.20260105.3.0-vmware.x86_64"
+## When EMPTY and auto_import is true, populated automatically with the
+## latest FCOS release from upstream stream metadata (ignition only).
+## When SET, the auto-import step is skipped — the value is treated as a
+## pin and the role expects the OVA to already exist in the content library.
+##
+## @param content_library_type [default: ovf] Template type in the content library.
+## Allowed values: ovf, vm-template
+##
+## @param content_library_auto_import [default: false] Automatically fetch and import
+## the latest FCOS OVA into this content library (ignition only).
+## Only fires when `content_library_template` is empty — setting that var
+## explicitly opts out of auto-import and pins to a specific OVA name.
+##
+## @param content_library_template_prefix [default: fedora-coreos] Prefix for auto-imported
+## content library item names. Item will be named "{{ template_prefix }}-{{ version }}".
+## Only used when auto_import is true.
+##
+content_library_name: ""
+content_library_template: ""
+content_library_type: "ovf"
+content_library_auto_import: true
+content_library_template_prefix: "fedora-coreos"
+
+## @section Network Parameters
+## @description Port group configuration for VM networking.
+
+## @param portgroup_name [default: ""] Portgroup name to attach VMs to.
+## Must exist in vCenter or will be created if vlan_id is provided.
+## e.g. "v3244", "VM Network", "10g_1_v3244"
+##
+## @param portgroup_vlan_id [default: 0] VLAN ID for creating new portgroups.
+## Only used when the portgroup doesn't exist and needs to be created.
+##
+## @param portgroup_vswitch_name [default: vSwitch0] Standard vSwitch name for ESXi standalone deployments.
+## Only used when creating standard portgroups on a standalone ESXi host.
+##
+## @param portgroup_dvswitch_name [default: ""] Distributed vSwitch name for cluster deployments.
+## Only used when creating distributed portgroups on a cluster.
+## e.g. "DSwitch1-Data", "DSwitch0-Mgmt"
+##
+## @param portgroup_create [default: false] Auto-create missing portgroups
+## in vCenter instead of failing in validate/network.yml. When false (the
+## default), an inventory that references a portgroup not present in
+## vCenter fails fast with a list of missing names — safer for production
+## inventories where unexpected portgroup creation could mean a typo'd
+## name. When true, validate/network.yml's existence assert is bypassed
+## and tasks/network.yml creates the missing portgroups (standard on the
+## ESXi vSwitch, distributed on the named vDS) using portgroup_vlan_id.
+##
+portgroup_name: "VM Network"
+portgroup_vlan_id: 0
+portgroup_vswitch_name: "vSwitch0"
+portgroup_dvswitch_name: ""
+portgroup_create: false
+
+## @section VM Specification Parameters
+## @description Default hardware specs applied to all VMs. Can be overridden per-VM.
+
+## @param instance_memory_mb [default: 2048] Memory in megabytes.
+## Per-VM override: set `memory_mb` on the VM entry.
+##
+instance_memory_mb: 2048
+
+## @param instance_cpu [default: 2] Number of virtual CPUs.
+## Per-VM override: set `cpu` on the VM entry.
+##
+instance_cpu: 2
+
+## @section Per-disk defaults
+## @description Merged into every entry of a VM's `disks:` list at
+## configure-hardware time. Per-disk keys override these.
+##
+##   Effective disk config = instance_disks | combine(disks[i])
+##
+## Recognized keys:
+##   size_gb         (int)  — disk size in GB. Required somewhere; if a VM's
+##                            `disks[i]` entry omits size_gb it falls back to
+##                            this. Default 40.
+##   type            (str)  — `thin`, `thick`, or `eagerzeroedthick`. Default thin.
+##   datastore       (str)  — per-disk datastore override. Defaults to the
+##                            project-level `instance_disks.datastore`.
+##   controller_type (str)  — `paravirtual` (default), `lsilogicsas`, `nvme`, …
+##   controller_number (int) — 0..3
+##   unit_number     (int)  — 0..15 (slot on controller; 7 reserved for SCSI ctrlr)
+##   disk_mode       (str)  — `persistent` (default), `independent_persistent`, …
+##
+## A VM with no `disks:` set effectively gets `[instance_disks]` — one disk
+## using these defaults. Override per-VM with `disks: [{size_gb: N}, ...]`
+## for multi-disk layouts.
+##
+instance_disks:
+  size_gb: 40
+  type: thin
+
+## @param vsphere_hw_version [default: 15] VMware hardware version number.
+## Only upgrades are supported — downgrading is not possible in vSphere.
+## If the template deploys at a higher version, it will be kept as-is.
+## Per-VM override: set `vsphere_hw_version` on the VM entry.
+##
+vsphere_hw_version: 15
+
+## @param instance_boot_firmware [default: efi] Boot firmware type.
+## Allowed values: efi, bios
+## Must match the template's boot partition type. EFI templates won't boot with BIOS and vice versa.
+## Per-VM override: set `boot_firmware` on the VM entry.
+##
+instance_boot_firmware: efi
+
+## @section Initialization Type
+## @description Choose between cloud-init and ignition (default — Fedora CoreOS / similar).
+
+## @param instance_init_type [default: ignition] Guest initialization method.
+## Allowed values: cloud-init, ignition
+## - ignition: Butane → Ignition config injection via guestinfo (Fedora CoreOS, Flatcar, etc.)
+## - cloud-init: Standard cloud-init userdata/metadata injection (Ubuntu, Debian, etc.)
+##
+instance_init_type: ignition
+
+## ── Container runtime selection ──
+##
+## Three independent inventory knobs:
+##
+##   container_engine  [default: docker]  The selected runtime that
+##                                         mongodb / patroni dispatch
+##                                         against. Allowed: docker,
+##                                         podman.
+##   docker_install    [default: false]   Install docker-ce.
+##   podman_enabled    [default: false]   Enable podman (Quadlet path).
+##                                         Podman ships preinstalled on
+##                                         FCOS, so this is enable-only
+##                                         — no install step.
+##
+## `container_engine` is the authoritative selector. The two booleans
+## are independent — they say whether each runtime is installed /
+## enabled on the host. mongodb / patroni only run when the SELECTED
+## engine's install/enable toggle is true; otherwise the role
+## end_roles itself ("skip all").
+##
+## Truth table (cluster role behavior given mongodb_enabled or
+## patroni_enabled is true):
+##
+##   docker_install | container_engine | podman_enabled | result
+##   ---------------|------------------|----------------|------------------
+##   true           | podman           | true           | run using podman
+##   true           | podman           | false          | skip all
+##   true           | docker           | true           | run using docker
+##   true           | docker           | false          | run using docker
+##   false          | docker           | false          | skip all
+##   false          | docker           | true           | skip all
+##   false          | podman           | true           | run using podman
+##   false          | podman           | false          | skip all
+##
+## In other words: the selected engine's toggle must be true. The
+## non-selected engine's toggle is irrelevant to dispatch — it just
+## controls whether that runtime is also installed / enabled on the
+## host (e.g., for sidecar tools, manual debugging, etc.).
+##
+## Cloud-init + podman is intentionally not supported (that path uses
+## geerlingguy.docker and there's no podman alternative wired up).
+## Quadlet is the only supported podman lifecycle (no podman-compose
+## path) because Quadlets are the modern, systemd-native way to run
+## containers on FCOS.
+##
+## @param container_engine [default: docker] Selected runtime.
+## @param docker_install [default: false] Install docker-ce on the host.
+##                                         Required for `container_engine: docker`.
+## @param podman_enabled [default: false] Enable podman + Quadlets.
+## Only honored on ignition hosts.
+container_engine: podman
+docker_install: false
+podman_enabled: true
+
+## @section Default User Parameters
+## @description Default OS user created on all VMs. Used by both cloud-init and ignition.
+
+## @param instance_user_name [default: ubuntu] Default OS username.
+## For ignition/FCOS, this is typically "core".
+##
+## @param instance_user_ssh_authorized_keys [default: []] SSH public keys for the default user.
+## Used by both cloud-init and ignition init types.
+## e.g. ["ssh-ed25519 AAAAC3... user@laptop", "ssh-rsa AAAAB3... admin@workstation"]
+##
+## @param instance_user_sudo [default: ALL=(ALL) NOPASSWD:ALL] Sudo privilege configuration.
+## Used by cloud-init only (FCOS "core" user has passwordless sudo by default).
+##
+## @param instance_user_shell [default: /bin/bash] Default login shell.
+## Used by cloud-init only.
+##
+## @param instance_user_lock_passwd [default: true] Lock password-based login.
+## Used by cloud-init only. Ignored when `password` is set (account is automatically unlocked).
+##
+## @param instance_user_password [default: ""] Plain text password for the default user.
+## Used by cloud-init only. Automatically hashed with SHA-512 during injection.
+## When set, SSH password authentication is enabled and the account is unlocked.
+## Leave empty to disable password login (SSH key only).
+##
+instance_user_name: ubuntu
+instance_user_ssh_authorized_keys: []
+instance_user_sudo: ""
+instance_user_shell: /bin/bash
+instance_user_lock_passwd: true
+instance_user_password: ""
+
+## @section SSH configuration
+## @description sshd_config directives applied after cloud-init via VMware Tools.
+## Keys are written verbatim as sshd directive names; values as the right-hand
+## side. Effective config = role-level instance_ssh_configs merged with item.ssh_config.
+## Empty = no changes made to sshd.
+##
+## Example:
+##   instance_ssh_configs:
+##     Port: 2222
+##     PasswordAuthentication: "no"
+##     PermitRootLogin: "no"
+##     ClientAliveInterval: 300
+##
+instance_ssh_configs: {}
+
+## @section First-Boot Parameters
+## @description Packages and commands to run on first boot. Used by both cloud-init and ignition.
+## For cloud-init: packages are installed via apt/dnf, instance_runcmds run as shell commands.
+## For ignition/FCOS: packages are installed via rpm-ostree, instance_runcmds run as a oneshot systemd unit.
+
+## @param instance_packages [default: []] Packages installed on all VMs on first boot.
+## Merged with per-VM packages (cloud_init.packages or ignition.packages).
+## e.g. [curl, git, htop]
+##
+instance_packages: []
+
+## @param instance_runcmds [default: []] Shell commands run on first boot on all VMs.
+## Merged with per-VM instance_runcmds (cloud_init.runcmd or ignition.instance_runcmds).
+## e.g. ["systemctl enable docker", "echo ready > /etc/motd"]
+##
+instance_runcmds: []
+
+## @section Cloud-init Parameters
+## @description Cloud-init specific settings. Only used when instance_init_type is "cloud-init".
+## NOTE: per-VM `cloud_init:` dict (under each entry of `instances`) is a DIFFERENT
+## namespace — it holds per-VM users / packages / runcmd overrides and stays
+## nested. These flat `cloud_init_*` keys are the role-level defaults.
+##
+## @param cloud_init_package_update [default: true] Run apt-get update on first boot.
+## @param cloud_init_package_upgrade [default: true] Run apt-get upgrade on first boot.
+##
+cloud_init_package_update: true
+cloud_init_package_upgrade: true
+
+## @param instance_extra_users [default: []] Additional users created on all VMs.
+## Used by both cloud-init and ignition.
+## Per-VM users can be added via `cloud_init.users` or `ignition.users`.
+## Global and per-VM users are merged (global first, then per-VM).
+## Each user supports: name (required), shell, sudo, password, lock_passwd, ssh_authorized_keys.
+## If ssh_authorized_keys is not set, instance_user_ssh_authorized_keys is used.
+##
+## e.g.
+##   instance_extra_users:
+##     - name: deploy
+##       sudo: "ALL=(ALL) NOPASSWD:ALL"
+##       ssh_authorized_keys:
+##         - "ssh-ed25519 AAAAC3... deploy@ci"
+##
+instance_extra_users: []
+
+## @section Post-Provision Parameters
+## @description Shell commands executed on the VM after successful deployment.
+
+## @param instance_post_commands [default: []] List of shell commands to run after the VM is provisioned.
+## Commands are executed via VMware Tools (vmware_vm_shell) as the default_user.
+## No SSH connection required. Per-VM override: set `instance_post_commands` on the VM entry.
+## e.g. ["apt-get update", "systemctl enable docker"]
+##
+instance_post_commands: []
+
+## @section Destroy Parameters
+## @description Safety knobs for `tasks/destroy.yml`. Both default false.
+## Pass via `-e` for unattended/CI runs.
+
+## @param instance_destroy_skip_confirm [default: false] Skip the interactive
+## "type 'destroy' to continue" confirmation prompt. CI / scripted teardowns
+## should set this to true.
+##
+instance_destroy_skip_confirm: false
+
+## @param instance_destroy_prune [default: false] Also delete VM data disks
+## (irreversible). When false, only the VM registration is removed; the
+## VMDK files stay on the datastore for manual recovery / inspection.
+##
+instance_destroy_prune: false
+
+## @param instance_destroy_shutdown_timeout [default: 200] Seconds to wait
+## for graceful guest shutdown (via vmtools) per VM before falling back to
+## hard power-off. Increase for VMs with slow shutdown (DB checkpointing,
+## queued background jobs).
+##
+instance_destroy_shutdown_timeout: 200
+
+## @section Permission Parameters
+## @description vCenter RBAC permission assignment for provisioned VMs.
+
+## @param vcenter_principal_user [default: ""] vCenter user or group to assign permissions to.
+## Leave empty to skip all permission-related tasks.
+## e.g. "devteam@vsphere.local", "DOMAIN\\group-name"
+##
+## @param vcenter_principal_is_group [default: false] Whether the principal is a group.
+##
+vcenter_principal_user: ""
+vcenter_principal_is_group: false
+
+## @param vcenter_permission_enabled [default: false] Enable VM permission assignment.
+## Requires vcenter_principal_user to be set.
+##
+## @param vcenter_permission_role [default: ""] vCenter role name to assign.
+## Must exist in vCenter. e.g. "ReadOnly", "VirtualMachinePowerUser"
+##
+## @param vcenter_permission_propagate [default: false] Propagate permission to child objects.
+##
+vcenter_permission_enabled: false
+vcenter_permission_role: ""
+vcenter_permission_propagate: false
+
+
+## @section Ignition Parameters (when instance_init_type: ignition)
+## @description Configuration for Ignition-based guest initialization.
+## These parameters are only used when instance_init_type is set to "ignition".
+##
+## @param ignition_flavour [default: fcos] Ignition distro flavor. One of:
+##   fcos, flatcar, rhcos, opensuse. Picks sane defaults for Butane variant /
+##   spec version / content-library prefix. Override individual
+##   `ignition_flavour_default.*` keys below to customize further.
+##
+## @param ignition_flavour_default.butane_template [default: fcos.bu.j2] Butane template file to render per-VM.
+## @param ignition_flavour_default.butane_strict [default: false] Treat butane warnings as errors.
+## @param ignition_flavour_default.butane_variant [flavor-derived] Butane variant header (fcos, flatcar, openshift, opensuse).
+## @param ignition_flavour_default.butane_spec_version [flavor-derived] Butane spec version (e.g. 1.5.0 for FCOS, 1.1.0 for Flatcar).
+## @param ignition_flavour_default.channel [flavor-derived] Release channel (stable, testing, beta, ...).
+## @param ignition_flavour_default.metadata_url [flavor-derived] Stream / version metadata URL (with {channel} substituted).
+## @param ignition_flavour_default.instance_user_name [flavor-derived] Default OS user on that distro (core, root, etc).
+##
+ignition_flavour: fcos
+
+# Resolved per-flavor dict — auto-derived from the sub-role's
+# `ignition_flavour_map` (logic in roles/instance/vars/main.yml ::
+# _ignition_flavour_default). Override the whole dict per-inventory to
+# pin a custom template path / channel.
+ignition_flavour_default: "{{ _ignition_flavour_default }}"
+
+# Flat ignition_* scalars — kept outside the `ignition:` dict so individual
+# overrides don't trigger the shallow-dict-merge foot-gun (replacing a dict
+# silently drops every key you don't re-declare).
+#
+## @param ignition_tmp_dir [default: /tmp] Directory for the role's temporary .bu / .ign files.
+ignition_tmp_dir: /tmp
+
+# FCOS-specific knobs — same flatten rationale.
+# Consumed by fcos_prepare.yml when ignition_flavour=fcos.
+#
+## @param ignition_fcos_stream [default: stable] FCOS stream: stable, testing, or next.
+## @param ignition_fcos_arch [default: x86_64] Architecture for the FCOS OVA.
+## @param ignition_fcos_stream_metadata_url [default: auto-derived] Override
+##   the stream metadata endpoint (e.g. for an air-gapped mirror). Empty
+##   means auto-derive from `ignition_fcos_stream`.
+##
+ignition_fcos_stream: stable
+ignition_fcos_arch: x86_64
+ignition_fcos_stream_metadata_url: ""  # auto-generated from ignition_fcos_stream if empty
+
+## @section VM Definitions
+## @description List of VMs to provision. See README.md for per-VM override options.
+
+## @param instances [default: []] List of VM definitions.
+## Each entry requires at minimum: `hostname` and `networks: [{...}]`.
+##
+## Naming:
+##   hostname  (required) — guest OS hostname (set inside the VM via
+##                          cloud-init / Butane).
+##   name      (optional) — vCenter VM display name. Defaults to `hostname`.
+##                          Set explicitly only when the two should differ
+##                          (e.g. asset tag in vCenter, short hostname inside
+##                          the guest).
+##
+## NICs (per-VM `networks:` list, in vSphere device order ens192, ens224, …):
+##   name      (str, optional) — vCenter portgroup; defaults to `portgroup_name`
+##   ipv4      (str)           — CIDR (e.g. "10.0.0.10/24"), or "dhcp"
+##   ipv6      (str, optional) — CIDR (e.g. "2001:db8::10/64"), or "dhcp6"
+##   gateway4  (str, optional) — overrides instance_networks.gateway4
+##   gateway6  (str, optional) — overrides instance_networks.gateway6
+##   mtu       (int, optional) — overrides instance_networks.mtu
+##   mac       (str, optional) — pin a MAC address (otherwise auto-assigned)
+##
+## Disks (per-VM `disks:` list — auto-defaults to a single disk using
+## instance_disks if omitted):
+##   size_gb         (int)            — disk size in GB
+##   type            (str, optional)  — thin / thick / eagerzeroedthick
+##   datastore       (str, optional)  — per-disk datastore
+##   controller_type (str, optional)  — paravirtual / lsilogicsas / nvme / …
+##   unit_number     (int, optional)  — slot on the controller
+##
+## Optional per-VM overrides:
+##   cpu, memory_mb, vsphere_hw_version, boot_firmware, post_commands
+##
+## Per-VM cloud-init options (via `cloud_init` dict):
+##   cloud_init.packages  - list of packages to install
+##   cloud_init.runcmd    - list of shell commands to run on first boot
+##   cloud_init.users     - list of extra users (merged after instance_extra_users)
+##
+## Example:
+##   instances:
+##     - name: my-vm-01
+##       networks:
+##         - ipv4: 10.0.0.10/24      # uses portgroup_name, instance_networks.gateway4
+##       cpu: 4
+##       memory_mb: 8192
+##
+##     - name: my-gw-01              # multi-NIC + dual-stack + DHCP
+##       networks:
+##         - name: pg-mgmt
+##           ipv4: 10.0.0.20/24
+##           ipv6: 2001:db8::20/64
+##         - name: pg-data
+##           ipv4: dhcp
+##           mtu: 9000
+##       cloud_init:
+##         packages: [curl, git]
+##         runcmd:
+##           - echo "ready" > /etc/motd
+##
+instances: []

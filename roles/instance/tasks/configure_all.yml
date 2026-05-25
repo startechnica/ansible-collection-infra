@@ -1,0 +1,44 @@
+---
+# Phase 2c: per-VM POST-BOOT work — verify the OS came up, detach the
+# OVF-env CD-ROM (cloud-init only), run post-provision commands, apply
+# sshd overrides.
+#
+# Pre-boot work (configure_hardware + inject) runs in prepare_all.yml.
+# Power-on for ALL VMs runs in parallel from poweron_all.yml. By the time
+# this loop starts, every VM is already booting concurrently — so even
+# though this loop is sequential per-VM, the OS-boot wall clock has been
+# folded across all VMs instead of paid serially.
+#
+# CLEANUP IS NOT INVOKED HERE. First-boot guestinfo cleanup
+# (clearing guestinfo.ignition.config.data / guestinfo.userdata etc.) used
+# to live in this file — but on the static-IP fast path, verify.yml
+# completes in ~10s after power-on, so cleanup races with Ignition's
+# initramfs-stage read of the same guestinfo and silently produces a
+# "no config provided by user" failure. Cleanup now lives at deploy.yml's
+# Stage 3.7, which runs after Stage 3.4 (bootstrap=ready for ignition) and
+# Stage 3.6 (cloud-init done) — both of which prove the relevant first-
+# boot consumer has already read its guestinfo.
+
+- name: Verify VM boot and network
+  ansible.builtin.include_tasks: create_vm/verify.yml
+
+# NOTE: floppy device removal moved to prepare_all.yml — VMware doesn't
+# support hot-remove of floppy devices, so it must run BEFORE the parallel
+# power-on. Kept the comment here as a breadcrumb for anyone tracing the
+# post-boot flow.
+
+# Init-type-specific post-boot extras (CD-ROM detach, instance_post_commands).
+# Computed-name dispatch — cloud-init runs the cloud-init role's
+# `post_boot_extras.yml` (which detaches the OVF CD and runs instance_post_commands),
+# ignition runs its (currently no-op) version. Adding a third instance_init_type
+# = create matching `post_boot_extras.yml` in `instance_<type>`.
+- name: Run init-type-specific post-boot extras
+  ansible.builtin.include_role:
+    name: "instance_{{ instance_init_type | replace('-', '_') }}"
+    tasks_from: post_boot_extras.yml
+
+- name: Apply SSH configuration overrides
+  ansible.builtin.include_tasks: ssh_config.yml
+  when: >-
+    (instance_ssh_configs | length > 0)
+    or (item.ssh_config | default({}) | length > 0)

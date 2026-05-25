@@ -1,0 +1,15 @@
+---
+# Internal computed defaults — vars/ precedence (~18) keeps these locked
+# from inventory override. The user-facing knobs live in defaults/main.yml
+# and reference these via Jinja, so an inventory CAN still override the
+# user-facing var (defaults < inventory) while the underlying logic stays
+# centralised.
+
+# Auto-detected vip-manager release asset suffix.
+# vip-manager publishes binaries as `vip-manager_<v>_Linux_<arch>.tar.gz`
+# where <arch> is `x86_64` / `arm64` — Linux reports `aarch64`, vip-manager
+# names it `arm64`. All other archs pass through unchanged.
+# ref: https://github.com/cybertec-postgresql/vip-manager/releases
+_vip_manager_arch: >-
+  {{ 'arm64' if (ansible_architecture | default('x86_64')) == 'aarch64'
+     else (ansible_architecture | default('x86_64')) }}

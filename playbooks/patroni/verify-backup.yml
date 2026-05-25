@@ -1,0 +1,152 @@
+---
+# ─── Patroni: Backup Verification ───────────────────────────────────────────
+#
+# Fetches the latest backup (WAL-G when S3 is configured, otherwise the most
+# recent pg_basebackup dir), restores it into a disposable Postgres container
+# on one node, runs a smoke query (pg_isready + simple SELECT on the system
+# catalog), tears it down. The real cluster is not touched.
+#
+# Usage:
+#   ansible-playbook playbooks/patroni/verify-backup.yml \
+#     -i inventories/<your-inventory>.yml
+#
+# Optional (WAL-G only): -e backup_name=base_000000...  (default: LATEST)
+
+- name: Setup patroni hosts
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - ansible.builtin.include_tasks: _setup.yml
+
+- name: Verify latest backup is restorable
+  hosts: patroni_nodes[0]
+  become: true
+  gather_facts: true
+  pre_tasks:
+    - ansible.builtin.include_role:
+        name: common
+        tasks_from: inherit_localhost_vars
+  tasks:
+    - name: Create scratch restore directory
+      ansible.builtin.file:
+        path: /opt/patroni/verify-restore
+        state: directory
+        owner: "{{ patroni_uid }}"
+        group: "{{ patroni_gid }}"
+        mode: "0700"
+
+    - name: Restore via WAL-G (S3)
+      when: s3_bucket | default('') | length > 0
+      block:
+        - name: Fetch latest backup with wal-g
+          community.docker.docker_container_exec:
+            container: patroni
+            command: >
+              /opt/walg/wal-g backup-fetch /var/lib/postgresql/verify-restore
+              {{ backup_name | default('LATEST') }}
+          register: _walg_fetch
+          changed_when: false
+
+    - name: Restore via pg_basebackup snapshot (local)
+      when: s3_bucket | default('') | length == 0
+      block:
+        - name: Find latest local pg_basebackup
+          ansible.builtin.shell: ls -dt {{ patroni_backup_dir }}/backup-* 2>/dev/null | head -n1
+          register: _latest_basebackup
+          changed_when: false
+
+        - name: Fail if no local backup found
+          ansible.builtin.fail:
+            msg: "No pg_basebackup snapshots under {{ patroni_backup_dir }}. Run playbooks/patroni/backup.yml first."
+          when: _latest_basebackup.stdout | trim | length == 0
+
+        - name: Copy snapshot into scratch restore dir
+          ansible.builtin.copy:
+            src: "{{ _latest_basebackup.stdout }}/"
+            dest: /opt/patroni/verify-restore/
+            owner: "{{ patroni_uid }}"
+            group: "{{ patroni_gid }}"
+            mode: preserve
+            remote_src: true
+
+    - name: Write recovery signal (restore, don't replay WAL to end)
+      ansible.builtin.copy:
+        dest: /opt/patroni/verify-restore/recovery.signal
+        content: ""
+        owner: "{{ patroni_uid }}"
+        group: "{{ patroni_gid }}"
+        mode: "0600"
+
+    - name: Neutralise archive/restore commands in scratch copy
+      ansible.builtin.lineinfile:
+        path: /opt/patroni/verify-restore/postgresql.auto.conf
+        create: true
+        owner: "{{ patroni_uid }}"
+        group: "{{ patroni_gid }}"
+        mode: "0600"
+        line: "{{ item }}"
+      loop:
+        - "archive_mode = 'off'"
+        - "archive_command = ''"
+        - "restore_command = ''"
+        - "recovery_target = 'immediate'"
+        - "recovery_target_action = 'promote'"
+
+    - name: Start disposable Postgres for verification
+      community.docker.docker_container:
+        name: patroni-verify
+        image: "{{ patroni_image }}"
+        state: started
+        recreate: true
+        user: "{{ patroni_uid }}:{{ patroni_gid }}"
+        command: >
+          postgres -D /var/lib/postgresql/verify-restore
+          -p 55433 -c listen_addresses=127.0.0.1
+          -c archive_mode=off
+        volumes:
+          - "/opt/patroni/verify-restore:/var/lib/postgresql/verify-restore"
+        network_mode: bridge
+        detach: true
+        cleanup: false
+
+    - name: Wait for scratch Postgres to accept connections
+      community.docker.docker_container_exec:
+        container: patroni-verify
+        command: pg_isready -h 127.0.0.1 -p 55433
+      register: _ready
+      until: _ready.rc | default(1) == 0
+      retries: 30
+      delay: 3
+      changed_when: false
+
+    - name: Smoke check — list databases and sizes
+      community.postgresql.postgresql_query:
+        login_host: 127.0.0.1
+        login_port: 55433
+        login_user: postgres
+        login_db: postgres
+        ssl_mode: disable
+        query: >-
+          SELECT datname, pg_size_pretty(pg_database_size(datname)) AS size
+          FROM pg_database WHERE NOT datistemplate
+      register: _dbs
+      changed_when: false
+
+    - name: Backup verification report
+      ansible.builtin.debug:
+        msg:
+          - "Backup source: {{ 'WAL-G S3' if s3_bucket | default('') | length > 0 else _latest_basebackup.stdout | default('n/a') }}"
+          - "Databases restored: {{ _dbs.query_result | default([]) }}"
+          - "Status: PASS"
+
+  post_tasks:
+    - name: Tear down scratch container
+      community.docker.docker_container:
+        name: patroni-verify
+        state: absent
+      failed_when: false
+
+    - name: Remove scratch restore dir
+      ansible.builtin.file:
+        path: /opt/patroni/verify-restore
+        state: absent

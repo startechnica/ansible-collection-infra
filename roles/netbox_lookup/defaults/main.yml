@@ -1,0 +1,80 @@
+---
+
+debug: false
+# ════════════════════════════════════════════════════════════════════
+# NetBox Lookup — Role Defaults
+# ════════════════════════════════════════════════════════════════════
+# Query NetBox as source of truth and build the `instances` list for provisioning.
+#
+# Filters are combined with AND logic — only VMs matching ALL specified
+# filters are returned.
+
+netbox_lookup_enabled: true
+
+## @section NetBox Connection
+## @description Reuses the same netbox_connect dict from netbox_register.
+
+netbox_connect:
+  url: ""
+  token: ""
+  validate_certs: false
+
+## @section Query Filters
+## @description Filters to select which VMs to fetch from NetBox.
+## All filters are optional — omit or leave empty to skip that filter.
+
+## @param netbox_query_cluster [default: ""] Filter VMs by cluster name.
+## e.g. "Deviruchi"
+##
+netbox_query_cluster: ""
+
+## @param netbox_query_site [default: ""] Filter VMs by site slug.
+## e.g. "dc-jakarta-1"
+##
+netbox_query_site: ""
+
+## @param netbox_query_tenant [default: ""] Filter VMs by tenant slug.
+## e.g. "engineering"
+##
+netbox_query_tenant: ""
+
+## @param netbox_query_role [default: ""] Filter VMs by role slug.
+## e.g. "database"
+##
+netbox_query_role: ""
+
+## @param netbox_query_status [default: ""] Filter VMs by status.
+## Typical values: active, planned, staged, decommissioning, offline
+## Leave empty to fetch VMs regardless of status.
+##
+netbox_query_status: ""
+
+## @param netbox_query_tags [default: []] Filter VMs by tags (all must match).
+## e.g. ["production", "docker"]
+##
+netbox_query_tags: []
+
+## @param netbox_query_custom_fields [default: {}] Filter by custom field values.
+## e.g. { "environment": "production" }
+##
+netbox_query_custom_fields: {}
+
+## @section Output Configuration
+## @description Controls how the fetched data maps to the `instances` list.
+
+## @param netbox_lookup_interface [default: ens192] Interface name to read IP from.
+##
+netbox_lookup_interface: "ens192"
+
+## @param netbox_vrf [default: ""] Filter IP addresses by VRF name when looking up
+## a VM's IPv4/IPv6 addresses in NetBox. Useful when a VM has multiple IPs across
+## different VRFs (e.g. management vs. data network). Leave empty to take the first
+## IP returned regardless of VRF.
+##
+netbox_vrf: ""
+
+## @param netbox_lookup_set_instances [default: true] Whether to set the `instances` fact from NetBox results.
+## When true, the role sets `instances` as a list compatible with instance.
+## When false, raw results are available as `netbox_vms` for custom processing.
+##
+netbox_lookup_set_instances: true

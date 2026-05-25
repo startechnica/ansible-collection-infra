@@ -1,0 +1,288 @@
+---
+# Destroy / wind-down the inventory's VMs in vCenter.
+#
+# Two phases:
+#   1. POWER DOWN every VM that's currently powered on:
+#        - vmtools running   → shutdown-guest (graceful, OS-level)
+#        - vmtools not running → powered-off  (force off, equivalent
+#                                               to pulling the plug)
+#   2. PRUNE (optional, gated by interactive confirm or
+#      `instance_destroy_prune=true` extra-var): vmware_guest with
+#      state=absent removes the VM record + disks from vCenter.
+#
+# Invocation:
+#
+#   # Interactive (prompts before shutdown, then after for prune):
+#   ansible-playbook playbooks/destroy.yml -i inventories/<your-inventory>.yml
+#
+#   # Non-interactive shutdown only (skip prompts, leave VMs registered
+#   # in vCenter for a possible re-run later):
+#   ansible-playbook playbooks/destroy.yml -i inventories/<your-inventory>.yml \
+#     -e instance_destroy_skip_confirm=true
+#
+#   # Non-interactive full prune (DESTROYS DATA — disks are deleted):
+#   ansible-playbook playbooks/destroy.yml -i inventories/<your-inventory>.yml \
+#     -e instance_destroy_skip_confirm=true \
+#     -e instance_destroy_prune=true
+#
+# All vCenter calls are delegated to localhost (controller-side); this
+# file does not need SSH to the guests.
+
+- name: Assert instances list is non-empty
+  ansible.builtin.assert:
+    that:
+      - instances is defined
+      - instances | length > 0
+    fail_msg: >-
+      `instances:` is empty or undefined — nothing to destroy. Point
+      this playbook at an inventory that has the same `instances:` list
+      you provisioned with deploy.yml.
+    success_msg: "{{ instances | length }} instance(s) targeted for destroy."
+  run_once: true
+
+- name: Validate vCenter credentials
+  ansible.builtin.include_tasks: validate/vcenter.yml
+
+- name: Validate inventory inputs
+  ansible.builtin.include_tasks: validate/input.yml
+
+# ── Phase 0: confirm before any destructive action ─────────────────────
+
+- name: Show what will be destroyed
+  ansible.builtin.debug:
+    msg:
+      - "╔══════════════════════════════════════════════════════════════╗"
+      - "║  WARNING: VM destroy on {{ vcenter_connect.hostname }}"
+      - "║  Folder:   {{ instance_folder_path }}"
+      - "║  VMs:      {{ instances | map(attribute='name') | join(', ') }}"
+      - "║  Prune:    {{ instance_destroy_prune }}"
+      - "║            (true = delete VMs + disks from vCenter)"
+      - "║            (false = power off only, VMs remain registered)"
+      - "╚══════════════════════════════════════════════════════════════╝"
+  run_once: true
+
+- name: Confirm destroy
+  ansible.builtin.pause:
+    prompt: >-
+      Type 'destroy' to power down all VMs listed above
+      (graceful if vmtools, forceful otherwise),
+      anything else to abort
+  register: _destroy_confirm
+  run_once: true
+  when: not (instance_destroy_skip_confirm | bool)
+
+- name: Note destroy was declined
+  ansible.builtin.debug:
+    msg: >-
+      Destroy aborted by user
+      (input was {{ ((_destroy_confirm | default({})).user_input | default('') | string) | to_json }}
+      — expected 'destroy'). No VMs were touched.
+  when:
+    - not (instance_destroy_skip_confirm | bool)
+    - (_destroy_confirm | default({})).user_input | default('') != 'destroy'
+  run_once: true
+
+# Gracefully end the play instead of `fail:` so the playbook exits with
+# rc=0 — typing anything other than 'destroy' is a deliberate "no",
+# not an error condition. CI pipelines that wrap this playbook in
+# `set -e` won't trip a false-positive failure on a normal cancel.
+- name: End play (destroy declined)
+  ansible.builtin.meta: end_play
+  when:
+    - not (instance_destroy_skip_confirm | bool)
+    - (_destroy_confirm | default({})).user_input | default('') != 'destroy'
+
+# ── Phase 1: probe every VM's current state ───────────────────────────
+# One vmware_guest_info per VM. Failures (VM not found) are tolerated —
+# we treat them as "already gone, nothing to do" so re-running destroy
+# after a prior partial run is idempotent.
+
+- name: Probe current VM state
+  vmware.vmware.guest_info:
+    hostname: "{{ vcenter_connect.hostname }}"
+    username: "{{ vcenter_connect.username }}"
+    password: "{{ vcenter_connect.password }}"
+    validate_certs: "{{ vcenter_connect.validate_certs }}"
+    datacenter: "{{ instance_datacenter }}"
+    folder: "{{ instance_folder_path }}"
+    name: "{{ item.name }}"
+  delegate_to: localhost
+  loop: "{{ instances }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: _vm_probe
+  failed_when: false
+
+# Build a flat dict {vm_name: probe.instance} so the shutdown loops
+# below can dispatch off of it without re-querying. Failed probes
+# (VM not found) get an empty {} entry — every gate below tolerates
+# that as "not powered on, nothing to do." `instance.guest_tools_status`
+# is one of:
+#   guestToolsRunning      — graceful shutdown supported
+#   guestToolsNotRunning   — vmtools installed but stopped
+#   guestToolsExecutingScripts — booting; treat as "not yet ready"
+#   <missing>              — vmtools never installed
+- name: Initialize VM state map
+  ansible.builtin.set_fact:
+    _vm_state: {}
+
+- name: Build VM state map
+  ansible.builtin.set_fact:
+    _vm_state: "{{ _vm_state | combine({item.item.name: (item.guests | default([]) | first | default({}))}) }}"
+  loop: "{{ _vm_probe.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+
+# ── Phase 2: graceful shutdown where vmtools is running ───────────────
+# vmware.vmware.vm_powerstate (vSphere Automation SDK) replaces
+# community.vmware.vmware_guest_powerstate (pyVmomi). The newer module
+# has a built-in `timeout` that blocks until the VM reaches poweredoff,
+# folding our previous "fire shutdown + poll vmware_guest_info" pair
+# into a single task. `instance_destroy_shutdown_timeout` is the
+# total seconds to wait per VM before giving up on the graceful path.
+
+- name: Graceful shutdown (vmtools running)
+  vmware.vmware.vm_powerstate:
+    hostname: "{{ vcenter_connect.hostname }}"
+    username: "{{ vcenter_connect.username }}"
+    password: "{{ vcenter_connect.password }}"
+    validate_certs: "{{ vcenter_connect.validate_certs }}"
+    datacenter: "{{ instance_datacenter }}"
+    folder: "{{ instance_folder_path }}"
+    name: "{{ item.name }}"
+    state: shutdown-guest
+    timeout: "{{ instance_destroy_shutdown_timeout }}"
+  delegate_to: localhost
+  loop: "{{ instances }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when:
+    - (_vm_state[item.name] | default({})).hw_power_status | default('') == 'poweredOn'
+    - (_vm_state[item.name] | default({})).guest_tools_status | default('') == 'guestToolsRunning'
+  # Tolerate transient API faults — the holdout sweep below re-probes
+  # and force-offs anything still powered on, so a flaky
+  # ShutdownGuest_Task on one VM doesn't block the whole destroy.
+  failed_when: false
+
+# ── Phase 3: hard power-off where vmtools wasn't available ────────────
+# Either vmtools was never installed, the agent stopped, or the
+# graceful shutdown above timed out. Equivalent to pulling the plug —
+# acceptable here because the user has already confirmed destroy.
+
+- name: Force power off (no vmtools)
+  vmware.vmware.vm_powerstate:
+    hostname: "{{ vcenter_connect.hostname }}"
+    username: "{{ vcenter_connect.username }}"
+    password: "{{ vcenter_connect.password }}"
+    validate_certs: "{{ vcenter_connect.validate_certs }}"
+    datacenter: "{{ instance_datacenter }}"
+    folder: "{{ instance_folder_path }}"
+    name: "{{ item.name }}"
+    state: powered-off
+    force: true
+  delegate_to: localhost
+  loop: "{{ instances }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when:
+    - (_vm_state[item.name] | default({})).hw_power_status | default('') == 'poweredOn'
+    - (_vm_state[item.name] | default({})).guest_tools_status | default('') != 'guestToolsRunning'
+  failed_when: false
+
+# Catch the case where graceful shutdown timed out (still poweredOn
+# after the wait above). Re-probe and force-off the holdouts.
+- name: Re-probe VMs after graceful shutdown
+  vmware.vmware.guest_info:
+    hostname: "{{ vcenter_connect.hostname }}"
+    username: "{{ vcenter_connect.username }}"
+    password: "{{ vcenter_connect.password }}"
+    validate_certs: "{{ vcenter_connect.validate_certs }}"
+    datacenter: "{{ instance_datacenter }}"
+    folder: "{{ instance_folder_path }}"
+    name: "{{ item.name }}"
+  delegate_to: localhost
+  loop: "{{ instances }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: _vm_reprobe
+  failed_when: false
+
+- name: Force power off any holdouts (graceful timed out or still on)
+  vmware.vmware.vm_powerstate:
+    hostname: "{{ vcenter_connect.hostname }}"
+    username: "{{ vcenter_connect.username }}"
+    password: "{{ vcenter_connect.password }}"
+    validate_certs: "{{ vcenter_connect.validate_certs }}"
+    datacenter: "{{ instance_datacenter }}"
+    folder: "{{ instance_folder_path }}"
+    name: "{{ item.item.name }}"
+    state: powered-off
+    force: true
+  delegate_to: localhost
+  loop: "{{ _vm_reprobe.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when:
+    - ((item.guests | default([]) | first | default({})).hw_power_status | default('')) == 'poweredOn'
+  failed_when: false
+
+# ── Phase 4: prune (optional) ─────────────────────────────────────────
+# Second confirmation gate, since this is the irreversible step.
+# `instance_destroy_prune` extra-var skips the prompt entirely (CI
+# path); without it we ask explicitly even after the operator already
+# confirmed shutdown.
+
+- name: Confirm prune (delete VMs + disks from vCenter)
+  ansible.builtin.pause:
+    prompt: >-
+      VMs are powered off. Type 'prune' to DELETE them from vCenter
+      (removes disks too — IRREVERSIBLE),
+      anything else to leave them powered off and registered
+  register: _prune_confirm
+  run_once: true
+  when:
+    - not (instance_destroy_skip_confirm | bool)
+    - not (instance_destroy_prune | bool)
+
+- name: Resolve final prune decision
+  ansible.builtin.set_fact:
+    _do_prune: >-
+      {{ (instance_destroy_prune | bool)
+         or (((_prune_confirm | default({})).user_input | default('')) == 'prune') }}
+  run_once: true
+
+- name: Skip prune (powered off only)
+  ansible.builtin.debug:
+    msg: >-
+      VMs powered off, leaving them registered in vCenter
+      ({{ instances | map(attribute='name') | join(', ') }}).
+      Re-run with `-e instance_destroy_prune=true` (or type 'prune' at
+      the second prompt) to delete them.
+  run_once: true
+  when: not _do_prune
+
+- name: Delete VMs from vCenter (state=absent)
+  community.vmware.vmware_guest:
+    hostname: "{{ vcenter_connect.hostname }}"
+    username: "{{ vcenter_connect.username }}"
+    password: "{{ vcenter_connect.password }}"
+    validate_certs: "{{ vcenter_connect.validate_certs }}"
+    datacenter: "{{ instance_datacenter }}"
+    folder: "{{ instance_folder_path }}"
+    name: "{{ item.name }}"
+    state: absent
+    force: true
+  delegate_to: localhost
+  loop: "{{ instances }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: _do_prune
+
+- name: Destroy summary
+  ansible.builtin.debug:
+    msg:
+      - "Destroy complete."
+      - "Folder: {{ instance_folder_path }}"
+      - "Action: {{ 'powered-off + pruned (deleted)' if _do_prune else 'powered-off only (still registered)' }}"
+      - "VMs:    {{ instances | map(attribute='name') | join(', ') }}"
+  run_once: true

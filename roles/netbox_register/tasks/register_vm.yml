@@ -1,0 +1,394 @@
+---
+# Register a VM in NetBox
+#
+# Expected input per item (generic field names):
+#   name:          VM name (required)
+#   ipv4:          IP in CIDR notation (optional)
+#   cpu:           vCPUs (optional, falls back to role default)
+#   memory_mb:     Memory in MB (optional)
+#   disks:         List of per-disk dicts (optional)
+#                  e.g. [{size_gb: 100, type: thin}]
+#   status:        NetBox status (optional, auto-detected from vcenter)
+#   platform:      Platform slug (optional)
+#   role:          VM role slug (optional)
+#   site:          Site slug (optional)
+#   tenant:        Tenant slug (optional)
+#   cluster_name:  NetBox Cluster name (optional; falls back via netbox_cluster_name -> instance_cluster_name)
+#   tags:          List of tag slugs (optional)
+#   custom_fields: Dict of custom fields (optional)
+#   netbox_id:     Existing NetBox VM ID (optional)
+#   interface:     Interface name (optional, default: ens192)
+#
+# Optional input from provisioning role (not required):
+#   _provisioned_vm_facts:  Dict keyed by VM name with {instance_uuid, mac_address}
+
+# 0) Resolve first-NIC dereference once for the whole per-VM task file.
+#    Per-VM schema is `networks: [{ipv4, ipv6, name, gateway4, ...}]`;
+#    this role only registers the primary NIC, so we use index 0.
+- name: Set first-NIC fact
+  ansible.builtin.set_fact:
+    _first_nic: "{{ (item.networks | default([{}]))[0] | default({}) }}"
+
+# 1) Resolve infrastructure facts (from provisioner output or direct query)
+- name: Set facts from provisioner
+  ansible.builtin.set_fact:
+    _vm_uuid: "{{ (_provisioned_vm_facts | default({}))[item.name].instance_uuid | default('') }}"
+    _vm_mac: "{{ (_provisioned_vm_facts | default({}))[item.name].mac_address | default('') }}"
+    _vm_exists_on_infra: true
+  when: _provisioned_vm_facts is defined and item.name in (_provisioned_vm_facts | default({}))
+
+- name: Query vCenter for VM (standalone mode)
+  community.vmware.vmware_guest_info:
+    hostname: "{{ vcenter_connect.hostname }}"
+    username: "{{ vcenter_connect.username }}"
+    password: "{{ vcenter_connect.password }}"
+    validate_certs: "{{ vcenter_connect.validate_certs }}"
+    datacenter: "{{ instance_datacenter }}"
+    folder: "/{{ instance_datacenter }}/vm/{{ instance_folder }}"
+    name: "{{ item.name }}"
+  delegate_to: localhost
+  register: _vcenter_query
+  failed_when: false
+  when:
+    - _provisioned_vm_facts is not defined or item.name not in (_provisioned_vm_facts | default({}))
+    - vcenter_connect.hostname | default('') | length > 0
+
+- name: Set facts from vCenter query
+  ansible.builtin.set_fact:
+    _vm_uuid: "{{ _vcenter_query.instance.instance_uuid | default('') }}"
+    _vm_mac: "{{ _vcenter_query.instance.hw_eth0.macaddress | default('') }}"
+    _vm_exists_on_infra: "{{ _vcenter_query is not failed and _vcenter_query.instance is defined }}"
+  when:
+    - _provisioned_vm_facts is not defined or item.name not in (_provisioned_vm_facts | default({}))
+
+- name: Set defaults when no infra query
+  ansible.builtin.set_fact:
+    _vm_uuid: ""
+    _vm_mac: ""
+    _vm_exists_on_infra: false
+  when:
+    - _vm_uuid is not defined
+
+- name: Set IP fact
+  ansible.builtin.set_fact:
+    _nb_ip_cidr: "{{ _first_nic.ipv4 if (_first_nic.ipv4 is defined and '/' in _first_nic.ipv4) else (_first_nic.ipv4 | default('') + '/24') }}"
+
+# Resolve NetBox Cluster name. Independent from netbox_device_name because the
+# Cluster (logical grouping VMs are assigned to) is a different NetBox object
+# from the Device (physical ESXi host). Most-specific wins:
+#   item.cluster_name        — per-VM override
+#   netbox_cluster_name      — explicit inventory mapping
+#   instance_cluster_name    — vCenter / inventory cluster identifier
+- name: Resolve NetBox cluster name for this VM
+  ansible.builtin.set_fact:
+    _nb_cluster: >-
+      {{ item.cluster_name
+         | default(netbox_cluster_name, true)
+         | default(instance_cluster_name, true)
+         | default('') }}
+
+# (custom fields are created once in main.yml → ensure_custom_fields.yml
+#  before this per-VM loop runs)
+
+# 2) Resolve optional fields
+#
+# Disk: read from per-VM `disks: [{size_gb, ...}]` (first entry), with
+# fallback to role-level `instance_disks.size_gb`. VirtualDisks registered
+# in step 7.5 remain the authoritative per-disk source for NetBox 4.1+;
+# the aggregate sent here is harmless when it matches the sum of those
+# VirtualDisks (and the multi-disk path below sums correctly).
+- name: Build NetBox VM data
+  ansible.builtin.set_fact:
+    _nb_vm_data: >-
+      {{ {
+        'name': item.name,
+        'status': item.status | default('active' if _vm_exists_on_infra else 'planned'),
+        'comments': 'Managed by Ansible'
+      }
+      | combine({'vcpus': item.cpu | default(instance_cpu) | int}
+                if (item.cpu | default(instance_cpu | default('')))
+                    | string | length > 0 else {})
+      | combine({'memory': item.memory_mb | default(instance_memory_mb) | int}
+                if (item.memory_mb | default(instance_memory_mb | default('')))
+                    | string | length > 0 else {})
+      | combine({'disk': (item.disks | default([{}]))[0].size_gb
+                         | default(instance_disks.size_gb | default(0)) | int}
+                if ((item.disks | default([{}]))[0].size_gb
+                    | default(instance_disks.size_gb | default('')))
+                    | string | length > 0 else {})
+      | combine({'cluster': _nb_cluster} if _nb_cluster | length > 0 else {})
+      | combine({'platform': item.platform | default(netbox_device_platform)} if (item.platform | default(netbox_device_platform)) | length > 0 else {})
+      | combine({'virtual_machine_role': item.role | default(netbox_device_role)} if (item.role | default(netbox_device_role)) | length > 0 else {})
+      | combine({'site': item.site | default(netbox_site_slug)} if (item.site | default(netbox_site_slug)) | length > 0 else {})
+      | combine({'tenant': item.tenant | default(netbox_tenant_slug)} if (item.tenant | default(netbox_tenant_slug)) | length > 0 else {})
+      | combine({'tags': ((item.tags | default([])) + (instance_tags) | unique)} if ((item.tags | default([])) + (instance_tags) | unique) | length > 0 else {})
+      | combine({'custom_fields': (item.custom_fields | default(netbox_custom_fields))
+         | combine({'vcenter_uuid': _vm_uuid} if _vm_uuid | length > 0 else {})
+         | combine({'vcenter_folder': instance_folder} if instance_folder | default('') | length > 0 else {})
+         | combine({'vcenter_portgroup_name': (_first_nic.name | default(portgroup_name | default('')))}
+                   if (_first_nic.name | default(portgroup_name | default(''))) | length > 0 else {})
+      })
+      }}
+
+# 3) Create or update VM
+- name: Register VM in NetBox
+  netbox.netbox.netbox_virtual_machine:
+    netbox_url: "{{ netbox_connect.url }}"
+    netbox_token: "{{ netbox_connect.token }}"
+    validate_certs: "{{ netbox_connect.validate_certs | default(false) }}"
+    state: present
+    data: "{{ _nb_vm_data }}"
+  delegate_to: localhost
+  register: _nb_vm
+
+# 4) Create or update interface
+- name: Register interface
+  netbox.netbox.netbox_vm_interface:
+    netbox_url: "{{ netbox_connect.url }}"
+    netbox_token: "{{ netbox_connect.token }}"
+    validate_certs: "{{ netbox_connect.validate_certs | default(false) }}"
+    state: present
+    data:
+      virtual_machine: "{{ item.name }}"
+      name: "{{ item.interface | default(netbox_device_interface_name) }}"
+      enabled: true
+      mac_address: "{{ _vm_mac if _vm_mac | length > 0 else omit }}"
+  delegate_to: localhost
+
+# 5) Resolve VRF name → id (NetBox's ip-address `vrf=` filter wants id, not name)
+- name: Set VRF fact
+  ansible.builtin.set_fact:
+    _nb_vrf: "{{ item.vrf | default(netbox_vrf) }}"
+
+- name: Resolve VRF ID
+  uri:
+    url: "{{ netbox_connect.url }}/api/ipam/vrfs/?name={{ _nb_vrf | urlencode }}"
+    method: GET
+    headers:
+      Authorization: "Token {{ netbox_connect.token }}"
+    validate_certs: "{{ netbox_connect.validate_certs | default(false) }}"
+    status_code: [200]
+  delegate_to: localhost
+  register: _nb_vrf_lookup
+  when: _nb_vrf | length > 0
+
+- name: Set VRF ID fact
+  ansible.builtin.set_fact:
+    _nb_vrf_id: >-
+      {{ (_nb_vrf_lookup.json.results[0].id | string)
+         if (_nb_vrf | length > 0 and (_nb_vrf_lookup.json.count | default(0) | int) > 0)
+         else '' }}
+
+- name: "VRF resolution for {{ item.name }}"
+  ansible.builtin.debug:
+    msg:
+      - "vrf_name: {{ _nb_vrf | default('(none)') }}"
+      - "vrf_id:   {{ _nb_vrf_id | default('(not resolved)') }}"
+      - "matches:  {{ _nb_vrf_lookup.json.count | default(0) }}"
+  when: _nb_vrf | length > 0 and (debug)
+
+# 6) Assign IP address.
+# `dns_name` = FQDN (item.name + . + instance_domain_name) when a domain is set in
+# the inventory; bare hostname otherwise. Mirrors the cloud-init userdata
+# template's hostname/fqdn logic so DNS-by-IP queries in NetBox match
+# what the host actually presents.
+- name: Register IP address
+  netbox.netbox.netbox_ip_address:
+    netbox_url: "{{ netbox_connect.url }}"
+    netbox_token: "{{ netbox_connect.token }}"
+    validate_certs: "{{ netbox_connect.validate_certs | default(false) }}"
+    state: present
+    data: >-
+      {{ {
+        'address': _nb_ip_cidr,
+        'status': 'active',
+        'dns_name': item.name ~ ('.' ~ instance_domain_name if instance_domain_name | default('') | length > 0 else ''),
+        'assigned_object': {
+          'virtual_machine': item.name,
+          'name': item.interface | default(netbox_device_interface_name)
+        }
+      } | combine({'vrf': {'name': _nb_vrf}} if _nb_vrf | length > 0 else {}) }}
+  delegate_to: localhost
+  when: _first_nic.ipv4 is defined
+
+# 7) Get the IP address ID we just created/found
+- name: Look up IP address ID
+  uri:
+    url: >-
+      {{ netbox_connect.url }}/api/ipam/ip-addresses/?address={{ _nb_ip_cidr | split('/') | first
+      }}&virtual_machine={{ item.name
+      }}{{ ('&vrf_id=' ~ _nb_vrf_id) if _nb_vrf_id | length > 0 else '' }}
+    method: GET
+    headers:
+      Authorization: "Token {{ netbox_connect.token }}"
+    validate_certs: "{{ netbox_connect.validate_certs | default(false) }}"
+    status_code: [200]
+  delegate_to: localhost
+  register: _nb_ip_lookup
+  when: _first_nic.ipv4 is defined
+
+- name: "IP lookup result for {{ item.name }}"
+  ansible.builtin.debug:
+    msg:
+      - "address:  {{ _nb_ip_cidr }}"
+      - "vm:       {{ item.name }}"
+      - "vrf_id:   {{ _nb_vrf_id | default('(none)') }}"
+      - "matches:  {{ _nb_ip_lookup.json.count | default(0) }}"
+      - "ip_id:    {{ _nb_ip_lookup.json.results[0].id | default('(not found)') }}"
+      - "iface:    {{ _nb_ip_lookup.json.results[0].assigned_object.name | default('(unassigned)') }}"
+  when: _first_nic.ipv4 is defined and (debug)
+
+# 7.5) Register virtual disks (multi-disk path).
+#
+# Queries vCenter for the VM's actual hardware device list, filters for
+# `vim.vm.device.VirtualDisk` entries, and creates / updates one NetBox
+# VirtualDisk per disk. Idempotent because each disk's `name` is the
+# vCenter-generated `deviceInfo.label` (stable: "Hard disk 1", "Hard
+# disk 2", ...). NetBox VirtualDisk requires NetBox 4.0+ AND
+# netbox.netbox collection 3.16+ — fails clearly otherwise.
+#
+# Skipped when:
+#   - VM doesn't exist on vCenter yet (state=planned)
+#   - vcenter_connect.hostname is empty (NetBox-only flow)
+#
+# Note: NetBox VirtualDisk `size` is in GB (collection v4+ unit). vCenter
+# exposes `capacityInBytes` (added in vSphere 5.5 — present on all
+# modern installs); convert with `// 1024 // 1024 // 1024` (bytes → KB
+# → MB → GB). Older guides may say MB — that's a stale unit; an MB-
+# scale value displays as "X GB" with a 1024× over-count in NetBox UI.
+
+- name: Query vCenter for hardware device list
+  community.vmware.vmware_guest_info:
+    hostname: "{{ vcenter_connect.hostname }}"
+    username: "{{ vcenter_connect.username }}"
+    password: "{{ vcenter_connect.password }}"
+    validate_certs: "{{ vcenter_connect.validate_certs }}"
+    datacenter: "{{ instance_datacenter }}"
+    folder: "/{{ instance_datacenter }}/vm/{{ instance_folder }}"
+    name: "{{ item.name }}"
+    schema: vsphere
+    properties:
+      - config.hardware.device
+  delegate_to: localhost
+  register: _vm_hw_devices
+  failed_when: false
+  when:
+    - _vm_exists_on_infra
+    - vcenter_connect.hostname | default('') | length > 0
+
+- name: Extract VirtualDisk devices for {{ item.name }}
+  ansible.builtin.set_fact:
+    _vm_disks: >-
+      {{ (_vm_hw_devices.instance.config.hardware.device | default([]))
+         | selectattr('_vimtype', 'defined')
+         | selectattr('_vimtype', 'equalto', 'vim.vm.device.VirtualDisk')
+         | list }}
+  when:
+    - _vm_exists_on_infra
+    - _vm_hw_devices.instance is defined
+
+- name: Disk discovery summary for {{ item.name }}
+  ansible.builtin.debug:
+    msg: >-
+      {{ _vm_disks | default([]) | length }} virtual disk(s):
+      {{ _vm_disks | default([])
+         | map(attribute='deviceInfo.label')
+         | list | join(', ') | default('(none)', true) }}
+  when:
+    - _vm_exists_on_infra
+    - _vm_disks is defined
+
+- name: Register virtual disks in NetBox
+  netbox.netbox.netbox_virtual_disk:
+    netbox_url: "{{ netbox_connect.url }}"
+    netbox_token: "{{ netbox_connect.token }}"
+    validate_certs: "{{ netbox_connect.validate_certs | default(false) }}"
+    state: present
+    data:
+      virtual_machine: "{{ item.name }}"
+      name: "{{ _disk.deviceInfo.label }}"
+      size: "{{ (_disk.capacityInBytes | int) // 1024 // 1024 // 1024 }}"
+      description: >-
+        vCenter key={{ _disk.key }}
+        unit={{ _disk.unitNumber | default(0) }}
+        controller={{ _disk.controllerKey | default('?') }}
+        backing={{ _disk.backing.fileName | default('(unknown)') }}
+        {{ '[thin]' if _disk.backing.thinProvisioned | default(false) else '[thick]' }}
+  delegate_to: localhost
+  loop: "{{ _vm_disks | default([]) }}"
+  loop_control:
+    loop_var: _disk
+    label: "{{ _disk.deviceInfo.label }} ({{ ((_disk.capacityInBytes | int) // 1024 // 1024 // 1024) }} GB)"
+  when:
+    - _vm_exists_on_infra
+    - _vm_disks is defined
+    - _vm_disks | length > 0
+
+# 8) Resolve NetBox VM ID
+- name: Debug NetBox VM result
+  ansible.builtin.debug:
+    var: _nb_vm
+  when: debug
+
+- name: Look up NetBox VM ID
+  uri:
+    url: "{{ netbox_connect.url }}/api/virtualization/virtual-machines/?name={{ item.name }}"
+    method: GET
+    headers:
+      Authorization: "Token {{ netbox_connect.token }}"
+    validate_certs: "{{ netbox_connect.validate_certs | default(false) }}"
+    status_code: [200]
+  delegate_to: localhost
+  register: _nb_vm_lookup
+
+- name: Set NetBox VM ID
+  ansible.builtin.set_fact:
+    _nb_vm_id: "{{ item.netbox_id | default(_nb_vm_lookup.json.results[0].id | default('')) }}"
+
+# 9) Set primary IP
+- name: Set primary IPv4 by ID
+  uri:
+    url: "{{ netbox_connect.url }}/api/virtualization/virtual-machines/{{ _nb_vm_id }}/"
+    method: PATCH
+    headers:
+      Authorization: "Token {{ netbox_connect.token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      primary_ip4: "{{ _nb_ip_lookup.json.results[0].id }}"
+    validate_certs: "{{ netbox_connect.validate_certs | default(false) }}"
+    status_code: [200]
+  delegate_to: localhost
+  when:
+    - _first_nic.ipv4 is defined
+    - _nb_ip_lookup.json.count | default(0) | int > 0
+    - _nb_vm_id | string | length > 0
+
+# 10) Set NetBox ID on infrastructure (only if VM exists)
+- name: Set netbox_id on vCenter custom attribute
+  community.vmware.vmware_guest_custom_attributes:
+    hostname: "{{ vcenter_connect.hostname }}"
+    username: "{{ vcenter_connect.username }}"
+    password: "{{ vcenter_connect.password }}"
+    validate_certs: "{{ vcenter_connect.validate_certs }}"
+    folder: "/{{ instance_datacenter }}/vm/{{ instance_folder }}"
+    name: "{{ item.name }}"
+    state: present
+    attributes:
+      - name: netbox_id
+        value: "{{ _nb_vm_id }}"
+      - name: netbox_url
+        value: "{{ netbox_connect.url }}/virtualization/virtual-machines/{{ _nb_vm_id }}/"
+  delegate_to: localhost
+  when:
+    - _vm_exists_on_infra
+    - vcenter_connect.hostname | default('') | length > 0
+
+- name: Display registration result
+  ansible.builtin.debug:
+    msg:
+      - "Name:      {{ item.name }}"
+      - "IPv4:      {{ _first_nic.ipv4 | default('no IP') }}"
+      - "Status:    {{ item.status | default('active' if _vm_exists_on_infra else 'planned') }}"
+      - "UUID:      {{ _vm_uuid if _vm_uuid | length > 0 else '(none — VM not found on infra)' }}"
+      - "NetBox ID: {{ _nb_vm_id }}"

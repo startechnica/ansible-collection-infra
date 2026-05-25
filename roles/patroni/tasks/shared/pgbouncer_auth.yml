@@ -1,0 +1,70 @@
+---
+# Hardened PgBouncer auth setup. Replaces the older "PgBouncer connects
+# as the postgres superuser, queries pg_shadow directly" pattern with the
+# enterprise-standard recipe:
+#
+#   - Dedicated `pgbouncer` PG role (LOGIN, no other privileges)
+#   - Dedicated `pgbouncer` schema, owned by postgres
+#   - `pgbouncer.user_search` function — SECURITY DEFINER (runs as postgres),
+#     SET search_path = pg_catalog, pg_temp (defense vs schema-poisoning)
+#   - REVOKE EXECUTE FROM PUBLIC + GRANT EXECUTE TO pgbouncer (locks scope)
+#
+# The function is the only privileged read of pg_shadow that the pgbouncer
+# user can perform; PgBouncer compromise no longer = postgres superuser
+# compromise.
+#
+# IMPORTANT: connects DIRECTLY to PostgreSQL on `postgresql_port`, NOT via
+# HAProxy/PgBouncer. HAProxy routes through PgBouncer, and PgBouncer's
+# auth_query needs the `pgbouncer` role + user_search() function that this
+# task is creating — chicken-and-egg on first bootstrap. Going direct to
+# the leader's loopback PG bypasses the whole pooler chain.
+# All operations are idempotent — safe to re-run on every deploy.
+
+- name: Discover Patroni leader
+  ansible.builtin.include_tasks: "../{{ container_engine | default('docker') }}/_detect_leader.yml"
+
+# ── Provision pgbouncer role + schema + function on the leader ───────────────
+
+- name: Create dedicated pgbouncer PG role
+  community.postgresql.postgresql_user:
+    name: pgbouncer
+    password: "{{ pgbouncer_auth_password }}"
+    role_attr_flags: LOGIN
+    state: present
+    login_host: 127.0.0.1
+    login_port: "{{ postgresql_port }}"
+    login_user: postgres
+    login_password: "{{ postgresql_postgres_password }}"
+    login_db: postgres
+    ssl_mode: disable
+  delegate_to: "{{ _patroni_leader_host }}"
+  run_once: true
+  no_log: true
+
+# Schema + SECURITY DEFINER function. PgBouncer's auth_query runs against
+# whichever database the client targets, so each managed DB also needs a
+# copy of this function — that loop lives in manage_databases.yml.
+#
+# We install into three places:
+#   1. `postgres`  — so admin sessions (Ansible re-runs, psql -U postgres)
+#                    work via PgBouncer.
+#   2. `template1` — Postgres uses this as the default template for
+#                    CREATE DATABASE, so any DB created later (by Ansible,
+#                    devs, ORMs) inherits the schema + function
+#                    automatically. Standard idiom for cluster-wide setup.
+#                    Does NOT cover `CREATE DATABASE foo TEMPLATE template0`
+#                    (rare; used for non-default encodings).
+#   3. Each entry in `patroni_databases` — see manage_databases.yml.
+#
+# Existing DBs created before this feature still need a one-time backfill;
+# `patroni_action: manage-databases` handles that for managed DBs, and the
+# manual psql snippet in the README covers any unmanaged ones.
+- name: Install pgbouncer.user_search into postgres
+  ansible.builtin.include_tasks: _install_pgbouncer_function.yml
+  vars:
+    _target_db: postgres
+
+- name: Install pgbouncer.user_search into template1 (auto-inherit for new DBs)
+  ansible.builtin.include_tasks: _install_pgbouncer_function.yml
+  vars:
+    _target_db: template1

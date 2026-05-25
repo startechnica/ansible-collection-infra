@@ -1,0 +1,324 @@
+---
+# Inventory preconditions — run on localhost, read-only, no side effects.
+# Catches concrete foot-guns we've actually seen: S3 all-or-nothing,
+# patroni_scope unset, vip_manager without patroni_vip_address, malformed databases[], etc.
+
+- name: Assert common variables
+  ansible.builtin.assert:
+    that:
+      - instance_user_name | default('') | length > 0
+      - (instance_user_password | default('') | length > 0)
+        or (instance_user_ssh_private_key | default('') | length > 0)
+    fail_msg: >-
+      instance_user_name must be set, plus one of instance_user_password
+      or instance_user_ssh_private_key.
+    success_msg: "default_user '{{ instance_user_name | default('') }}' resolved with auth material."
+
+- name: Assert instance definitions when declared
+  ansible.builtin.assert:
+    that:
+      - instances is defined
+      - instances | length > 0
+      # `hostname` is the required field; `name` (vCenter display name) is
+      # optional and defaults to `hostname` via the normalization step in
+      # roles/instance/tasks/validate/input.yml. That step runs LATER (in the
+      # instance role), so at this point we can only assert on `hostname`.
+      - instances | selectattr('hostname', 'undefined') | list | length == 0
+    fail_msg: >-
+      instances list is empty or has entries without a 'hostname' field.
+      Each entry under `instances:` must declare `hostname` (the guest OS
+      hostname). `name` (vCenter VM display name) is optional and defaults
+      to `hostname`; set it explicitly only when the two should differ.
+    success_msg: "{{ instances | default([]) | length }} instance(s) declared with valid hostname fields."
+  when: instances is defined
+
+- name: Assert container runtime selection is valid
+  vars:
+    _docker: "{{ docker_install | default(false) | bool }}"
+    _podman: "{{ podman_enabled | default(false) | bool }}"
+    _init: "{{ instance_init_type | default('ignition') }}"
+    _ce: "{{ container_engine | default('docker') | trim }}"
+    # Skip-all = selected engine's toggle is off. The role end_roles
+    # itself in this case; we only flag it here as a warning (further
+    # down) so the operator notices.
+    _skip_all: >-
+      {{ (_ce == 'docker' and not _docker)
+         or (_ce == 'podman' and not _podman) }}
+  ansible.builtin.assert:
+    that:
+      # Selected engine must be one we know how to dispatch.
+      - _ce in ['docker', 'podman']
+      # podman is ignition-only — cloud-init paths use docker via
+      # geerlingguy.docker and don't have an alternative path wired up.
+      - not (_ce == 'podman' and _init != 'ignition')
+    fail_msg: >-
+      Invalid container runtime selection:
+      container_engine='{{ _ce }}',
+      docker_install={{ _docker }},
+      podman_enabled={{ _podman }},
+      instance_init_type='{{ _init }}'.
+      Rules:
+        - container_engine must be 'docker' or 'podman'.
+        - container_engine='podman' only on ignition hosts (FCOS).
+        - The selected engine's install/enable toggle must be true for
+          mongodb / patroni to actually run; otherwise the role
+          end_roles itself (skip all).
+    success_msg: >-
+      Container runtime: {{ _ce }}
+      {%- if _ce == 'podman' %} (systemd Quadlets)
+      {%- else %} (docker-compose)
+      {%- endif %}
+      [docker_install={{ _docker }}, podman_enabled={{ _podman }}]
+      {%- if _skip_all %} — selected engine's toggle is off, mongodb / patroni will skip{%- endif %}
+
+- name: Warn when selected container_engine has its install/enable toggle off
+  ansible.builtin.debug:
+    msg: >-
+      container_engine={{ container_engine | default('docker') }} but
+      {{ 'docker_install' if container_engine | default('docker') == 'docker' else 'podman_enabled' }}=false.
+      mongodb / patroni roles will end_role (skip all) on these hosts.
+      Set the matching toggle to true, or flip container_engine to the
+      one that's enabled.
+  when:
+    - (container_engine | default('docker')) == 'docker' and not (docker_install | default(false) | bool)
+      or (container_engine | default('docker')) == 'podman' and not (podman_enabled | default(false) | bool)
+    - (mongodb_enabled | default(true) | bool) or (patroni_enabled | default(true) | bool)
+
+# ── Network defaults (instance_networks) ──
+# Per-NIC defaults merged into each entry of every VM's `networks:` list.
+# gateway4 / gateway6 must be plain IP addresses (no CIDR) — NetworkManager
+# and netplan both reject CIDR-formatted gateways, leaving the host with no
+# default route. mtu must be a positive int.
+
+- name: Assert instance_networks.gateway4 is a plain IPv4 (no CIDR)
+  ansible.builtin.assert:
+    that:
+      - "'/' not in (instance_networks.gateway4 | string)"
+      - (instance_networks.gateway4 | ansible.utils.ipv4) is truthy
+    fail_msg: >-
+      instance_networks.gateway4='{{ instance_networks.gateway4 | default('') }}'
+      must be a plain IPv4 address (e.g. 10.0.0.1), not CIDR. NetworkManager
+      and netplan reject a CIDR-formatted gateway and the host ends up with
+      no default route.
+    success_msg: "instance_networks.gateway4: {{ instance_networks.gateway4 }}"
+  when: (instance_networks.gateway4 | default('')) | length > 0
+
+- name: Assert instance_networks.gateway6 is a plain IPv6 (no CIDR)
+  ansible.builtin.assert:
+    that:
+      - "'/' not in (instance_networks.gateway6 | string)"
+      - (instance_networks.gateway6 | ansible.utils.ipv6) is truthy
+    fail_msg: >-
+      instance_networks.gateway6='{{ instance_networks.gateway6 | default('') }}'
+      must be a plain IPv6 address (e.g. 2001:db8::1), not CIDR.
+    success_msg: "instance_networks.gateway6: {{ instance_networks.gateway6 }}"
+  when: (instance_networks.gateway6 | default('')) | length > 0
+
+- name: Assert instance_networks.mtu is a positive int
+  ansible.builtin.assert:
+    that:
+      - (instance_networks.mtu | default(1500) | int) > 0
+    fail_msg: >-
+      instance_networks.mtu='{{ instance_networks.mtu | default('') }}' must
+      be a positive integer (typical: 1500, jumbo: 9000).
+    success_msg: "instance_networks.mtu: {{ instance_networks.mtu | default(1500) }}"
+  when: instance_networks.mtu is defined
+
+# ── NetBox ──
+
+- name: Assert NetBox connection when enabled
+  ansible.builtin.assert:
+    that:
+      - netbox_connect is defined
+      - netbox_connect.url | default('') | length > 0
+      - netbox_connect.token | default('') | length > 0
+    fail_msg: >-
+      netbox_enabled is true but netbox_connect.url or .token is empty.
+      Set both (inventory or group_vars), or set netbox_enabled=false.
+    success_msg: "NetBox connection configured ({{ netbox_connect.url | default('') }})."
+  when: netbox_enabled | default(false) | bool
+
+- name: Assert scope-filter source when VMs need enrichment
+  ansible.builtin.assert:
+    that: >-
+      (instance_cluster_name | default('') | length > 0)
+      or (instance_folder | default('') | length > 0)
+    fail_msg: >-
+      Some VMs lack ipv4 and will need NetBox enrichment, but neither
+      instance_cluster_name nor instance_folder is set. Enrichment would be unscoped
+      and may return the wrong VM if names aren't globally unique.
+      Set instance_cluster_name (preferred) or instance_folder.
+    success_msg: >-
+      NetBox enrichment scope set
+      ({{ 'instance_cluster_name=' ~ (instance_cluster_name | default(''))
+          if (instance_cluster_name | default('') | length > 0)
+          else 'instance_folder=' ~ (instance_folder | default('')) }}).
+  when:
+    - netbox_enabled | default(false) | bool
+    - instances is defined
+    - (instances | rejectattr('ipv4', 'defined') | list | length > 0)
+
+# ── S3 (shared by mongodb backup + patroni WAL-G) ──
+
+- name: Assert S3 config is all-or-nothing
+  ansible.builtin.assert:
+    that:
+      - s3_endpoint | default('') | length > 0
+      - s3_access_key | default('') | length > 0
+      - s3_secret_key | default('') | length > 0
+    fail_msg: >-
+      s3_bucket is set but one of {s3_endpoint, s3_access_key, s3_secret_key}
+      is empty. Fill all four, or clear s3_bucket to disable S3 backups.
+    success_msg: "S3 backup target configured ({{ s3_endpoint | default('') }} bucket={{ s3_bucket | default('') }})."
+  when: s3_bucket | default('') | length > 0
+
+# ── Patroni ──
+
+- name: Assert patroni_scope is set when using patroni
+  ansible.builtin.assert:
+    that:
+      - patroni_scope | default('') | length > 0
+      - patroni_scope != 'ha-pg-cluster'
+    success_msg:
+      - "Patroni cluster scope: {{ patroni_scope | default('') }}"
+    fail_msg: >-
+      patroni_scope is empty or still defaulted to 'ha-pg-cluster'.
+      Set a project-specific value (e.g. <your-project>-pg) so multiple
+      Patroni clusters can coexist in the same etcd DCS.
+  when:
+    - patroni_enabled | default(true) | bool
+    - patroni_scope is defined or (instances is defined and instances | length > 0 and 'patroni' in (instance_tags | default([])))
+
+- name: Assert vip_manager choice when VIP is configured
+  ansible.builtin.assert:
+    that:
+      - vip_manager | default('vip-manager') in ['vip-manager', 'keepalived']
+    fail_msg: >-
+      patroni_vip_address='{{ patroni_vip_address | default('') }}' is set but vip_manager='{{ vip_manager | default('vip-manager') }}'
+      is not 'vip-manager' or 'keepalived'. Pick one, or unset 'patroni_vip_address' to disable
+      the VIP service entirely.
+      (patroni_vip_mask / patroni_vip_iface fall back to role defaults — no need to set them.)
+    success_msg: "VIP {{ patroni_vip_address | default('') }} configured via {{ vip_manager | default('vip-manager') }}."
+  when:
+    - patroni_enabled | default(true) | bool
+    - patroni_scope is defined
+    - patroni_vip_address | default('') | length > 0
+
+- name: Assert patroni_databases shape (when defined)
+  ansible.builtin.assert:
+    that:
+      - item.name is defined
+      - item.users is not defined or (item.users | selectattr('name', 'undefined') | list | length == 0)
+      - item.users is not defined or (item.users | selectattr('password', 'undefined') | list | length == 0)
+    fail_msg: >-
+      patroni_databases[{{ ansible_loop.index0 }}] missing 'name' or has a
+      user without name/password.
+    success_msg: "patroni database '{{ item.name | default('<unnamed>') }}' shape OK ({{ item.users | default([]) | length }} user(s))."
+  loop: "{{ patroni_databases | default([]) }}"
+  loop_control:
+    label: "{{ item.name | default('<unnamed>') }}"
+    extended: true
+  when: patroni_enabled | default(true) | bool
+
+# ── MongoDB ──
+# mongodb_admin_password: auto-generated by the role when empty
+# (written to playbooks/artifacts/<inv>/mongodb/admin.password).
+# Nothing to assert at inventory time.
+
+- name: Assert mongodb_databases shape (when defined)
+  ansible.builtin.assert:
+    that:
+      - item.name is defined
+      - item.users is not defined or (item.users | selectattr('name', 'undefined') | list | length == 0)
+      - item.users is not defined or (item.users | selectattr('password', 'undefined') | list | length == 0)
+    fail_msg: >-
+      mongodb_databases[{{ ansible_loop.index0 }}] missing 'name' or has a
+      user without name/password.
+    success_msg: "mongodb database '{{ item.name | default('<unnamed>') }}' shape OK ({{ item.users | default([]) | length }} user(s))."
+  loop: "{{ mongodb_databases | default([]) }}"
+  loop_control:
+    label: "{{ item.name | default('<unnamed>') }}"
+    extended: true
+  when: mongodb_enabled | default(true) | bool
+
+# ── RouterOS ──
+
+- name: Assert RouterOS connection when enabled
+  ansible.builtin.assert:
+    that:
+      - routeros_host | default('') | length > 0
+      - routeros_user | default('') | length > 0
+      - routeros_password | default('') | length > 0
+    fail_msg: >-
+      routeros_enabled is true but one of routeros_host, routeros_user, or
+      routeros_password is empty. Set them in the inventory (password via
+      vault) or clear routeros_enabled. (routeros_address_list has a default
+      and need not be set explicitly.)
+    success_msg: "RouterOS connection configured ({{ routeros_user | default('') }}@{{ routeros_host | default('') }})."
+  when: routeros_enabled | default(false) | bool
+
+# ── Service-routing tags (instances[i].tags vs inventory instance_tags) ──
+# Precedence when routing VMs to service groups (mongodb_nodes, patroni_nodes):
+#   per-VM `tags` on a instances[] entry wins if set, otherwise the inventory-level
+#   `instance_tags` list applies to ALL VMs. Catch the two easy misconfigurations.
+
+- name: Note when no service-routing tags are set
+  ansible.builtin.debug:
+    msg: >-
+      No `instance_tags` or `instances[].tags` set. VMs will be provisioned and
+      registered, but build_host_groups won't route them into
+      mongodb_nodes / patroni_nodes — DB role stages will skip.
+      This is fine for infra-only inventories (just provisioning VMs).
+  when:
+    - instances | default([]) | length > 0
+    - instance_tags | default([]) | length == 0
+    - (instances | default([]) | selectattr('tags', 'defined') | list | length) == 0
+
+- name: Warn when per-VM tags and instance_tags both used (per-VM wins)
+  ansible.builtin.debug:
+    msg: >-
+      Both `instance_tags: {{ instance_tags }}` AND per-VM `tags:` are set. Per-VM
+      tags take precedence — the inventory-level list is only consulted for
+      VMs that don't define their own. VMs with per-VM tags:
+      {{ instances | selectattr('tags', 'defined') | map(attribute='name') | list }}
+  when:
+    - instance_tags | default([]) | length > 0
+    - (instances | default([]) | selectattr('tags', 'defined') | list | length > 0)
+
+# ── Summary ──
+
+- name: Inventory validation passed
+  vars:
+    _ce: "{{ container_engine | default('docker') }}"
+    _engine_active: >-
+      {{ (_ce == 'docker' and (docker_install | default(false) | bool))
+         or (_ce == 'podman' and (podman_enabled | default(false) | bool)) }}
+    _init_mode: "{{ instance_init_type | default('ignition') }}"
+    _init_flavour_note: "{{ ' (' ~ (ignition_flavour | default('fcos')) ~ ')' if _init_mode == 'ignition' else '' }}"
+  ansible.builtin.debug:
+    msg:
+      - "Inventory: {{ inventory_file | basename }}"
+      - "Init mode: {{ _init_mode }}{{ _init_flavour_note }}"
+      - >-
+        Container engine: {{ _ce }}
+        {%- if _ce == 'podman' %} (systemd Quadlets){%- else %} (docker-compose){%- endif %}
+        [docker_install={{ docker_install | default(false) }}, podman_enabled={{ podman_enabled | default(false) }}]
+        {%- if not _engine_active %} — selected engine inactive, mongodb / patroni will skip{%- endif %}
+      - >-
+        Docker install:
+        {%- if not (docker_install | default(false) | bool) %} disabled (docker_install=false)
+        {%- elif instance_init_type | default('ignition') == 'ignition' %} rpm-ostree layer (Ignition fcos-bootstrap)
+        {%- else %} geerlingguy.docker (cloud-init)
+        {%- endif %}
+      - "VMs declared: {{ instances | default([]) | length }}"
+      - "NetBox enrichment: {{ 'on' if netbox_enabled | default(false) | bool else 'off' }}"
+      - "Cluster scope: {{ instance_cluster_name | default('(instance_folder: ' ~ (instance_folder | default('(unscoped)')) ~ ')') }}"
+      - "S3 backups: {{ 'configured' if s3_bucket | default('') | length > 0 else 'disabled' }}"
+      - >-
+        VIP manager: {{ vip_manager | default('(none)') }}{{
+          ' patroni_vip_address=' ~ patroni_vip_address
+          if patroni_vip_address | default('') | length > 0 else '' }}
+      - >-
+        RouterOS: {{ (routeros_host ~ ' → ' ~ (routeros_address_list | default('startechnica')))
+                     if routeros_enabled | default(false) | bool else 'disabled' }}
+      - "Status: PASS"

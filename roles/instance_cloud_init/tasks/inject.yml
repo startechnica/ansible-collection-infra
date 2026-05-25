@@ -1,0 +1,48 @@
+---
+# Inject cloud-init userdata and metadata via guestinfo
+
+- name: Render cloud-init userdata and metadata
+  ansible.builtin.set_fact:
+    cloudinit_userdata: "{{ lookup('template', 'cloudinit-user-data.yml.j2') }}"
+    cloudinit_metadata: "{{ lookup('template', 'cloudinit-metadata.yml.j2') }}"
+
+- name: "Inject cloud-init via guestinfo for {{ item.name }}"
+  community.vmware.vmware_guest:
+    hostname: "{{ vcenter_connect.hostname }}"
+    username: "{{ vcenter_connect.username }}"
+    password: "{{ vcenter_connect.password }}"
+    validate_certs: "{{ vcenter_connect.validate_certs }}"
+    datacenter: "{{ instance_datacenter }}"
+    folder: "/{{ instance_datacenter }}/vm/{{ instance_folder }}"
+    name: "{{ item.name }}"
+    advanced_settings:
+      - key: "guestinfo.userdata"
+        value: "{{ cloudinit_userdata | b64encode }}"
+      - key: "guestinfo.userdata.encoding"
+        value: "base64"
+      - key: "guestinfo.metadata"
+        value: "{{ cloudinit_metadata | b64encode }}"
+      - key: "guestinfo.metadata.encoding"
+        value: "base64"
+    vapp_properties:
+      - id: instance-id
+        value: "{{ item.name }}"
+      - id: hostname
+        value: "{{ item.name }}"
+      - id: seedfrom
+        value: ""
+      - id: user-data
+        value: "{{ cloudinit_userdata | b64encode }}"
+  delegate_to: localhost
+
+- name: "Record cloud-init inject status for {{ item.name }}"
+  ansible.builtin.set_fact:
+    cloud_init_status: >-
+      {{ cloud_init_status | default({}) | combine({
+        item.name: (cloud_init_status | default({}))[item.name] | default({})
+                   | combine({
+                     'injected': true,
+                     'userdata_bytes': cloudinit_userdata | length,
+                     'metadata_bytes': cloudinit_metadata | length
+                   })
+      }) }}

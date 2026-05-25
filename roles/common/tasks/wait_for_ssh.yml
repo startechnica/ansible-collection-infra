@@ -1,0 +1,51 @@
+---
+# Controller-side SSH port probe + known_hosts refresh for a group of hosts.
+# Runs from localhost (e.g. at the end of _setup.yml, or as Stage 3.5 of deploy.yml).
+#
+# Always removes any stale entries in ~/.ssh/known_hosts and re-scans the
+# current host key before the first real SSH task — VMs in this collection
+# get recreated often, so a changed fingerprint is expected, not a MITM.
+#
+# Only port-level reachability check — if auth is broken, the first real
+# task's fact-gather surfaces it with a clear error, so no re-check here.
+
+- name: "Probe SSH port on {{ ssh_wait_group | default('cluster_nodes') }}"
+  ansible.builtin.wait_for:
+    host: "{{ hostvars[item].ansible_host | default(item) }}"
+    port: "{{ hostvars[item].ansible_port | default(22) | int }}"
+    timeout: "{{ ssh_wait_timeout | default(60) | int }}"
+  loop: "{{ groups[ssh_wait_group | default('cluster_nodes')] | default([]) }}"
+  loop_control:
+    label: "{{ item }} ({{ hostvars[item].ansible_host | default(item) }}:{{ hostvars[item].ansible_port | default(22) }})"
+
+- name: Ensure ~/.ssh/known_hosts exists
+  ansible.builtin.file:
+    path: "{{ lookup('env', 'HOME') }}/.ssh/known_hosts"
+    state: touch
+    mode: "0600"
+  changed_when: false
+
+- name: "Refresh known_hosts entry for {{ ssh_wait_group | default('cluster_nodes') }}"
+  ansible.builtin.shell: |
+    set -e
+    KNOWN_HOSTS="$HOME/.ssh/known_hosts"
+    HOST="{{ hostvars[item].ansible_host | default(item) }}"
+    PORT="{{ hostvars[item].ansible_port | default(22) }}"
+    ssh-keygen -f "$KNOWN_HOSTS" -R "[$HOST]:$PORT" > /dev/null 2>&1 || true
+    ssh-keygen -f "$KNOWN_HOSTS" -R "$HOST"         > /dev/null 2>&1 || true
+    # Keyscan is best-effort: the host may be rebooting (e.g. FCOS finishing
+    # docker-ce install) and racing the wait_for port probe above. Retry a
+    # few times, then give up — ansible.cfg has host_key_checking=False so a
+    # missing known_hosts entry is non-fatal; the next real SSH will work.
+    for attempt in 1 2 3 4 5 6; do
+      if ssh-keyscan -H -T 10 -p "$PORT" "$HOST" 2>/dev/null >> "$KNOWN_HOSTS"; then
+        exit 0
+      fi
+      sleep 5
+    done
+    echo "ssh-keyscan: $HOST unreachable after 6 attempts; relying on host_key_checking=False" >&2
+    exit 0
+  loop: "{{ groups[ssh_wait_group | default('cluster_nodes')] | default([]) }}"
+  loop_control:
+    label: "{{ item }} ({{ hostvars[item].ansible_host | default(item) }}:{{ hostvars[item].ansible_port | default(22) }})"
+  changed_when: true

@@ -1,0 +1,25 @@
+---
+galaxy_info:
+  role_name: instance
+  author: firmansyahn (firmansyah@nainggolan.id)
+  description: Provision VMs on vCenter from content library with cloud-init or ignition support
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Ubuntu
+      versions:
+        - noble
+        - jammy
+    - name: Fedora
+      versions:
+        - "41"
+        - "42"
+        - "43"
+  galaxy_tags:
+    - vmware
+    - vcenter
+    - cloud_init
+    - ignition
+    - fcos
+
+dependencies: []

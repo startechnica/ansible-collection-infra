@@ -1,0 +1,125 @@
+#cloud-config
+package_update: {{ cloud_init_package_update | default(true) | lower }}
+package_upgrade: {{ cloud_init_package_upgrade | default(true) | lower }}
+
+{% if instance_domain_name | default('') | length > 0 %}
+hostname: {{ item.hostname }}.{{ instance_domain_name }}
+fqdn: {{ item.hostname }}.{{ instance_domain_name }}
+{% else %}
+hostname: {{ item.hostname }}
+{% endif %}
+manage_etc_hosts: true
+{% if instance_timezone | default('') | length > 0 %}
+timezone: {{ instance_timezone }}
+{% endif %}
+
+{% if instance_user_password | default('') | length > 0 %}
+ssh_pwauth: true
+chpasswd:
+  expire: false
+{% endif %}
+
+users:
+  - name: {{ instance_user_name | default('ubuntu') }}
+    shell: {{ instance_user_shell | default('/bin/bash') }}
+    sudo: "{{ instance_user_sudo | default('ALL=(ALL) NOPASSWD:ALL') }}"
+{% if instance_user_password | default('') | length > 0 %}
+    lock_passwd: false
+    passwd: {{ instance_user_password | password_hash('sha512') }}
+{% else %}
+    lock_passwd: {{ instance_user_lock_passwd | default(true) }}
+{% endif %}
+{% if instance_user_ssh_authorized_keys | default([]) | length > 0 %}
+    ssh_authorized_keys:
+{% for k in instance_user_ssh_authorized_keys %}
+      - {{ k }}
+{% endfor %}
+{% endif %}
+{% set _extra_users = (instance_extra_users | default([])) + (item.cloud_init.users | default([])) %}
+{% for user in _extra_users %}
+  - name: {{ user.name }}
+    shell: {{ user.shell | default('/bin/bash') }}
+    sudo: "{{ user.sudo | default('ALL=(ALL) NOPASSWD:ALL') }}"
+{% if user.password | default('') | length > 0 %}
+    lock_passwd: false
+    passwd: {{ user.password | password_hash('sha512') }}
+{% else %}
+    lock_passwd: {{ user.lock_passwd | default(true) }}
+{% endif %}
+{% if user.ssh_authorized_keys | default([]) | length > 0 %}
+    ssh_authorized_keys:
+{% for k in user.ssh_authorized_keys %}
+      - {{ k }}
+{% endfor %}
+{% elif instance_user_ssh_authorized_keys | default([]) | length > 0 %}
+    ssh_authorized_keys:
+{% for k in instance_user_ssh_authorized_keys %}
+      - {{ k }}
+{% endfor %}
+{% endif %}
+{% endfor %}
+
+{% set _packages = (instance_packages | default([])) + (item.cloud_init.packages | default([])) %}
+{% if _packages | length > 0 %}
+packages:
+{% for p in _packages %}
+  - {{ p }}
+{% endfor %}
+{% endif %}
+
+{# vmtoolsd reports every interface to vCenter by default, which on
+ # k8s/docker hosts means 50+ veth/cali/flannel/cni rows in the VM's
+ # "Networks" tab. Pin primary-nic to ens192 (the only real NIC in this
+ # collection's templates) and exclude the noisy CNI/bridge prefixes.
+ # vmtoolsd reads tools.conf at startup; we restart it from runcmd
+ # below so the change takes effect on first boot without a reboot.
+ # See https://github.com/vmware/open-vm-tools/blob/master/open-vm-tools/tools.conf #}
+write_files:
+  - path: /etc/vmware-tools/tools.conf
+    permissions: '0644'
+    owner: root:root
+    append: true
+    content: |
+
+      [guestinfo]
+      primary-nics=ens192
+      exclude-nics=antrea-*,bpfin.cali*,bpfout.cali*,cali*,cilium*,docker*,flannel*,genev_sys_*,gre_sys_*,lxc*,ovs-system,br*,kube-ipvs*,veth*,virbr*,vxlan_sys_*,stt_sys_*,????????-??????
+
+{# CD-ROM unmount/eject MUST run before the Ansible detach_cdrom task
+ # changes the device backing on vSphere, otherwise vCenter prompts the
+ # operator with an "Answer Question" dialog ("VM is locking this device,
+ # override?") that blocks the Ansible task forever. Ansible's verify.yml
+ # only waits for VMware Tools to come up — runcmd runs much later
+ # (after package_update + package_upgrade, minutes on first boot), so
+ # putting the unmount in runcmd was racy for the first VM in the loop
+ # (later VMs got more wall-clock time before their detach attempt and
+ # silently won). bootcmd runs in cloud-init's network stage, well
+ # before any heavy package work — this releases the lock immediately
+ # on first boot regardless of which VM is hit first. #}
+bootcmd:
+  - "umount /dev/sr0 2>/dev/null; eject /dev/sr0 2>/dev/null; true"
+
+{# Boot-time housekeeping prepended to runcmd:
+ # 1. CD-ROM disconnect via vmware-rpctool (ide0:0..ide1:1, sata0:0..0:1).
+ #    Belt-and-suspenders with the bootcmd unmount above: tells vmtoolsd
+ #    to mark the device as disconnected on the host side too. Stays in
+ #    runcmd because vmware-rpctool needs open-vm-tools running.
+ # 2. Blacklist the `floppy` kernel module. VMware VMs ship with a
+ #    virtual floppy device the kernel keeps polling — generates
+ #    `I/O error, dev fd0, sector 0` on the console every ~10s. The
+ #    blacklist file persists across reboots; rmmod takes effect now.
+ # 3. Restart vmtoolsd to pick up the freshly-written tools.conf.
+ #    Ubuntu names the unit `open-vm-tools.service`; RHEL family uses
+ #    `vmtoolsd.service`. Try both, ignore failures. #}
+{% set _runcmd_prefix = [
+  "if command -v vmware-rpctool >/dev/null; then for d in ide0:0 ide0:1 ide1:0 ide1:1 sata0:0 sata0:1; do vmware-rpctool \"device.disconnect $d\" 2>/dev/null || true; done; fi",
+  "echo 'blacklist floppy' > /etc/modprobe.d/blacklist-floppy.conf && rmmod floppy 2>/dev/null || true",
+  "systemctl restart open-vm-tools.service 2>/dev/null || systemctl restart vmtoolsd.service 2>/dev/null || true",
+] %}
+{% set _runcmd = _runcmd_prefix + (instance_runcmds | default([])) + (item.cloud_init.runcmd | default([])) %}
+{% if _runcmd | length > 0 %}
+runcmd:
+{% for cmd in _runcmd %}
+  - {{ cmd }}
+{% endfor %}
+{% endif %}

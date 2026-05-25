@@ -1,0 +1,19 @@
+---
+galaxy_info:
+  role_name: vcenter_sync
+  author: firmansyahn (firmansyah@nainggolan.id)
+  description: Sync vCenter infrastructure (clusters, ESXi hosts) to NetBox
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Ubuntu
+      versions:
+        - noble
+        - jammy
+  galaxy_tags:
+    - vmware
+    - vcenter
+    - netbox
+    - ipam
+
+dependencies: []

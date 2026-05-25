@@ -1,0 +1,68 @@
+---
+# ════════════════════════════════════════════════════════════════════
+# etcd — snapshot script, systemd service, systemd timer
+# ════════════════════════════════════════════════════════════════════
+# systemd timer instead of cron: FCOS doesn't ship crond, and systemd
+# timers work uniformly across cloud-init (Ubuntu/Debian) hosts too.
+# Persistent=true makes the unit catch up on a missed run if the host
+# was offline at the scheduled time. Pair: .service does the work,
+# .timer fires it.
+
+- name: Deploy etcd-snapshot helper script
+  ansible.builtin.template:
+    src: etcd-snapshot.sh.j2
+    dest: "{{ patroni_dir }}/etcd-snapshot.sh"
+    mode: "0755"
+
+- name: Install etcd-snapshot.service unit
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/etcd-snapshot.service
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=etcd snapshot
+      Documentation=man:etcdctl(3)
+      After=patroni.service
+
+      [Service]
+      Type=oneshot
+      ExecStart={{ patroni_dir }}/etcd-snapshot.sh
+      StandardOutput=append:/var/log/etcd-snapshot.log
+      StandardError=append:/var/log/etcd-snapshot.log
+  notify: reload systemd
+  when: etcd_snapshot_schedule | length > 0
+
+- name: Install etcd-snapshot.timer unit
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/etcd-snapshot.timer
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Schedule etcd snapshots
+      Documentation=man:systemd.timer(5)
+
+      [Timer]
+      OnCalendar={{ etcd_snapshot_schedule }}
+      Persistent=true
+      Unit=etcd-snapshot.service
+
+      [Install]
+      WantedBy=timers.target
+  notify: reload systemd
+  when: etcd_snapshot_schedule | length > 0
+
+- name: Enable and start etcd-snapshot.timer
+  ansible.builtin.systemd:
+    name: etcd-snapshot.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: etcd_snapshot_schedule | length > 0
+
+- name: Disable etcd-snapshot.timer if scheduling is empty
+  ansible.builtin.systemd:
+    name: etcd-snapshot.timer
+    enabled: false
+    state: stopped
+  failed_when: false   # idempotent — unit may not exist on first run
+  when: etcd_snapshot_schedule | length == 0

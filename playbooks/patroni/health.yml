@@ -1,0 +1,31 @@
+---
+# ─── Patroni: Health Checks ─────────────────────────────────────────────────
+#
+# Runs deep health checks across all nodes:
+#   - PostgreSQL connectivity and replication status
+#   - etcd member health
+#   - HAProxy backend states
+#   - PgBouncer pool status
+#   - TLS certificate expiry
+#
+# Usage:
+#   ansible-playbook playbooks/patroni/health.yml -i inventories/<inv>.yml
+
+- name: Setup patroni hosts
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - ansible.builtin.include_tasks: _setup.yml
+
+- name: Patroni health checks
+  hosts: patroni_nodes
+  become: true
+  gather_facts: true
+  pre_tasks:
+    - ansible.builtin.include_role:
+        name: common
+        tasks_from: inherit_localhost_vars
+  roles:
+    - role: patroni
+      vars:
+        patroni_action: health

@@ -1,0 +1,202 @@
+---
+# Pure-data validation for `instances:` and per-VM keys. NO vCenter API
+# calls — these checks fail on inventory shape alone, so they're safe to
+# run early in `main.yml` and stand-alone in molecule scenarios.
+#
+# Outputs:
+#   - mutates `instances` so every entry has a `name` (defaults from `hostname`)
+#
+# Companion file `validate/vms.yml` does the vCenter-state checks (existing
+# VMs in folder → instances_to_create / instances_to_skip).
+
+# `hostname` is the guest OS hostname (set inside the VM by cloud-init /
+# Butane). It is REQUIRED on every instance entry.
+#
+# `name` is the vCenter VM display name. Optional — defaults to `hostname`
+# when omitted. Set explicitly only when the vCenter display name should
+# differ from the guest hostname (asset tag, naming convention, …).
+#
+# After the normalize step downstream tasks can use either:
+#   - `item.name`     → vCenter operations (vmware_guest, folders, perms)
+#   - `item.hostname` → guest-side hostname (cloud-init / Butane templates)
+- name: Validate each instance has a hostname
+  ansible.builtin.assert:
+    that:
+      - instance.hostname is defined
+      - (instance.hostname | string) | length > 0
+    fail_msg: >-
+      Instance entry is missing required `hostname`. Each entry under
+      `instances:` must declare `hostname` (the guest OS hostname).
+      `name` (vCenter VM display name) is optional and defaults to
+      `hostname`; set it explicitly only when the two should differ.
+    success_msg: "hostname OK for {{ instance.hostname | default('?') }}"
+  loop: "{{ instances }}"
+  loop_control:
+    loop_var: instance
+    label: "{{ instance.hostname | default('?') }}"
+  run_once: true
+
+# Inline `[... for instance in instances]` Jinja list comprehensions are
+# rejected by Ansible's templating env, so use the loop+set_fact accumulator
+# pattern (same shape as the _enriched_instances block in tasks/main.yml).
+- name: Initialize normalized instances accumulator
+  ansible.builtin.set_fact:
+    _instances_normalized: []
+  run_once: true
+
+- name: Default name to hostname when omitted (per VM)
+  ansible.builtin.set_fact:
+    _instances_normalized: >-
+      {{ _instances_normalized
+         + [instance | combine({'name': instance.name | default(instance.hostname)})] }}
+  loop: "{{ instances }}"
+  loop_control:
+    loop_var: instance
+    label: "{{ instance.hostname | default('?') }}"
+  run_once: true
+
+- name: Replace instances with the normalized list
+  ansible.builtin.set_fact:
+    instances: "{{ _instances_normalized }}"
+  run_once: true
+
+- name: Validate instance memory size (must be a multiple of 4 MB)
+  ansible.builtin.assert:
+    that:
+      - (instance.memory_mb | default(instance_memory_mb) | int) % 4 == 0
+    fail_msg: >-
+      Invalid memory_mb on VM '{{ instance.name }}':
+      {{ instance.memory_mb | default(instance_memory_mb) }}.
+      VMware requires memory_mb to be a multiple of 4 (e.g. 4096, 8192,
+      10240, 16384). Round to the nearest multiple — for 10230, use
+      10228 or 10240. Some VMs with memory hot-add enabled require
+      multiples of 16; in that case use 16384, 16400, etc.
+    success_msg: "Memory size {{ instance.memory_mb | default(instance_memory_mb) }} MB OK for {{ instance.name }}"
+  loop: "{{ instances }}"
+  loop_control:
+    loop_var: instance
+    label: "{{ instance.name }}"
+
+- name: Validate instance NIC list is non-empty
+  ansible.builtin.assert:
+    that:
+      - instance.networks is defined
+      - instance.networks | length > 0
+    fail_msg: >-
+      Instance '{{ instance.name }}' has no `networks:` list. Each instance must
+      declare at least one NIC, e.g.:
+        networks:
+          - ipv4: 10.0.0.10/24
+    success_msg: >
+      NIC count OK for {{ instance.name }} ({{ instance.networks | default([]) | length }} interface[s])
+  loop: "{{ instances }}"
+  loop_control:
+    loop_var: instance
+    label: "{{ instance.name }}"
+  run_once: true
+
+# Per-disk validation. `disks:` is optional — when omitted, the consumer
+# defaults to `[{}]` which becomes a single disk using `instance_disks`.
+# When provided, each entry must resolve to a positive size_gb after merge
+# with `instance_disks`.
+- name: Validate per-disk size (when disks is set)
+  vars:
+    _instance: "{{ pair.0 }}"
+    _disk: "{{ (instance_disks) | combine(pair.1) }}"
+  ansible.builtin.assert:
+    that:
+      - (_disk.size_gb | default(0) | int) > 0
+    fail_msg: >-
+      Invalid disk on instance '{{ _instance.name }}':
+      {{ pair.1 | to_json }}.
+      Effective size_gb={{ _disk.size_gb | default('(unset)') }} after merge
+      with instance_disks. Each disk must have a positive size_gb (set on
+      the disk entry, or via the role-level `instance_disks.size_gb`).
+    success_msg: "Disk OK on {{ _instance.name }} ({{ _disk.size_gb }}GB, {{ _disk.type | default('thin') }})"
+  loop: "{{ instances | subelements('disks', skip_missing=True) }}"
+  loop_control:
+    loop_var: pair
+    label: "{{ pair.0.name }}: {{ ((instance_disks) | combine(pair.1)).size_gb | default('?') }}GB"
+  run_once: true
+
+# Per-NIC address validation. ipv4/ipv6 can be:
+#   - a CIDR string ("10.0.0.10/24" or "2001:db8::10/64")
+#   - the literal "dhcp" / "dhcp6"
+#   - absent (NIC will be left unconfigured for that family)
+#
+# `subelements` yields [vm_dict, nic_dict] pairs so we can validate each NIC
+# while still naming the parent VM in error messages.
+- name: Validate per-NIC IP addresses
+  vars:
+    _vm: "{{ pair.0 }}"
+    _nic: "{{ pair.1 }}"
+  ansible.builtin.assert:
+    that:
+      # ipv4 absent | "dhcp" | valid IPv4 address (with or without prefix)
+      - >-
+        _nic.ipv4 is not defined
+        or _nic.ipv4 == 'dhcp'
+        or ((_nic.ipv4 | string | split('/') | first | ansible.utils.ipv4) is truthy)
+      # ipv4 prefix (when CIDR) is 0..32
+      - >-
+        _nic.ipv4 is not defined
+        or _nic.ipv4 == 'dhcp'
+        or '/' not in (_nic.ipv4 | string)
+        or ((_nic.ipv4 | string | split('/') | last | int) >= 0 and
+            (_nic.ipv4 | string | split('/') | last | int) <= 32)
+      # ipv6 absent | "dhcp6" | valid IPv6 address (with or without prefix)
+      - >-
+        _nic.ipv6 is not defined
+        or _nic.ipv6 == 'dhcp6'
+        or ((_nic.ipv6 | string | split('/') | first | ansible.utils.ipv6) is truthy)
+      # ipv6 prefix (when CIDR) is 0..128
+      - >-
+        _nic.ipv6 is not defined
+        or _nic.ipv6 == 'dhcp6'
+        or '/' not in (_nic.ipv6 | string)
+        or ((_nic.ipv6 | string | split('/') | last | int) >= 0 and
+            (_nic.ipv6 | string | split('/') | last | int) <= 128)
+      # at least one of ipv4/ipv6 must be set per NIC
+      - _nic.ipv4 is defined or _nic.ipv6 is defined
+    fail_msg: >-
+      Invalid NIC on VM '{{ _vm.name }}':
+      name={{ _nic.name | default('(default)') }},
+      ipv4={{ _nic.ipv4 | default('not set') }},
+      ipv6={{ _nic.ipv6 | default('not set') }}.
+      ipv4/ipv6 must be a CIDR (e.g. 10.0.0.10/24, fd00::1/64),
+      or the literal "dhcp" / "dhcp6", or absent. At least one of
+      ipv4/ipv6 must be set on each NIC.
+    success_msg: "NIC OK on {{ _vm.name }} ({{ _nic.name | default('default') }})"
+  loop: "{{ instances | subelements('networks', skip_missing=True) }}"
+  loop_control:
+    loop_var: pair
+    label: "{{ pair.0.name }}/{{ pair.1.name | default('default') }}"
+  run_once: true
+
+- name: Validate network input parameters
+  ansible.builtin.assert:
+    that:
+      - (instance_cluster_name is defined and instance_cluster_name | length > 0)
+        or
+        (vsphere_esxi_hostname is defined and vsphere_esxi_hostname | length > 0)
+      # `portgroup_name` is only required when at least one NIC omits its
+      # `name:` (and therefore needs the role-level fallback).
+      - >-
+        (instances
+          | subelements('networks', skip_missing=True)
+          | rejectattr('1.name', 'defined')
+          | list | length == 0)
+        or (portgroup_name | length > 0)
+    fail_msg: >-
+      Invalid network configuration. Got
+      portgroup_name='{{ portgroup_name }}',
+      instance_cluster_name='{{ instance_cluster_name }}',
+      vsphere_esxi_hostname='{{ vsphere_esxi_hostname }}'.
+      Required: instance_cluster_name OR vsphere_esxi_hostname; portgroup_name is required
+      only when at least one NIC entry omits `name:`.
+    success_msg: >-
+      Network input validation passed
+      (portgroup_fallback={{ portgroup_name }},
+      {{ 'cluster=' ~ instance_cluster_name if instance_cluster_name | length > 0
+         else 'vsphere_esxi_hostname=' ~ vsphere_esxi_hostname }}).
+  run_once: true

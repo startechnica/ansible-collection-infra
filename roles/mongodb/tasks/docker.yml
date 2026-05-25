@@ -1,0 +1,33 @@
+---
+# Verify Docker daemon has the required ulimits for MongoDB. Source of
+# truth is the running daemon (queried via docker_host_info), not
+# /etc/docker/daemon.json — the file may not exist (FCOS path before
+# preflight renders it) or may be out of sync with the running daemon.
+
+- name: Probe running Docker daemon
+  community.docker.docker_host_info:
+  register: _docker_host_info
+
+- name: Verify Docker nofile ulimit
+  ansible.builtin.assert:
+    that:
+      - _nofile_hard | int >= mongodb_ulimit_nofile | int
+    fail_msg: >-
+      Docker daemon nofile ulimit is {{ _nofile_hard }} but MongoDB requires
+      at least {{ mongodb_ulimit_nofile }}. Set default-ulimits.nofile in
+      docker_daemon_options (group_vars) and re-run the docker role.
+    success_msg: "Docker daemon ulimits OK (nofile={{ _nofile_hard }})"
+  vars:
+    # Dockerd reports default ulimits as a list of {Name, Hard, Soft};
+    # find the nofile entry. Empty list (no default-ulimits configured)
+    # means dockerd uses the host's systemd LimitNOFILE — typically
+    # 1048576 on FCOS / 1073741816 on Ubuntu — which is well above
+    # mongodb_ulimit_nofile. Treat that as a pass.
+    _ulimits_list: "{{ _docker_host_info.host_info.DefaultUlimits | default([]) }}"
+    _nofile_entry: "{{ (_ulimits_list | selectattr('Name', 'equalto', 'nofile') | list | first) | default({}) }}"
+    _nofile_hard: "{{ _nofile_entry.Hard | default(1048576) }}"
+
+- name: Create Docker external network
+  community.docker.docker_network:
+    name: "{{ mongodb_network }}"
+    state: present

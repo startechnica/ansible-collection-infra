@@ -1,0 +1,72 @@
+---
+argument_specs:
+  main:
+    short_description: Shared preflight for Docker-based cluster roles
+    description:
+      - Validates the Ansible controller has `cryptography` installed, the
+        target host is root/become, Docker is running, and `docker compose`
+        is available.
+      - Included as a role dependency by `mongodb` and `patroni`.
+    options:
+      debug:
+        type: bool
+        default: false
+        description: Verbose / introspection output. Defensive `| bool` filter still used in tasks because CLI `-e debug=true` arrives as a string.
+      container_mem_request_mb:
+        type: int
+        description: >-
+          Total RAM requested by containers on this host (MB). Used for a
+          sanity warning when ansible_memtotal_mb is below the request.
+      service_venv_path:
+        type: str
+        default: /opt/ansible-venv
+        description: >-
+          Filesystem path of the target-side Python venv. Created by this role
+          and used for every subsequent Ansible module call on the target
+          (ansible_python_interpreter is set as a host fact after creation).
+      service_venv_packages:
+        type: list
+        elements: str
+        default: [pymongo==4.6.3, psycopg2-binary, docker]
+        description: >-
+          Packages installed into the target venv. Covers the three
+          community.* collections used by mongodb and patroni.
+      service_kernel_modules:
+        type: list
+        elements: str
+        default: [overlay, br_netfilter]
+        description: >-
+          Kernel modules to load and persist via /etc/modules-load.d/.
+          Override to replace the default set, or extend in inventory
+          (e.g. add nf_conntrack, vhost_net, ip_vs) for stacks that need
+          more than the Docker baseline.
+      docker_registries:
+        type: list
+        elements: dict
+        default: []
+        description: >-
+          Optional list of Docker registry credentials. When non-empty,
+          preflight runs `docker login` on each target so private images
+          (patroni_image, mongodb_image, ...) can be pulled. Each entry
+          requires `registry`, `username`, `password`; optional
+          `reauthorize` (force re-login after token rotation) and
+          `state` (default `present`, set `absent` to log out).
+          Always pass passwords through Ansible Vault.
+        options:
+          registry:
+            type: str
+            required: true
+            description: Registry hostname (e.g. ghcr.io, harbor.example.com).
+          username:
+            type: str
+            required: true
+          password:
+            type: str
+            required: true
+          reauthorize:
+            type: bool
+            default: false
+          state:
+            type: str
+            default: present
+            choices: [present, absent]

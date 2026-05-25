@@ -1,0 +1,41 @@
+---
+# Scaffolding common to every play in converge.yml. Argument-specs needs
+# the role's required vars in scope — even though `validate/input.yml`
+# doesn't read them, Ansible runs the `main` entry-point spec when no
+# entry-specific spec exists.
+#
+# Per-play `instances:` lists override these via Ansible's vars precedence.
+
+vcenter_connect:
+  hostname: vcenter.test.example.com
+  username: molecule@test
+  password: molecule-password
+  validate_certs: false
+
+instance_datacenter: test-dc
+instance_cluster_name: test-cluster
+instance_folder: test-folder
+
+portgroup_name: pg-default
+portgroup_dvswitch_name: dswitch-test
+
+instance_networks:
+  gateway4: 10.0.0.1
+  mtu: 1500
+
+instance_disks:
+  size_gb: 40
+  type: thin
+  datastore: test-datastore
+
+instance_memory_mb: 2048
+instance_cpu: 2
+instance_disk_size_gb: 40
+
+content_library_name: test-library
+content_library_template: test-template
+content_library_type: ovf
+
+instance_user_name: testuser
+instance_user_ssh_authorized_keys:
+  - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAtest test@molecule"

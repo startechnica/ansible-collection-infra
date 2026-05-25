@@ -1,0 +1,23 @@
+---
+# Power on (ignition — no guest customization)
+
+- name: "Power on {{ item.name }}"
+  community.vmware.vmware_guest:
+    hostname: "{{ vcenter_connect.hostname }}"
+    username: "{{ vcenter_connect.username }}"
+    password: "{{ vcenter_connect.password }}"
+    validate_certs: "{{ vcenter_connect.validate_certs }}"
+    datacenter: "{{ instance_datacenter }}"
+    folder: "{{ instance_folder_path }}"
+    name: "{{ item.name }}"
+    state: poweredon
+  delegate_to: localhost
+
+- name: "Record ignition poweron status for {{ item.name }}"
+  ansible.builtin.set_fact:
+    ignition_status: >-
+      {{ ignition_status | default({}) | combine({
+          item.name: (ignition_status | default({}))[item.name] | default({})
+                   | combine({'powered_on': true})
+        })
+      }}

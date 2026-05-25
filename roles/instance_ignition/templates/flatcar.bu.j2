@@ -1,0 +1,86 @@
+{# ────────────────────────────────────────────────────────────────────────
+ # STARTER TEMPLATE — Flatcar Container Linux
+ #
+ # Functional baseline: variant header, default user, hostname, static
+ # network via systemd-networkd. NOT yet covered (extend as needed):
+ #   - update_engine channel / reboot strategy tuning
+ #   - locksmithd config for multi-node reboot coordination
+ #   - Quadlet / docker-compose drop-ins for containerised workloads
+ #   - extra users, files, systemd_units from per-VM `instance.ignition.*`
+ #
+ # Test against your Flatcar OVA before relying on this for production.
+ # Validate with `butane --strict <file>.bu` before pushing.
+ # ─────────────────────────────────────────────────────────────────────── #}
+variant: {{ ignition_flavour_default.butane_variant }}
+version: {{ ignition_flavour_default.butane_spec_version }}
+
+passwd:
+  users:
+    - name: {{ instance_user_name | default('core') }}
+{% if instance_user_password | default('') | length > 0 %}
+      password_hash: {{ instance_user_password | password_hash('sha512') }}
+{% endif %}
+{% if instance_user_ssh_authorized_keys | default([]) | length > 0 %}
+      ssh_authorized_keys:
+{% for k in instance_user_ssh_authorized_keys %}
+        - {{ k }}
+{% endfor %}
+{% endif %}
+
+storage:
+  files:
+    - path: /etc/hostname
+      mode: 0644
+      contents:
+        inline: {{ instance.hostname }}{{ '.' ~ instance_domain_name if instance_domain_name | default('') | length > 0 else '' }}
+
+    # systemd-networkd unit per NIC. Flatcar uses systemd-networkd by default.
+    # Default route + DNS land on the first NIC only — multiple default
+    # routes would conflict.
+{% for nic in (instance.networks | default([])) %}
+{%   set _eff = (instance_networks | default({})) | combine(nic) %}
+{%   set _ifname = _eff.device | default('ens' ~ (192 + loop.index0 * 32) | string) %}
+{%   set _static4 = _eff.ipv4 is defined and _eff.ipv4 != 'dhcp' %}
+{%   set _static6 = _eff.ipv6 is defined and _eff.ipv6 != 'dhcp6' %}
+{%   set _dhcp4 = (_eff.ipv4 | default('')) == 'dhcp' %}
+{%   set _dhcp6 = (_eff.ipv6 | default('')) == 'dhcp6' %}
+{%   set _addr4_cidr = _eff.ipv4 if (_static4 and '/' in (_eff.ipv4 | string)) else (_eff.ipv4 | default('') ~ '/24') %}
+{%   set _addr6_cidr = _eff.ipv6 if (_static6 and '/' in (_eff.ipv6 | string)) else (_eff.ipv6 | default('') ~ '/64') %}
+    - path: /etc/systemd/network/10-{{ _ifname }}.network
+      mode: 0644
+      contents:
+        inline: |
+          [Match]
+          Name={{ _ifname }}
+
+          [Network]
+{%   if _dhcp4 and _dhcp6 %}
+          DHCP=yes
+{%   elif _dhcp4 %}
+          DHCP=ipv4
+{%   elif _dhcp6 %}
+          DHCP=ipv6
+{%   endif %}
+{%   if _static4 %}
+          Address={{ _addr4_cidr }}
+{%   endif %}
+{%   if _static6 %}
+          Address={{ _addr6_cidr }}
+{%   endif %}
+{%   if loop.first and _static4 and _eff.gateway4 is defined %}
+          Gateway={{ _eff.gateway4 }}
+{%   endif %}
+{%   if loop.first and _static6 and _eff.gateway6 is defined %}
+          Gateway={{ _eff.gateway6 }}
+{%   endif %}
+{%   if loop.first %}
+{%     for dns in (instance_dns_servers | default([])) %}
+          DNS={{ dns }}
+{%     endfor %}
+{%   endif %}
+{%   if _eff.mtu is defined %}
+
+          [Link]
+          MTUBytes={{ _eff.mtu | int }}
+{%   endif %}
+{% endfor %}

@@ -1,0 +1,27 @@
+---
+- name: Verify
+  hosts: all
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Docker is reachable
+      community.docker.docker_host_info:
+      register: _docker_info
+
+    - name: Assert Docker is running
+      ansible.builtin.assert:
+        that:
+          - _docker_info.host_info is defined
+          - _docker_info.host_info.ServerVersion | length > 0
+        fail_msg: "Docker host info missing — preflight didn't detect a running daemon."
+
+    - name: docker compose available
+      ansible.builtin.command: docker compose version --short
+      changed_when: false
+      register: _compose
+
+    - name: Assert compose version looks sane
+      ansible.builtin.assert:
+        that:
+          - _compose.stdout is match('^[0-9]+\\.[0-9]+\\.[0-9]+')
+        fail_msg: "docker compose version output unexpected: {{ _compose.stdout }}"

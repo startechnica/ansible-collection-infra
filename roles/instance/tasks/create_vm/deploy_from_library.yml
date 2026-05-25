@@ -1,0 +1,10 @@
+---
+# Deploy VM from vCenter Content Library
+
+- name: Deploy from OVF
+  ansible.builtin.include_tasks: deploy_ovf.yml
+  when: content_library_type == 'ovf'
+
+- name: Deploy from VM template
+  ansible.builtin.include_tasks: deploy_vm_template.yml
+  when: content_library_type == 'vm-template'

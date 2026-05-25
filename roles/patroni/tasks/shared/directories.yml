@@ -1,0 +1,64 @@
+---
+# All directory creation + ownership in one task. Default is root:root 0755
+# (only spelled out for non-default cases). Cert directories
+# (patroni_ca_dir, etcd_certs_dir, patroni_certs_dir, haproxy_certs_dir,
+# pgbouncer_certs_dir, vip_manager_certs_dir) are NOT in this list —
+# tls_certificates.yml owns them, with service-specific ownership baked in
+# at create time (see roles/patroni/tasks/tls_certificates.yml ::
+# `_cert_services`). Re-creating them here would just churn change events.
+#
+# `recurse: true` on the patroni/etcd-owned entries preserves the previous
+# behavior of fixing ownership on files already inside those directories
+# (e.g. an existing pg_data on a re-run). On first install the directories
+# are empty so it's a no-op; on re-runs it costs an inode walk but
+# guarantees consistency.
+- name: Create all required directories with correct ownership/mode
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner | default('root') }}"
+    group: "{{ item.group | default('root') }}"
+    mode: "{{ item.mode | default('0755') }}"
+    recurse: "{{ item.recurse | default(false) }}"
+  loop:
+    # ── Root-owned parents (defaults: root:root 0755) ──
+    - { path: "{{ postgresql_dir }}" }
+    - { path: "{{ etcd_dir }}" }
+    - { path: "{{ patroni_dir }}" }
+    - { path: "{{ haproxy_dir }}" }
+    - { path: "{{ pgbouncer_dir }}" }
+    - { path: "{{ keepalived_dir }}" }
+    - { path: "{{ vip_manager_dir }}" }
+    - { path: "{{ etcd_snapshot_dir }}" }
+    - { path: "{{ walg_dir }}" }
+    - { path: "{{ walg_dir }}/bin" }
+
+    # ── Patroni-owned (postgres data, logs, backups, WAL archive) ──
+    - { path: "{{ postgresql_root_dir }}", owner: "{{ patroni_uid }}", group: "{{ patroni_gid }}", mode: "0700", recurse: true }
+    - { path: "{{ postgresql_log_dir }}",  owner: "{{ patroni_uid }}", group: "{{ patroni_gid }}", recurse: true }
+    - { path: "{{ patroni_backup_dir }}",  owner: "{{ patroni_uid }}", group: "{{ patroni_gid }}", recurse: true }
+    - { path: "{{ wal_archive_dir }}",     owner: "{{ patroni_uid }}", group: "{{ patroni_gid }}", recurse: true }
+
+    # ── etcd-owned (data directory) ──
+    - { path: "{{ etcd_data_dir }}", owner: "{{ etcd_uid }}", group: "{{ etcd_gid }}", mode: "0700", recurse: true }
+  loop_control:
+    label: "{{ item.path }}"
+
+# pg_data is created BY patroni at runtime when it bootstraps the cluster
+# (initdb output) — not by this role. If we're re-running on a host where
+# the cluster already exists, make sure pg_data is patroni-owned and
+# 0700, the only mode/ownership PostgreSQL accepts. No-op on a fresh
+# install (the stat returns false; the fix task is skipped).
+- name: Check if pg_data subdirectory exists
+  ansible.builtin.stat:
+    path: "{{ postgresql_root_dir }}/pg_data"
+  register: pg_data_dir
+
+- name: Fix pg_data permissions if it exists
+  ansible.builtin.file:
+    path: "{{ postgresql_root_dir }}/pg_data"
+    state: directory
+    mode: "0700"
+    owner: "{{ patroni_uid }}"
+    group: "{{ patroni_gid }}"
+  when: pg_data_dir.stat.exists

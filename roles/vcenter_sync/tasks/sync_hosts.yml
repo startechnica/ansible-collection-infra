@@ -1,0 +1,120 @@
+---
+# Sync ESXi hosts to NetBox as devices
+# Reads from: vcenter_hosts (from discover.yml) or vcenter_sync_devices (from inventory)
+
+- name: Resolve host list
+  ansible.builtin.set_fact:
+    _hosts_to_sync: >-
+      {{ vcenter_hosts | default(
+           vcenter_sync_devices | selectattr('type', 'defined') | selectattr('type', 'equalto', 'esxi_host') | list
+         ) }}
+
+- name: "[DRY-RUN] Would sync ESXi hosts"
+  ansible.builtin.debug:
+    msg: >-
+      Would register host: {{ host_item.name }}
+      (cluster: {{ host_item.cluster | default('none') }},
+      site: {{ host_item.site | default(vcenter_sync_site) | default('none') }},
+      ip: {{ host_item.ip | default('none') }})
+  loop: "{{ _hosts_to_sync }}"
+  loop_control:
+    loop_var: host_item
+    label: "{{ host_item.name }}"
+  when:
+    - dry_run | bool
+    - _hosts_to_sync | length > 0
+
+- name: Ensure site exists for ESXi hosts
+  netbox.netbox.netbox_site:
+    netbox_url: "{{ netbox_connect.url }}"
+    netbox_token: "{{ netbox_connect.token }}"
+    validate_certs: "{{ netbox_connect.validate_certs | default(false) }}"
+    state: present
+    data:
+      name: "{{ host_item.site | default(vcenter_sync_site) }}"
+      slug: "{{ host_item.site | default(vcenter_sync_site) }}"
+  delegate_to: localhost
+  loop: "{{ _hosts_to_sync }}"
+  loop_control:
+    loop_var: host_item
+    label: "{{ host_item.name }}"
+  when:
+    - not (dry_run | bool)
+    - _hosts_to_sync | length > 0
+    - (host_item.site | default(vcenter_sync_site)) | length > 0
+  run_once: true
+
+- name: Register ESXi host in NetBox
+  netbox.netbox.netbox_device:
+    netbox_url: "{{ netbox_connect.url }}"
+    netbox_token: "{{ netbox_connect.token }}"
+    validate_certs: "{{ netbox_connect.validate_certs | default(false) }}"
+    state: present
+    data:
+      name: "{{ host_item.name }}"
+      device_type: "{{ host_item.device_type | default(vcenter_sync_device_type) }}"
+      role: "{{ host_item.role | default(vcenter_sync_role) }}"
+      site: "{{ host_item.site | default(vcenter_sync_site) | default(omit, true) }}"
+      tenant: "{{ host_item.tenant | default(vcenter_sync_tenant) | default(omit, true) }}"
+      cluster: "{{ host_item.cluster | default(omit, true) }}"
+      tags: "{{ host_item.tags | default(vcenter_sync_tags) | default(omit, true) }}"
+      status: active
+      comments: "Synced from vCenter {{ vcenter_connect.hostname }}"
+  delegate_to: localhost
+  loop: "{{ _hosts_to_sync }}"
+  loop_control:
+    loop_var: host_item
+    label: "{{ host_item.name }}"
+  when:
+    - not (dry_run | bool)
+    - _hosts_to_sync | length > 0
+
+- name: Register management interface
+  netbox.netbox.netbox_device_interface:
+    netbox_url: "{{ netbox_connect.url }}"
+    netbox_token: "{{ netbox_connect.token }}"
+    validate_certs: "{{ netbox_connect.validate_certs | default(false) }}"
+    state: present
+    data:
+      device: "{{ host_item.name }}"
+      name: vmk0
+      type: virtual
+      enabled: true
+  delegate_to: localhost
+  loop: "{{ _hosts_to_sync }}"
+  loop_control:
+    loop_var: host_item
+    label: "{{ host_item.name }}"
+  when:
+    - not (dry_run | bool)
+    - _hosts_to_sync | length > 0
+    - host_item.ip | default('') | length > 0
+
+- name: Register management IP
+  netbox.netbox.netbox_ip_address:
+    netbox_url: "{{ netbox_connect.url }}"
+    netbox_token: "{{ netbox_connect.token }}"
+    validate_certs: "{{ netbox_connect.validate_certs | default(false) }}"
+    state: present
+    data:
+      address: "{{ host_item.ip }}"
+      status: active
+      assigned_object:
+        device: "{{ host_item.name }}"
+        name: vmk0
+  delegate_to: localhost
+  loop: "{{ _hosts_to_sync }}"
+  loop_control:
+    loop_var: host_item
+    label: "{{ host_item.name }}"
+  when:
+    - not (dry_run | bool)
+    - _hosts_to_sync | length > 0
+    - host_item.ip | default('') | length > 0
+
+- name: Display host sync results
+  vars:
+    _verb: "{{ 'DRY-RUN: Would sync' if (dry_run | bool) else 'Synced' }}"
+    _empty_note: "{{ ' (none defined)' if _hosts_to_sync | length == 0 else '' }}"
+  ansible.builtin.debug:
+    msg: "{{ _verb }} {{ _hosts_to_sync | length }} ESXi hosts{{ _empty_note }}"

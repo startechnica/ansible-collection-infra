@@ -1,0 +1,32 @@
+---
+# Phase 2a: per-VM pre-boot setup — hardware reconfigure + first-boot config
+# inject. These are fast vSphere API calls (no actual boot involved), so a
+# sequential per-VM loop is fine. Splitting them out of configure_all.yml
+# means the slow part (boot wait) can happen for ALL VMs in parallel after
+# poweron_all.yml fires the power-on commands together.
+
+- name: "Configure hardware for {{ instance.name }}"
+  ansible.builtin.include_tasks: create_vm/configure_hardware.yml
+  vars:
+    item: "{{ instance }}"
+
+# Floppy device removal MUST happen while the VM is powered off — VMware
+# doesn't support hot-remove for floppy ("operation cannot be performed
+# in the current state (Powered on)"). Runs after deploy_all (which
+# leaves the VM powered off) and before poweron_all. The script skips
+# gracefully if a VM is somehow already running, so re-runs are safe.
+- name: "Remove virtual floppy device from {{ instance.name }}"
+  ansible.builtin.include_tasks: create_vm/detach_floppy.yml
+  vars:
+    item: "{{ instance }}"
+
+# Computed role-name dispatch — `instance_init_type=cloud-init` → role
+# `instance_cloud_init`; `instance_init_type=ignition` → `instance_ignition`.
+# One task, no `when:` per branch, no "skipping" output for the wrong
+# init type. Same pattern is used in poweron_all.yml + configure_all.yml.
+- name: "Inject first-boot config for {{ instance.name }}"
+  ansible.builtin.include_role:
+    name: "instance_{{ instance_init_type | replace('-', '_') }}"
+    tasks_from: inject.yml
+  vars:
+    item: "{{ instance }}"

@@ -1,0 +1,22 @@
+---
+# Controller-side prerequisites. Runs once on localhost.
+
+- name: Check cryptography library on controller
+  ansible.builtin.command: "{{ ansible_playbook_python }} -c 'import cryptography; print(cryptography.__version__)'"
+  delegate_to: localhost
+  become: false
+  run_once: true
+  changed_when: false
+  failed_when: false
+  register: _crypto_check
+
+- name: Assert cryptography library is importable on controller
+  ansible.builtin.assert:
+    that:
+      - _crypto_check.rc == 0
+    fail_msg: >-
+      Python 'cryptography' package not found on the Ansible controller.
+      Install: pip install 'cryptography>=42' (required by community.crypto).
+    success_msg: "cryptography {{ _crypto_check.stdout | default('?') }} OK on controller."
+  delegate_to: localhost
+  run_once: true

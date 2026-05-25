@@ -1,0 +1,7 @@
+---
+- name: Common role requires tasks_from
+  ansible.builtin.fail:
+    msg: >-
+      The 'common' role has no default entrypoint. Invoke via tasks_from, e.g.:
+      ansible.builtin.include_role: {name: common, tasks_from: wait_for_ssh}
+      Valid tasks_from: wait_for_ssh, inherit_localhost_vars, build_host_groups, validate_inventory.

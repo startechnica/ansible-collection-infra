@@ -1,0 +1,7 @@
+---
+# Orchestrator for the vCenter-infra validation suite. Runs AFTER the
+# pure-data check (validate/input.yml) and the existing-VMs check
+# (validate/vms.yml) — both are invoked separately from main.yml.
+- import_tasks: validate/template.yml
+- import_tasks: validate/datastore.yml
+- import_tasks: validate/network.yml

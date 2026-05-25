@@ -1,0 +1,40 @@
+---
+# ansible-lint configuration for startechnica.infra
+# https://ansible.readthedocs.io/projects/lint/configuring/
+
+profile: moderate
+
+exclude_paths:
+  - .cache/
+  - .github/
+  - playbooks/artifacts/
+  - artifacts/
+
+skip_list:
+  # Allow inline Jinja that looks like flow maps (our JS-in-mongosh eval).
+  - yaml[braces]
+  # Permit risky-shell on specific tasks where we've intentionally inlined
+  # shell commands with pipes/redirection.
+  - risky-shell-pipe
+  # Playbook names already used consistently, no need for metadata.
+  - meta-no-info
+  # Allow plain-text passwords in defaults/inventories (per project policy).
+  - no-log-password
+  # Roles use a leading-underscore convention for internal register/set_fact
+  # vars (e.g. _deploy_jobs, _vm_probe). The role-prefix sub-rule would
+  # require renaming dozens of internal vars across every role for no
+  # behavioral gain; keep the convention and skip the sub-rule. Other
+  # var-naming checks (illegal chars, reserved names) still apply.
+  - var-naming[no-role-prefix]
+
+warn_list:
+  - experimental
+  - jinja[spacing]
+
+kinds:
+  - playbook: 'playbooks/**/*.yml'
+  - tasks: 'roles/*/tasks/**/*.yml'
+  - vars: 'roles/*/defaults/**/*.yml'
+  - vars: 'roles/*/vars/**/*.yml'
+  - handlers: 'roles/*/handlers/**/*.yml'
+  - meta: 'roles/*/meta/**/*.yml'

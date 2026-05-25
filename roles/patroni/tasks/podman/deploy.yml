@@ -1,0 +1,234 @@
+---
+# Podman / Quadlet deploy path. Counterpart to docker.yml. Renders
+# .container files under /etc/containers/systemd/, builds the two
+# locally-built images (vip-manager, keepalived) via `podman build`,
+# daemon-reloads so podman-system-generator materializes the units,
+# then enables + starts each service. Service ordering is encoded in
+# the Quadlet [Unit] sections (Requires=/After=), so the loop here
+# can fire them in any order.
+#
+# Same Network=host model as the docker-compose path, so multi-host
+# clusters work without the rs.initiate-style identity issues we hit
+# when bridge networking was attempted on the mongodb role.
+
+- name: Ensure /etc/containers/systemd exists
+  ansible.builtin.file:
+    path: /etc/containers/systemd
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# ── VIP failover: build image + render Quadlet (split per engine) ─────
+# The Dockerfile templates are rendered to {{ vip_manager_dir }} /
+# {{ keepalived_dir }} by shared/vip_manager.yml / shared/keepalived.yml
+# as part of provision-time preparation. The two include files below
+# build the image AND render the Quadlet for whichever VIP backend is
+# active, so we skip both entirely when patroni_vip_enabled=false.
+
+- name: vip-manager (etcd-aware) — build image + render Quadlet
+  ansible.builtin.include_tasks: vip_manager.yml
+  when:
+    - patroni_vip_enabled
+    - use_vip_manager
+
+- name: keepalived (VRRP fallback) — build image + render Quadlet
+  ansible.builtin.include_tasks: keepalived.yml
+  when:
+    - patroni_vip_enabled
+    - not use_vip_manager
+
+- name: wal-g — build local image (no upstream container published)
+  ansible.builtin.include_tasks: walg.yml
+  when:
+    - walg_enabled
+    - walg_build_local
+
+- name: wal-g — pull prebuilt image
+  containers.podman.podman_image:
+    name: "{{ walg_image }}"
+    pull: true
+  when:
+    - walg_enabled
+    - not walg_build_local
+
+# ── Render Quadlets ───────────────────────────────────────────────────
+
+- name: Render etcd Quadlet
+  ansible.builtin.template:
+    src: quadlets/etcd.container.j2
+    dest: /etc/containers/systemd/etcd.container
+    owner: root
+    group: root
+    mode: "0644"
+  register: _q_etcd
+
+- name: Render walg-init Quadlet (S3 enabled)
+  ansible.builtin.template:
+    src: quadlets/walg-init.container.j2
+    dest: /etc/containers/systemd/walg-init.container
+    owner: root
+    group: root
+    mode: "0644"
+  register: _q_walg_init
+  when: walg_enabled | bool
+
+# Rollback path: walg was enabled previously, now disabled. Stop services
+# (Quadlet-managed walg-init + host-managed walg-cron timer/service) and
+# remove their unit files so daemon-reload below tears them down. The
+# patroni Quadlet re-render (next task) drops EnvironmentFile + walg
+# volume; reconcile_archiving.yml later flips archive_command back to
+# local-cp in DCS.
+- name: Stop walg services (walg disabled — rollback)
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: stopped
+    enabled: false
+  loop:
+    - walg-init.service
+    - walg-cron.timer
+    - walg-cron.service
+  failed_when: false
+  when: not (walg_enabled | bool)
+
+- name: Remove walg Quadlets (walg disabled — rollback)
+  ansible.builtin.file:
+    path: "/etc/containers/systemd/{{ item }}"
+    state: absent
+  loop:
+    - walg-init.container
+  register: _q_walg_removed
+  when: not (walg_enabled | bool)
+
+- name: Remove walg-cron host units + helper script (walg disabled — rollback)
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/walg-cron.timer
+    - /etc/systemd/system/walg-cron.service
+    - "{{ patroni_dir }}/walg-backup.sh"
+  when: not (walg_enabled | bool)
+
+- name: Render patroni Quadlet
+  ansible.builtin.template:
+    src: quadlets/patroni.container.j2
+    dest: /etc/containers/systemd/patroni.container
+    owner: root
+    group: root
+    mode: "0644"
+  register: _q_patroni
+
+- name: Render haproxy Quadlet
+  ansible.builtin.template:
+    src: quadlets/haproxy.container.j2
+    dest: /etc/containers/systemd/haproxy.container
+    owner: root
+    group: root
+    mode: "0644"
+  register: _q_haproxy
+
+- name: Render pgbouncer Quadlet
+  ansible.builtin.template:
+    src: quadlets/pgbouncer.container.j2
+    dest: /etc/containers/systemd/pgbouncer.container
+    owner: root
+    group: root
+    mode: "0644"
+  register: _q_pgbouncer
+
+- name: Render postgres-exporter Quadlet (when enabled)
+  ansible.builtin.template:
+    src: quadlets/postgres-exporter.container.j2
+    dest: /etc/containers/systemd/postgres-exporter.container
+    owner: root
+    group: root
+    mode: "0644"
+  register: _q_pg_exporter
+  when: postgres_exporter_enabled | bool
+
+- name: Reload systemd to materialize Quadlet units
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: >
+    _q_etcd.changed or _q_patroni.changed or _q_haproxy.changed
+    or _q_pgbouncer.changed
+    or (_q_walg_init.changed | default(false))
+    or (_q_pg_exporter.changed | default(false))
+    or (_q_vip_manager.changed | default(false))
+    or (_q_keepalived.changed | default(false))
+    or (_q_walg_removed.changed | default(false))
+
+# ── Build service start list and start them ────────────────────────────
+# Order is encoded in [Unit] Requires=/After=, but we list them in
+# dependency order here so cold-starts surface failures on the upstream
+# service first (e.g., etcd before patroni) rather than chasing a
+# downstream "Requires= dependency failed" wrapper.
+
+- name: Build service start list
+  ansible.builtin.set_fact:
+    _patroni_services: >-
+      {{ ['etcd.service']
+         + (['walg-init.service'] if (walg_enabled | bool) else [])
+         + ['patroni.service', 'haproxy.service', 'pgbouncer.service']
+         + (['postgres-exporter.service'] if (postgres_exporter_enabled | bool) else [])
+         + (['vip-manager.service'] if (patroni_vip_enabled and use_vip_manager) else [])
+         + (['keepalived.service'] if (patroni_vip_enabled and not use_vip_manager) else [])
+      }}
+
+- name: Enable + start patroni stack services
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+  loop: "{{ _patroni_services }}"
+  register: _start_result
+
+# Restart any service whose Quadlet changed AND was already running.
+# Same pattern as mongodb/quadlet.yml — avoids redundant double-start
+# on a fresh deploy where state: started already brought the service
+# up with the new template.
+- name: Compute which services were already running before this play
+  ansible.builtin.set_fact:
+    _services_already_running: >-
+      {{ _start_result.results
+         | rejectattr('changed', 'equalto', true)
+         | map(attribute='item')
+         | list }}
+
+- name: Restart services whose Quadlet changed (skip ones started fresh)
+  ansible.builtin.systemd:
+    name: "{{ item.svc }}"
+    state: restarted
+  loop:
+    - { svc: etcd.service,              changed: "{{ _q_etcd.changed }}" }
+    - { svc: walg-init.service,         changed: "{{ _q_walg_init.changed | default(false) }}" }
+    - { svc: patroni.service,           changed: "{{ _q_patroni.changed }}" }
+    - { svc: haproxy.service,           changed: "{{ _q_haproxy.changed }}" }
+    - { svc: pgbouncer.service,         changed: "{{ _q_pgbouncer.changed }}" }
+    - { svc: postgres-exporter.service, changed: "{{ _q_pg_exporter.changed | default(false) }}" }
+    - { svc: vip-manager.service,       changed: "{{ _q_vip_manager.changed | default(false) }}" }
+    - { svc: keepalived.service,        changed: "{{ _q_keepalived.changed | default(false) }}" }
+  loop_control:
+    label: "{{ item.svc }}"
+  when:
+    - item.changed
+    - item.svc in _services_already_running
+
+# ── Wait for the gate services to be reachable ─────────────────────────
+# patroni's REST API on port 8008 is the cluster's source of truth
+# for "ready to serve". Waiting on it here blocks until at least one
+# node is up, so downstream tasks (pgbouncer auth, manage_databases)
+# don't race a half-bootstrapped cluster.
+- name: Wait for patroni REST API to bind
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ patroni_api_port }}"
+    timeout: 120
+    state: started
+
+- name: Restore SELinux contexts (no-op on non-SELinux hosts)
+  ansible.builtin.include_tasks: ../shared/selinux_relabel.yml
+
+- name: Publish service ports + register in NetBox
+  ansible.builtin.include_tasks: ../shared/netbox_register_services.yml

@@ -1,0 +1,11 @@
+[Unit]
+Description=Disable Transparent Huge Pages for MongoDB
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c "echo never > /sys/kernel/mm/transparent_hugepage/enabled && echo never > /sys/kernel/mm/transparent_hugepage/defrag"
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,87 @@
+{# ────────────────────────────────────────────────────────────────────────
+ # STARTER TEMPLATE — openSUSE MicroOS / Leap Micro
+ #
+ # Functional baseline: variant header, default user, hostname, static
+ # network via NetworkManager. NOT yet covered (extend as needed):
+ #   - transactional-update package layering (analogue of FCOS rpm-ostree)
+ #     — note: changes apply on REBOOT, not live, so first-boot package
+ #     install needs `transactional-update --no-selfupdate -n pkg ...`
+ #     followed by a managed reboot
+ #   - open-vm-tools install + enable (zypper / transactional-update)
+ #   - SELinux contexts on dropped files (MicroOS has SELinux on)
+ #   - default user is `root` for MicroOS by convention; override with
+ #     `instance_user_name` if you've configured a different one
+ #
+ # Test against your MicroOS image before relying on this for production.
+ # ─────────────────────────────────────────────────────────────────────── #}
+variant: {{ ignition_flavour_default.butane_variant }}
+version: {{ ignition_flavour_default.butane_spec_version }}
+
+passwd:
+  users:
+    - name: {{ instance_user_name | default('root') }}
+{% if instance_user_password | default('') | length > 0 %}
+      password_hash: {{ instance_user_password | password_hash('sha512') }}
+{% endif %}
+{% if instance_user_ssh_authorized_keys | default([]) | length > 0 %}
+      ssh_authorized_keys:
+{% for k in instance_user_ssh_authorized_keys %}
+        - {{ k }}
+{% endfor %}
+{% endif %}
+
+storage:
+  files:
+    - path: /etc/hostname
+      mode: 0644
+      contents:
+        inline: {{ instance.hostname }}{{ '.' ~ instance_domain_name if instance_domain_name | default('') | length > 0 else '' }}
+
+    # NetworkManager keyfiles, one per NIC. MicroOS uses NetworkManager.
+    # Keyfiles MUST be mode 0600 or NM refuses to load. Default route +
+    # DNS land on the first NIC only.
+{% for nic in (instance.networks | default([])) %}
+{%   set _eff = (instance_networks | default({})) | combine(nic) %}
+{%   set _ifname = _eff.device | default('ens' ~ (192 + loop.index0 * 32) | string) %}
+{%   set _static4 = _eff.ipv4 is defined and _eff.ipv4 != 'dhcp' %}
+{%   set _static6 = _eff.ipv6 is defined and _eff.ipv6 != 'dhcp6' %}
+{%   set _addr4_cidr = _eff.ipv4 if (_static4 and '/' in (_eff.ipv4 | string)) else (_eff.ipv4 | default('') ~ '/24') %}
+{%   set _addr6_cidr = _eff.ipv6 if (_static6 and '/' in (_eff.ipv6 | string)) else (_eff.ipv6 | default('') ~ '/64') %}
+    - path: /etc/NetworkManager/system-connections/{{ _ifname }}.nmconnection
+      mode: 0600
+      contents:
+        inline: |
+          [connection]
+          id={{ _ifname }}
+          type=ethernet
+          interface-name={{ _ifname }}
+          autoconnect=true
+
+{%   if _eff.mtu is defined %}
+          [ethernet]
+          mtu={{ _eff.mtu | int }}
+
+{%   endif %}
+          [ipv4]
+{%   if _static4 %}
+          method=manual
+          address1={{ _addr4_cidr }}{{ ',' ~ _eff.gateway4 if (loop.first and _eff.gateway4 is defined) else '' }}
+{%     if loop.first and (instance_dns_servers | default([]) | length > 0) %}
+          dns={{ instance_dns_servers | join(';') }};
+{%     endif %}
+{%   elif (_eff.ipv4 | default('')) == 'dhcp' %}
+          method=auto
+{%   else %}
+          method=disabled
+{%   endif %}
+
+          [ipv6]
+{%   if _static6 %}
+          method=manual
+          address1={{ _addr6_cidr }}{{ ',' ~ _eff.gateway6 if (loop.first and _eff.gateway6 is defined) else '' }}
+{%   elif (_eff.ipv6 | default('')) == 'dhcp6' %}
+          method=auto
+{%   else %}
+          method=ignore
+{%   endif %}
+{% endfor %}

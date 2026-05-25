@@ -1,0 +1,22 @@
+# Multi-stage build for WAL-G — fetches the official Postgres-flavor
+# release binary from GitHub and bakes it into a minimal Ubuntu image.
+# Upstream wal-g/wal-g doesn't publish a container image (see #473).
+#
+# Base must be ubuntu:24.04: the published binary is dynamically linked
+# against Ubuntu 24.04 glibc; alpine/musl will not run it.
+
+FROM ubuntu:24.04 AS download
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && curl -fsSL -o /tmp/wal-g.tar.gz \
+        https://github.com/wal-g/wal-g/releases/download/{{ walg_version }}/wal-g-pg-24.04-amd64.tar.gz \
+    && tar -xzf /tmp/wal-g.tar.gz -C /tmp/ \
+    && install -m 0755 /tmp/wal-g-pg-24.04-amd64 /usr/local/bin/wal-g
+
+FROM ubuntu:24.04
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=download /usr/local/bin/wal-g /usr/local/bin/wal-g
+ENTRYPOINT ["/usr/local/bin/wal-g"]

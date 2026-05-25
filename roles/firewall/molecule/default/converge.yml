@@ -1,0 +1,14 @@
+---
+- name: Converge
+  hosts: all
+  become: true
+  gather_facts: true
+  tasks:
+    - name: Apply firewall role with a couple of allow rules
+      ansible.builtin.import_role:
+        name: firewall
+      vars:
+        firewall_enabled: true
+        firewall_rules:
+          - { port: 9100, protocol: tcp, comment: node_exporter }
+          - { port: 3000, protocol: tcp, source: "10.0.0.0/8", comment: grafana }

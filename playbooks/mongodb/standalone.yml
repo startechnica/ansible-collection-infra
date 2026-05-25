@@ -1,0 +1,50 @@
+---
+# ─── MongoDB: Standalone (statically-defined inventory) ──────────────────────
+#
+# Runs the mongodb role against a pre-existing `mongodb_nodes` group in the
+# inventory file. Skips every helper the other entry points provide:
+#   - no NetBox lookup / register
+#   - no instance (VMs must already exist)
+#   - no dynamic group building from a `instances` list
+#   - no Docker install (must already be present on hosts)
+#   - no _setup.yml / inherit_localhost_vars
+#
+# Use this when:
+#   - You manage cluster hosts outside this collection (hand-built lab
+#     inventory, existing Mongo cluster you're importing into Ansible).
+#   - You want a tiny re-run loop and deploy_mongodb / install / deploy.yml
+#     add too much overhead for the iteration.
+#
+# Inventory must define `mongodb_nodes` with hosts that have at minimum:
+#   ansible_host:                <ip>
+#   ansible_user:                <user>
+#   ansible_ssh_private_key_file: <path>   # or ansible_password
+#
+# Role variables go in group_vars/mongodb_nodes.yml (or host_vars). The
+# defaults in roles/mongodb/defaults/main.yml cover most knobs; the usual
+# minimum overrides are:
+#   mongodb_admin_password: "{{ vault_mongodb_admin_password }}"
+#   mongodb_cluster_type:  sharded     # or replicaset
+#   container_engine:      docker      # or podman
+#
+# Usage:
+#   ansible-playbook playbooks/mongodb/standalone.yml \
+#     -i inventories/<your-inventory>.yml --ask-vault-pass
+#
+# Compare:
+#   playbooks/deploy.yml           — full pipeline (validate → provision →
+#                                     docker → mongodb → patroni → firewall)
+#   playbooks/deploy_mongodb.yml   — mongodb-only full pipeline
+#                                     (netbox → provision → docker → mongodb)
+#   playbooks/mongodb/install.yml  — assumes VMs+Docker exist, builds the
+#                                     mongodb_nodes group from the `instances` list
+#   playbooks/mongodb/standalone.yml (this file) — assumes VMs+Docker exist
+#                                     AND mongodb_nodes is already a static
+#                                     inventory group
+
+- name: MongoDB cluster (standalone — pre-existing inventory)
+  hosts: mongodb_nodes
+  become: true
+  gather_facts: true
+  roles:
+    - role: mongodb

@@ -1,0 +1,64 @@
+---
+# ════════════════════════════════════════════════════════════════════
+# NetBox Lookup — Query NetBox and produce generic VM facts
+# ════════════════════════════════════════════════════════════════════
+#
+# Three modes:
+#   1. Enrich: instances[] has names but no IPs → look up IPs from NetBox
+#   2. Resolve: instances[] has netbox_id but no name → fetch full details
+#   3. Query: no instances[] → build entire list from NetBox filters
+#
+# Output facts:
+#   netbox_vm_list:  [{name, netbox_id, ipv4, cpu, ...}]
+#   instances:             Same as netbox_vm_list (when netbox_lookup_set_instances is true)
+
+# ── Skip if disabled ─────────────────────────────────────────────────────────
+# Honors both the global master switch (netbox_enabled) and the role-specific
+# toggle (netbox_lookup_enabled). Either false → skip the entire role.
+
+- name: Skip netbox_lookup role (NetBox disabled)
+  ansible.builtin.debug:
+    msg: >-
+      netbox_lookup is disabled
+      (netbox_enabled={{ netbox_enabled | default(true) }},
+      netbox_lookup_enabled={{ netbox_lookup_enabled }}). Skipping.
+  when: >-
+    not (netbox_enabled | default(true) | bool)
+    or not (netbox_lookup_enabled | bool)
+
+- name: End role if disabled
+  ansible.builtin.meta: end_role
+  when: >-
+    not (netbox_enabled | default(true) | bool)
+    or not (netbox_lookup_enabled | bool)
+
+- name: Validate NetBox connection
+  ansible.builtin.assert:
+    that:
+      - netbox_connect.url | length > 0
+      - netbox_connect.token | length > 0
+    fail_msg: "netbox_connect.url and netbox_connect.token are required"
+    success_msg: "NetBox connection configured ({{ netbox_connect.url }})."
+
+# Mode 1: Enrich existing instances that have name but no ipv4
+- name: Enrich VMs with NetBox data
+  ansible.builtin.include_tasks: enrich_vms.yml
+  when: instances | default([]) | selectattr('name', 'defined') | rejectattr('ipv4', 'defined') | list | length > 0
+
+# Mode 2: Resolve VMs that only have netbox_id (no name/ipv4)
+- name: Resolve VMs by NetBox ID
+  ansible.builtin.include_tasks: resolve_by_netbox_id.yml
+  when: instances | default([]) | selectattr('netbox_id', 'defined') | rejectattr('name', 'defined') | list | length > 0
+
+# Mode 3: Query VMs from NetBox using filters (builds entire instances list)
+- name: Query VMs from NetBox
+  ansible.builtin.include_tasks: query_vms.yml
+  when:
+    - netbox_lookup_set_instances | bool
+    - instances | default([]) | length == 0
+
+- name: Build VM list from NetBox data
+  ansible.builtin.include_tasks: build_vms.yml
+  when:
+    - netbox_lookup_set_instances | bool
+    - instances | default([]) | length == 0

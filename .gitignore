@@ -1,0 +1,37 @@
+*.log
+*.orig
+*.pyc
+*.rej
+*.retry
+.cache
+__pycache__
+
+inventory/*/
+!inventory/default/
+
+packer/*/*/
+packer/*/packer-provisioner-*
+!packer/*/group_vars/
+!packer/*/host_vars/
+
+.vagrant/
+
+# Python virtual environment (created by scripts/bootstrap-ansible.sh / README setup)
+.venv/
+venv/
+
+playbooks/artifacts/
+
+# Ansible Vault — decrypted secret files should never be committed.
+# Only *.vault.yml (encrypted by ansible-vault) goes into git.
+# Anything matching these patterns is assumed plaintext and ignored:
+.vault-password
+.vault_pass
+.vault-pass.txt
+*/vault/*.yml
+!*/vault/*.vault.yml
+inventories/**/vault.yml
+inventories/**/secrets.yml
+inventories/**/credentials.yml
+group_vars/**/vault.yml
+host_vars/**/vault.yml

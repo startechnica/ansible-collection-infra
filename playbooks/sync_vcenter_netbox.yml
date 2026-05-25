@@ -1,0 +1,20 @@
+---
+# ─── Sync vCenter Infrastructure to NetBox ────────────────────────────────────
+#
+# Syncs vCenter clusters and ESXi hosts to NetBox as devices.
+#
+# Usage:
+#   # Auto-discover all clusters and hosts from vCenter:
+#   ansible-playbook playbooks/sync_vcenter_netbox.yml \
+#     -i inventories/<your-inventory>.yml --ask-vault-pass \
+#     -e vcenter_sync_auto_discover=true
+#
+#   # Sync specific devices from inventory:
+#   ansible-playbook playbooks/sync_vcenter_netbox.yml \
+#     -i inventories/<your-inventory>.yml --ask-vault-pass
+
+- name: Sync vCenter to NetBox
+  hosts: localhost
+  gather_facts: false
+  roles:
+    - role: vcenter_sync

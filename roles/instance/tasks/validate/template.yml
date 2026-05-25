@@ -1,0 +1,87 @@
+---
+# Pre-flight: catch empty/undefined inputs before the API call so the error
+# names the missing var instead of surfacing as a confusing
+# "Look up template '' in content library ''" downstream.
+- name: Assert content library inputs are set
+  ansible.builtin.assert:
+    that:
+      - content_library_name is defined
+      - (content_library_name | string) | length > 0
+      - content_library_template is defined
+      - (content_library_template | string) | length > 0
+    fail_msg: >-
+      Content library lookup requires both `content_library_name` and
+      `content_library_template` to be non-empty. Got
+      content_library_name='{{ content_library_name }}',
+      content_library_template='{{ content_library_template }}'.
+      For ignition deployments, `content_library_template` is normally set
+      by the fcos_prepare task — if it's empty here, that task either
+      didn't run or failed silently.
+    success_msg: >-
+      Content library inputs OK
+      (library='{{ content_library_name }}', template='{{ content_library_template }}').
+  run_once: true
+
+- name: "Look up content library item — {{ 'library=' ~ content_library_name ~ ', template=' ~ content_library_template }}"
+  vmware.vmware.content_library_item_info:
+    hostname: "{{ vcenter_connect.hostname }}"
+    username: "{{ vcenter_connect.username }}"
+    password: "{{ vcenter_connect.password }}"
+    validate_certs: "{{ vcenter_connect.validate_certs }}"
+    library_name: "{{ content_library_name }}"
+    library_item_name: "{{ content_library_template }}"
+  delegate_to: localhost
+  run_once: true
+  register: template_info
+  changed_when: false
+
+- name: "Assert exactly one template match for {{ content_library_template }}"
+  ansible.builtin.assert:
+    that:
+      - (template_info.library_item_info | default([])) | length == 1
+    fail_msg: >-
+      Expected exactly one match for template '{{ content_library_template }}'
+      in content library '{{ content_library_name }}', got
+      {{ template_info.library_item_info | default([]) | length }}.
+      0 → not found: verify the library + item names in vCenter
+      (Menu → Content Libraries); names are case-sensitive. For ignition
+      with `content_library_auto_import: true`, the template is fetched
+      from the upstream stream metadata on first run — check the
+      fcos_prepare task output for fetch errors.
+      >1 → ambiguous: item names should be unique within a library; check
+      for stale/duplicate entries in vCenter.
+    success_msg: "Template '{{ content_library_template }}' found in content library '{{ content_library_name }}'."
+    quiet: true
+  run_once: true
+
+- name: Store content library and template IDs
+  ansible.builtin.set_fact:
+    _content_library_id: "{{ template_info.library_item_info[0].library_id }}"
+    _content_library_item_id: "{{ template_info.library_item_info[0].id }}"
+  run_once: true
+
+# Belt-and-suspenders: the API contract guarantees these fields, but a
+# stale-cache / version-skew scenario where one is null would surface
+# downstream as a baffling "deploy_content_library_ovf" failure with no
+# library_id. Failing here points at the right culprit.
+#
+# Also doubles as the resolved-IDs confirmation message (success_msg). The
+# previous standalone debug printing the same info is gone — `quiet:` is
+# tied to the global `debug` flag so the output stays opt-in.
+- name: Assert resolved content library and template IDs are non-empty
+  ansible.builtin.assert:
+    that:
+      - _content_library_id is defined
+      - (_content_library_id | string) | length > 0
+      - _content_library_item_id is defined
+      - (_content_library_item_id | string) | length > 0
+    fail_msg: >-
+      Content library lookup returned an item but its IDs are empty:
+      library_id='{{ _content_library_id | default('(unset)') }}',
+      item_id='{{ _content_library_item_id | default('(unset)') }}'.
+      Re-check the vmware.vmware.content_library_item_info return shape
+      against the installed collection version.
+    success_msg:
+      - "Content library: {{ content_library_name }} (id={{ _content_library_id }})"
+      - "Template:        {{ content_library_template }} (id={{ _content_library_item_id }})"
+  run_once: true

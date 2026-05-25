@@ -1,0 +1,68 @@
+---
+argument_specs:
+  main:
+    short_description: Populate a MikroTik RouterOS address-list with cluster IPs.
+    description: |
+      - Adds cluster VM IPv4 addresses and (optionally) the Patroni VIP to a
+        named entry under `/ip firewall address-list` on a MikroTik device.
+      - Lets you write RouterOS firewall rules that reference the list name
+        instead of individual IPs, so routing policies stay in sync with the
+        deployed cluster automatically.
+      - "Uses `community.routeros.api_modify` with `handle_entries_content: ignore`
+        so other unrelated address-list entries are preserved."
+      - "Connects from the Ansible controller; the role is `delegate_to: localhost`
+        and `run_once: true`, so calling playbooks can target any host group."
+      - Requires `librouteros` on the controller (`pip install librouteros`).
+    options:
+      debug:
+        type: bool
+        default: false
+        description: Verbose / introspection output. Defensive `| bool` filter still used in tasks because CLI `-e debug=true` arrives as a string.
+      routeros_enabled:
+        type: bool
+        default: false
+      routeros_host:
+        type: str
+        description: RouterOS management IP or hostname.
+      routeros_user:
+        type: str
+      routeros_password:
+        type: str
+      routeros_port:
+        type: int
+        default: 0
+        description: 0 = module default (8729 with TLS, 8728 plain).
+      routeros_tls:
+        type: bool
+        default: true
+      routeros_validate_certs:
+        type: bool
+        default: false
+        description: RouterOS typically uses self-signed certs; disable by default.
+      routeros_address_list:
+        type: str
+        default: startechnica
+      routeros_address_list_comment:
+        type: str
+        default: "Managed by startechnica.infra"
+      routeros_include_instances:
+        type: bool
+        default: true
+      routeros_include_vip:
+        type: bool
+        default: true
+      routeros_extra_entries:
+        type: list
+        elements: dict
+        default: []
+        description: >-
+          Ad-hoc entries to add on top of VMs/VIP. Each dict:
+          address (IP or CIDR, required), comment (optional).
+      routeros_prune_stale:
+        type: bool
+        default: false
+        description: >-
+          Remove entries in `routeros_address_list` on the MikroTik that are
+          no longer in the desired set (e.g. a node dropped from instances).
+          Strictly scoped to our list — other address-lists are untouched.
+          Default off; opt in once you're confident this role owns the list.

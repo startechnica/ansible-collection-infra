@@ -1,0 +1,41 @@
+---
+# Docker-side teardown. Compose v2 stop+remove with image cleanup,
+# plus an explicit verification pass that no containers are still
+# running (catches half-removed state from a previous failed
+# uninstall).
+
+- name: Check if docker-compose.yml exists
+  ansible.builtin.stat:
+    path: "{{ patroni_dir }}/docker-compose.yml"
+  register: _compose_file
+
+- name: Stop and remove containers (docker compose down)
+  community.docker.docker_compose_v2:
+    project_src: "{{ patroni_dir }}"
+    state: absent
+    remove_orphans: true
+    remove_images: local
+  when: _compose_file.stat.exists
+
+- name: Verify all containers are stopped
+  community.docker.docker_container_info:
+    name: "{{ item }}"
+  register: _remaining_checks
+  failed_when: false
+  loop:
+    - etcd
+    - patroni
+    - haproxy
+    - pgbouncer
+    - keepalived
+    - vip-manager
+    - postgres-exporter
+    - walg-init
+
+- name: Fail if containers still running
+  ansible.builtin.fail:
+    msg: "Container {{ item.item }} is still running. Stop it manually first."
+  when: item.exists | default(false) and item.container.State.Running | default(false)
+  loop: "{{ _remaining_checks.results }}"
+  loop_control:
+    label: "{{ item.item }}"

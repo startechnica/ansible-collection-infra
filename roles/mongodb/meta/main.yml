@@ -1,0 +1,32 @@
+---
+galaxy_info:
+  role_name: mongodb
+  author: firmansyahn (firmansyah@nainggolan.id)
+  description: Deploy and manage a Docker-based MongoDB sharded cluster with TLS, backups, and monitoring
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Ubuntu
+      versions:
+        - bionic
+        - focal
+        - jammy
+        - noble
+    - name: Fedora
+      versions:
+        - "41"
+        - "42"
+        - "43"
+  galaxy_tags:
+    - mongodb
+    - database
+    - docker
+    - cluster
+
+dependencies: []
+# `preflight` was previously a hard dependency, which made it run on EVERY
+# action including uninstall / status / backup / restore (wasted ~30s of
+# system checks before tearing things down). Now invoked explicitly from
+# tasks/main.yml gated on `mongodb_action`, so it only fires when the
+# action actually needs the system to be ready (provision / init /
+# renew-certs / upgrade — not uninstall/status/backup/restore).

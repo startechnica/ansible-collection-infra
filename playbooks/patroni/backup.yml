@@ -1,0 +1,29 @@
+---
+# ─── Patroni: On-Demand Backup ──────────────────────────────────────────────
+#
+# Triggers a pg_basebackup or WAL-G backup on the current primary.
+# If S3 is configured, the backup is uploaded to the configured bucket.
+# Old local backups are pruned based on retention settings.
+#
+# Usage:
+#   ansible-playbook playbooks/patroni/backup.yml -i inventories/<inv>.yml
+
+- name: Setup patroni hosts
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - ansible.builtin.include_tasks: _setup.yml
+
+- name: Patroni backup
+  hosts: patroni_nodes
+  become: true
+  gather_facts: true
+  serial: 1
+  pre_tasks:
+    - ansible.builtin.include_role:
+        name: common
+        tasks_from: inherit_localhost_vars
+  roles:
+    - role: patroni
+      vars:
+        patroni_action: backup

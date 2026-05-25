@@ -1,0 +1,77 @@
+---
+# ─── Service Preflight Checks ───────────────────────────────────────────────
+#
+# Shared system / Docker / fleet validation for cluster roles (mongodb,
+# patroni). Included as a role dependency — runs before the calling role's
+# tasks.
+#
+# Each include below corresponds to a focused task file under
+# roles/preflight/tasks/<concern>.yml. Each file is independently runnable
+# via:
+#
+#   - ansible.builtin.include_role:
+#       name: preflight
+#       tasks_from: <concern>
+#
+# Or targeted from the CLI with --tags <concern>.
+#
+# Order matters: controller checks run first (no ssh hop), then host basics,
+# then venv (so subsequent modules use psycopg2/pymongo/docker SDK from the
+# venv), then docker, then memory advice last.
+
+- name: Controller-side prerequisites
+  ansible.builtin.include_tasks: controller.yml
+  tags: [preflight, controller]
+
+- name: Silence systemd shell-integration OSC noise (FCOS / Fedora 43+)
+  ansible.builtin.include_tasks: quiet_systemd_shellint.yml
+  when: instance_init_type | default('ignition') == 'ignition'
+  tags: [preflight, quiet]
+
+- name: Set SELinux to permissive (RedHat family)
+  ansible.builtin.include_tasks: selinux_permissive.yml
+  when: ansible_os_family == 'RedHat'
+  tags: [preflight, selinux]
+
+- name: Privilege check
+  ansible.builtin.include_tasks: privilege.yml
+  tags: [preflight, privilege]
+
+- name: Kernel version + required modules
+  ansible.builtin.include_tasks: kernel.yml
+  tags: [preflight, kernel]
+
+- name: Time synchronisation
+  ansible.builtin.include_tasks: time_sync.yml
+  tags: [preflight, time-sync]
+
+- name: Disk space
+  ansible.builtin.include_tasks: disk.yml
+  tags: [preflight, disk]
+
+- name: Ulimits
+  ansible.builtin.include_tasks: ulimits.yml
+  tags: [preflight, ulimits]
+
+- name: Target Python venv
+  ansible.builtin.include_tasks: venv.yml
+  tags: [preflight, venv]
+
+# Container-engine validation. Strictly dispatched on `container_engine`
+# so podman-mode hosts never try to run docker checks (and vice versa).
+# Each branch lives in its own task file for clear separation:
+#   - docker.yml: docker engine + Compose plugin + docker_login
+#   - podman.yml: podman engine + Quadlet generator + podman_login
+- name: Docker engine + Compose plugin (container_engine=docker)
+  ansible.builtin.include_tasks: docker.yml
+  when: container_engine | default('docker') == 'docker'
+  tags: [preflight, docker]
+
+- name: Podman engine + Quadlet support (container_engine=podman)
+  ansible.builtin.include_tasks: podman.yml
+  when: container_engine | default('docker') == 'podman'
+  tags: [preflight, podman]
+
+- name: Memory advisory
+  ansible.builtin.include_tasks: memory.yml
+  tags: [preflight, memory]

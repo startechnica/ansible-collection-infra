@@ -1,0 +1,230 @@
+---
+# ════════════════════════════════════════════════════════════════════
+# Patroni HA PostgreSQL — Main Task Entry Point
+# ════════════════════════════════════════════════════════════════════
+#
+# Actions (controlled by patroni_action variable, default: provision):
+#   provision        — Full provisioning (default, runs all setup tasks)
+#   manage-databases — Re-apply patroni_databases (DBs, users, grants, extensions)
+#   backup           — Run on-demand backup
+#   status           — Show cluster status
+#   health           — Run health checks on all nodes
+#   switchover       — Switchover primary (-e target_node=...)
+#   renew-certs      — Regenerate TLS certificates (-e rotate_ca=true for CA)
+#   rotate-passwords — Rotate PostgreSQL + PgBouncer passwords
+#   uninstall        — Remove Patroni stack (-e patroni_destroy_prune=true to delete data)
+#
+# Folder layout (this role's tasks/):
+#
+#   shared/   engine-agnostic prep — config writes, TLS certs, OS tuning,
+#             directory creation, db management, NetBox registration.
+#             Both engines use the same files unmodified.
+#
+#   docker/   docker-only deployment + day-2 ops. Self-contained: each
+#             file uses community.docker.* directly, no helpers.
+#
+#   podman/   podman/Quadlet-only counterpart. Each file uses
+#             containers.podman.* and ansible.builtin.systemd directly.
+#
+# Dispatch: every engine-specific include below uses
+# `{{ container_engine | default('docker') }}/<action>.yml`. The two
+# engine paths intentionally don't share code at runtime — when behavior
+# diverges, you edit one engine's file without thinking about the other.
+#
+# Usage:
+#   # Default (full provisioning):
+#   - role: patroni
+#
+#   # Specific action:
+#   - role: patroni
+#     vars:
+#       patroni_action: backup
+
+# ── Skip if disabled ─────────────────────────────────────────────────────────
+
+- name: Skip Patroni role (patroni_enabled is false)
+  ansible.builtin.debug:
+    msg: "Patroni role is disabled (patroni_enabled={{ patroni_enabled }}). Skipping."
+  when: not (patroni_enabled | bool)
+
+- name: End role if disabled
+  ansible.builtin.meta: end_role
+  when: not (patroni_enabled | bool)
+
+# ── Container engine guardrail ───────────────────────────────────────────────
+
+- name: Assert container_engine is supported
+  ansible.builtin.assert:
+    that:
+      - container_engine | default('docker') in ['docker', 'podman']
+    fail_msg: >-
+      patroni supports container_engine=docker or container_engine=podman.
+      Got: {{ container_engine | default('docker') }}.
+    success_msg: "container_engine={{ container_engine | default('docker') }}"
+
+- name: Skip Patroni role (selected container_engine has no installed runtime)
+  ansible.builtin.debug:
+    msg: >-
+      container_engine={{ container_engine | default('docker') }} but
+      {{ 'docker_install' if container_engine | default('docker') == 'docker' else 'podman_enabled' }}=false
+      on this host. Skipping patroni role.
+  when:
+    - patroni_action != 'uninstall'
+    - (container_engine | default('docker')) == 'docker' and not (docker_install | default(false) | bool)
+      or (container_engine | default('docker')) == 'podman' and not (podman_enabled | default(false) | bool)
+
+- name: End role if selected container engine is inactive
+  ansible.builtin.meta: end_role
+  when:
+    - patroni_action != 'uninstall'
+    - (container_engine | default('docker')) == 'docker' and not (docker_install | default(false) | bool)
+      or (container_engine | default('docker')) == 'podman' and not (podman_enabled | default(false) | bool)
+
+# ── Shared computed facts (always run — needed by every action) ──────────────
+
+- name: Compute shared variables
+  ansible.builtin.include_tasks: shared/_computed_vars.yml
+
+# ── System-level preflight role (engine-agnostic basics) ─────────────────────
+# Skipped on uninstall/status/etc. so we don't burn cycles on kernel /
+# time-sync / ulimit checks just to tear things down or read state.
+- name: Run preflight role (system + container engine + venv)
+  ansible.builtin.include_role:
+    name: preflight
+  when: >-
+    patroni_action in
+    ['provision', 'backup', 'manage-databases', 'rotate-passwords', 'renew-certs']
+
+# ── Provision-time preparation ───────────────────────────────────────────────
+
+- name: Auto-calculate PostgreSQL memory settings
+  ansible.builtin.set_fact:
+    pg_shared_buffers: "{{ pg_shared_buffers if pg_shared_buffers else '%dMB' | format((ansible_memtotal_mb / 4) | int) }}"
+    pg_effective_cache: "{{ pg_effective_cache if pg_effective_cache else '%dMB' | format((ansible_memtotal_mb * 3 / 4) | int) }}"
+    pg_work_mem: "{{ pg_work_mem if pg_work_mem else '%dMB' | format([ansible_memtotal_mb / 64, 4] | max | int) }}"
+    pg_maint_mem: "{{ pg_maint_mem if pg_maint_mem else '%dMB' | format([ansible_memtotal_mb / 8, 2048] | min | int) }}"
+  when: patroni_action == 'provision'
+
+- name: Detect VIP interface
+  ansible.builtin.shell: ip -o addr show | awk -v ip="{{ node_ip }}" '$4 ~ ip {print $2; exit}'
+  register: vip_iface_result
+  changed_when: false
+  when: patroni_action == 'provision'
+
+- name: Set VIP interface
+  ansible.builtin.set_fact:
+    patroni_vip_iface: "{{ patroni_vip_iface }}"
+  when: patroni_action == 'provision'
+
+- name: Resolve passwords (auto-generate if empty)
+  ansible.builtin.include_tasks: shared/passwords.yml
+  when: patroni_action in ['provision', 'rotate-passwords', 'manage-databases']
+
+- name: Validate PG version matches image
+  ansible.builtin.assert:
+    that:
+      - patroni_image is search('pg-?' ~ postgresql_version | string)
+    fail_msg: >-
+      PGVERSION={{ postgresql_version }} does not match PATRONI_IMAGE={{ patroni_image }}.
+      Continuing would risk schema-incompatible upgrades. Either pin
+      postgresql_version to the version baked into the image, or pick an
+      image tag that matches the requested PGVERSION.
+    success_msg: "PGVERSION={{ postgresql_version }} matches image"
+  when: patroni_action == 'provision'
+
+- name: "Run engine-specific preflight — engine={{ container_engine | default('docker') }}"
+  ansible.builtin.include_tasks: "{{ container_engine | default('docker') }}/preflight.yml"
+  when: patroni_action == 'provision'
+
+- name: Create directories
+  ansible.builtin.include_tasks: shared/directories.yml
+  when: patroni_action == 'provision'
+
+- name: Apply OS tuning
+  ansible.builtin.include_tasks: shared/os_tuning.yml
+  when: patroni_action == 'provision'
+
+- name: Generate TLS certificates
+  ansible.builtin.include_tasks: shared/tls_certificates.yml
+  when: patroni_action in ['provision', 'renew-certs']
+
+- name: Detect etcd cluster state
+  ansible.builtin.include_tasks: shared/detect_etcd.yml
+  when: patroni_action == 'provision'
+
+- name: Write configuration files
+  ansible.builtin.include_tasks: shared/configs.yml
+  when: patroni_action == 'provision'
+
+- name: Write helper scripts
+  ansible.builtin.include_tasks: shared/helper_scripts.yml
+  when: patroni_action == 'provision'
+
+- name: Configure etcd snapshot script + timer
+  ansible.builtin.include_tasks: shared/etcd_snapshot.yml
+  when: patroni_action == 'provision'
+
+# ── Engine-specific deploy (compose-up OR Quadlet render+systemctl) ─────────
+- name: "Deploy the stack — engine={{ container_engine | default('docker') }}"
+  ansible.builtin.include_tasks: "{{ container_engine | default('docker') }}/deploy.yml"
+  when: patroni_action == 'provision'
+
+- name: Provision dedicated WAL-G PG role (avoids superuser in walg.env)
+  ansible.builtin.include_tasks: shared/walg_pg_role.yml
+  when:
+    - patroni_action == 'provision'
+    - walg_enabled
+
+- name: Reconcile WAL archiving config in DCS (idempotent, both directions)
+  ansible.builtin.include_tasks: shared/reconcile_archiving.yml
+  when: patroni_action == 'provision'
+
+- name: Set up hardened PgBouncer auth (dedicated role + SECURITY DEFINER fn)
+  ansible.builtin.include_tasks: shared/pgbouncer_auth.yml
+  when: patroni_action == 'provision'
+
+- name: Provision databases, users, and extensions
+  ansible.builtin.include_tasks: shared/manage_databases.yml
+  when:
+    - patroni_action in ['provision', 'manage-databases']
+    - patroni_databases | length > 0
+
+# ── Day-2 operations (engine-dispatched) ─────────────────────────────────────
+
+- name: "Run on-demand backup — engine={{ container_engine | default('docker') }}"
+  ansible.builtin.include_tasks: "{{ container_engine | default('docker') }}/backup.yml"
+  when: patroni_action == 'backup'
+
+- name: "Show cluster status — engine={{ container_engine | default('docker') }}"
+  ansible.builtin.include_tasks: "{{ container_engine | default('docker') }}/status.yml"
+  when: patroni_action in ['provision', 'status']
+
+- name: "Run health checks — engine={{ container_engine | default('docker') }}"
+  ansible.builtin.include_tasks: "{{ container_engine | default('docker') }}/health.yml"
+  when: patroni_action == 'health'
+
+- name: "Run switchover — engine={{ container_engine | default('docker') }}"
+  ansible.builtin.include_tasks: "{{ container_engine | default('docker') }}/switchover.yml"
+  when: patroni_action == 'switchover'
+
+- name: "Renew TLS certificates — engine={{ container_engine | default('docker') }}"
+  ansible.builtin.include_tasks: "{{ container_engine | default('docker') }}/renew_certs.yml"
+  when: patroni_action == 'renew-certs'
+
+- name: "Rotate passwords — engine={{ container_engine | default('docker') }}"
+  ansible.builtin.include_tasks: "{{ container_engine | default('docker') }}/rotate_passwords.yml"
+  when: patroni_action == 'rotate-passwords'
+
+# ── Uninstall (confirmation → engine teardown → shared host cleanup) ────────
+
+- name: Confirm uninstall (interactive prompt or skip-confirm var)
+  ansible.builtin.include_tasks: shared/uninstall_confirm.yml
+  when: patroni_action == 'uninstall'
+
+- name: "Tear down stack — engine={{ container_engine | default('docker') }}"
+  ansible.builtin.include_tasks: "{{ container_engine | default('docker') }}/uninstall.yml"
+  when: patroni_action == 'uninstall'
+
+- name: Shared host-level cleanup
+  ansible.builtin.include_tasks: shared/uninstall_shared.yml
+  when: patroni_action == 'uninstall'

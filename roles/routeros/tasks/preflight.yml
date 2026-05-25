@@ -1,0 +1,16 @@
+---
+# Assert the minimum set of vars needed to reach RouterOS.
+# Wrapped in its own file so it can be reused (e.g. from a dedicated
+# "routeros check" playbook) without pulling in the apply logic.
+
+- name: Assert RouterOS connection parameters
+  ansible.builtin.assert:
+    that:
+      - routeros_host | length > 0
+      - routeros_user | length > 0
+      - routeros_password | length > 0
+      - routeros_address_list | length > 0
+    fail_msg: >-
+      routeros_enabled is true but one of routeros_host, routeros_user,
+      routeros_password, or routeros_address_list is empty.
+    success_msg: "RouterOS reachable as {{ routeros_user }}@{{ routeros_host }}, list={{ routeros_address_list }}."

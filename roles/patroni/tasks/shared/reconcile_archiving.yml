@@ -1,0 +1,71 @@
+---
+# Reconcile archive_command / restore_command in Patroni's DCS to match
+# the current walg_enabled value.
+#
+# Why this exists: bootstrap.dcs.postgresql.parameters in patroni.yml is
+# only consumed at first cluster init. After that, runtime values live
+# in DCS (etcd) and re-rendering patroni.yml has no effect on them.
+# This task is the bridge that makes flipping walg_enabled idempotent
+# *after* bootstrap — it works in both directions:
+#
+#   walg_enabled false → true  :  switch archiving to WAL-G/S3
+#   walg_enabled true  → false :  roll back to local file archiving
+#
+# Idempotent: reads current DCS config first, only pushes edit-config
+# when values actually differ. Cheap on no-op runs (one show-config exec).
+
+- name: Discover Patroni leader
+  ansible.builtin.include_tasks: "../{{ container_engine | default('docker') }}/_detect_leader.yml"
+
+- name: Compute desired archive_command / restore_command
+  ansible.builtin.set_fact:
+    _walg_archive_cmd: >-
+      {{ '/opt/walg/wal-g wal-push %p' if walg_enabled
+         else 'test -f /wal_archive/%f || cp %p /wal_archive/%f' }}
+    _walg_restore_cmd: >-
+      {{ '/opt/walg/wal-g wal-fetch %f %p' if walg_enabled
+         else 'cp /wal_archive/%f %p' }}
+
+- name: Read current Patroni dynamic config from DCS
+  ansible.builtin.command:
+    argv:
+      - "{{ container_engine | default('docker') }}"
+      - exec
+      - patroni
+      - patronictl
+      - -c
+      - /etc/patroni/patroni.yml
+      - show-config
+  register: _patroni_show_config
+  changed_when: false
+  delegate_to: "{{ _patroni_leader_host }}"
+  run_once: true
+
+- name: Parse current archive_command / restore_command
+  ansible.builtin.set_fact:
+    _current_archive_cmd: >-
+      {{ (_patroni_show_config.stdout | from_yaml).postgresql.parameters.archive_command | default('') }}
+    _current_restore_cmd: >-
+      {{ (_patroni_show_config.stdout | from_yaml).postgresql.parameters.restore_command | default('') }}
+  run_once: true
+
+- name: Push archive_command + restore_command to DCS via patronictl edit-config
+  ansible.builtin.command:
+    argv:
+      - "{{ container_engine | default('docker') }}"
+      - exec
+      - patroni
+      - patronictl
+      - -c
+      - /etc/patroni/patroni.yml
+      - edit-config
+      - --force
+      - --set
+      - "postgresql.parameters.archive_command={{ _walg_archive_cmd }}"
+      - --set
+      - "postgresql.parameters.restore_command={{ _walg_restore_cmd }}"
+  delegate_to: "{{ _patroni_leader_host }}"
+  run_once: true
+  when: >-
+    _current_archive_cmd != _walg_archive_cmd
+    or _current_restore_cmd != _walg_restore_cmd

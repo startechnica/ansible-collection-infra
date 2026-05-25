@@ -1,0 +1,40 @@
+---
+# ─── Destroy / wind-down VMs in vCenter ─────────────────────────────────────
+#
+# Power down (graceful via vmtools where available, force-off otherwise),
+# optionally followed by a vCenter delete (prune). Counterpart to
+# deploy.yml's Stage 3 — runs only on localhost, no SSH to guests.
+#
+# Usage:
+#
+#   # Interactive (default — prompts before shutdown, then again before
+#   # delete):
+#   ansible-playbook playbooks/destroy.yml -i inventories/<your-inventory>.yml
+#
+#   # Non-interactive shutdown only (skip prompts, leave VMs registered
+#   # in vCenter for a possible re-run later):
+#   ansible-playbook playbooks/destroy.yml -i inventories/<your-inventory>.yml \
+#     -e instance_destroy_skip_confirm=true
+#
+#   # Non-interactive full prune (DESTROYS DATA — disks are deleted):
+#   ansible-playbook playbooks/destroy.yml -i inventories/<your-inventory>.yml \
+#     -e instance_destroy_skip_confirm=true \
+#     -e instance_destroy_prune=true
+#
+# Inventory inputs come from the same `instances:` list deploy.yml uses,
+# so the same inventory file works for both directions.
+
+- name: "Destroy: power down and optionally prune VMs"
+  hosts: localhost
+  gather_facts: false
+  tags: [destroy]
+  tasks:
+    - name: Validate inventory preconditions
+      ansible.builtin.include_role:
+        name: common
+        tasks_from: validate_inventory
+
+    - name: Run instance destroy
+      ansible.builtin.include_role:
+        name: instance
+        tasks_from: destroy

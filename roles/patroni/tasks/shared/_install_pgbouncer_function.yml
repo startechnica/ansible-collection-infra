@@ -1,0 +1,123 @@
+---
+# Install the pgbouncer.user_search auth_query schema + function into a
+# single database. Called once for `postgres` from pgbouncer_auth.yml,
+# and once per managed DB from manage_databases.yml.
+#
+# Per-DB rather than once-cluster-wide because PgBouncer's auth_query
+# runs against the same database the client is connecting to — so every
+# DB in `patroni_databases` needs its own copy of the function.
+#
+# Inputs (passed via `vars:` on the includer):
+#   _target_db — name of the database to install into (required).
+#
+# The `pgbouncer` role itself is cluster-wide and must already exist;
+# pgbouncer_auth.yml creates it before invoking this file.
+
+- name: "Create pgbouncer schema in {{ _target_db }}"
+  community.postgresql.postgresql_schema:
+    name: pgbouncer
+    owner: postgres
+    state: present
+    login_host: 127.0.0.1
+    login_port: "{{ postgresql_port }}"
+    login_user: postgres
+    login_password: "{{ postgresql_postgres_password }}"
+    login_db: "{{ _target_db }}"
+    ssl_mode: disable
+  delegate_to: "{{ _patroni_leader_host }}"
+  run_once: true
+
+- name: "GRANT USAGE on pgbouncer schema to pgbouncer in {{ _target_db }}"
+  community.postgresql.postgresql_privs:
+    login_db: "{{ _target_db }}"
+    type: schema
+    objs: pgbouncer
+    privs: USAGE
+    roles: pgbouncer
+    state: present
+    login_host: 127.0.0.1
+    login_port: "{{ postgresql_port }}"
+    login_user: postgres
+    login_password: "{{ postgresql_postgres_password }}"
+    ssl_mode: disable
+  delegate_to: "{{ _patroni_leader_host }}"
+  run_once: true
+
+# Idempotency check — skip CREATE OR REPLACE when the existing function
+# already has the desired security shape. Re-runs report unchanged.
+- name: "Check whether pgbouncer.user_search already matches in {{ _target_db }}"
+  community.postgresql.postgresql_query:
+    login_db: "{{ _target_db }}"
+    login_host: 127.0.0.1
+    login_port: "{{ postgresql_port }}"
+    login_user: postgres
+    login_password: "{{ postgresql_postgres_password }}"
+    ssl_mode: disable
+    query: |
+      SELECT prosecdef, proconfig
+      FROM pg_proc
+      WHERE proname = 'user_search'
+        AND pronamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'pgbouncer')
+  register: _user_search_check
+  changed_when: false
+  delegate_to: "{{ _patroni_leader_host }}"
+  run_once: true
+
+- name: "Install pgbouncer.user_search function (SECURITY DEFINER) in {{ _target_db }}"
+  community.postgresql.postgresql_query:
+    login_db: "{{ _target_db }}"
+    login_host: 127.0.0.1
+    login_port: "{{ postgresql_port }}"
+    login_user: postgres
+    login_password: "{{ postgresql_postgres_password }}"
+    ssl_mode: disable
+    query: |
+      CREATE OR REPLACE FUNCTION pgbouncer.user_search(uname TEXT)
+      RETURNS TABLE (usename name, passwd text)
+      LANGUAGE sql
+      SECURITY DEFINER
+      SET search_path = pg_catalog, pg_temp
+      AS $$
+        SELECT usename, passwd FROM pg_catalog.pg_shadow WHERE usename = uname;
+      $$
+  delegate_to: "{{ _patroni_leader_host }}"
+  run_once: true
+  when: >-
+    (_user_search_check.query_result | length) == 0
+    or not (_user_search_check.query_result[0].prosecdef | bool)
+    or 'search_path=pg_catalog, pg_temp'
+       not in (_user_search_check.query_result[0].proconfig | default([]) | join(','))
+
+- name: "REVOKE EXECUTE on pgbouncer.user_search FROM PUBLIC in {{ _target_db }}"
+  community.postgresql.postgresql_privs:
+    login_db: "{{ _target_db }}"
+    type: function
+    schema: pgbouncer
+    objs: 'user_search(text)'
+    privs: EXECUTE
+    roles: PUBLIC
+    state: absent
+    login_host: 127.0.0.1
+    login_port: "{{ postgresql_port }}"
+    login_user: postgres
+    login_password: "{{ postgresql_postgres_password }}"
+    ssl_mode: disable
+  delegate_to: "{{ _patroni_leader_host }}"
+  run_once: true
+
+- name: "GRANT EXECUTE on pgbouncer.user_search TO pgbouncer in {{ _target_db }}"
+  community.postgresql.postgresql_privs:
+    login_db: "{{ _target_db }}"
+    type: function
+    schema: pgbouncer
+    objs: 'user_search(text)'
+    privs: EXECUTE
+    roles: pgbouncer
+    state: present
+    login_host: 127.0.0.1
+    login_port: "{{ postgresql_port }}"
+    login_user: postgres
+    login_password: "{{ postgresql_postgres_password }}"
+    ssl_mode: disable
+  delegate_to: "{{ _patroni_leader_host }}"
+  run_once: true

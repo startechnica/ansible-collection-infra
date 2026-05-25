@@ -1,0 +1,45 @@
+---
+# UFW (Uncomplicated Firewall) — Debian / Ubuntu
+#
+# Installs ufw, applies default policies, opens declared ports,
+# whitelists trusted sources, then enables the service.
+
+- name: Ensure UFW is installed
+  ansible.builtin.apt:
+    name: ufw
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Set UFW default policy (incoming)
+  community.general.ufw:
+    direction: incoming
+    policy: "{{ firewall_default_incoming }}"
+
+- name: Set UFW default policy (outgoing)
+  community.general.ufw:
+    direction: outgoing
+    policy: "{{ firewall_default_outgoing }}"
+
+- name: Allow from trusted sources (blanket)
+  community.general.ufw:
+    rule: allow
+    from_ip: "{{ item }}"
+    comment: "trusted source"
+  loop: "{{ _fw_trusted_sources | default([]) }}"
+
+- name: Allow declared ports
+  community.general.ufw:
+    rule: allow
+    port: "{{ item.port | int | string }}"
+    proto: "{{ item.protocol | default('tcp') }}"
+    from_ip: "{{ item.source | default('any') }}"
+    comment: "{{ item.comment | default(item.name | default('')) }}"
+  loop: "{{ _fw_rules }}"
+  loop_control:
+    label: "{{ item.port }}/{{ item.protocol | default('tcp') }} from {{ item.source | default('any') }}"
+
+- name: Enable UFW
+  community.general.ufw:
+    state: enabled
+    logging: "on"

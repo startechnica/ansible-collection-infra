@@ -1,0 +1,103 @@
+---
+# Apply custom sshd configuration (port, auth, keepalive, etc.) on the target VM
+# via VMware Tools — no SSH to the guest required. Runs once per VM from the
+# configure_all.yml loop.
+#
+# Inputs (merged per VM, with item-level overriding role-level):
+#   instance_ssh_configs:                  (dict) role-wide defaults
+#     Port: 2222
+#     PasswordAuthentication: "no"
+#     PermitRootLogin: "no"
+#     ClientAliveInterval: 300
+#   instances:
+#     - name: vm1
+#       instance_ssh_configs:              (dict) per-VM override
+#         Port: 2223
+#
+# Keys map 1:1 to sshd_config directive names. Values are written verbatim.
+# The rendered file lands at /etc/ssh/sshd_config.d/99-ansible.conf on the VM.
+#
+# No-op when the effective instance_ssh_configs dict is empty.
+
+- name: "Compute effective instance_ssh_configs for {{ item.name }}"
+  ansible.builtin.set_fact:
+    _ssh_config: "{{ instance_ssh_configs | combine(item.ssh_config | default({})) }}"
+
+- name: "Skip SSH config step (empty instance_ssh_configs) for {{ item.name }}"
+  ansible.builtin.debug:
+    msg: "No instance_ssh_configs overrides for {{ item.name }} — skipping."
+  when: _ssh_config | length == 0
+
+- name: "Apply SSH config to {{ item.name }}"
+  when: _ssh_config | length > 0
+  block:
+    - name: "Render sshd override locally for {{ item.name }}"
+      ansible.builtin.copy:
+        dest: "/tmp/sshd_override_{{ item.name }}.conf"
+        mode: "0644"
+        content: |
+          # Managed by startechnica.infra.instance instance_ssh_configs task
+          # Any manual edits will be overwritten on re-provisioning.
+          {% for key, value in _ssh_config.items() %}
+          {{ key }} {{ value }}
+          {% endfor %}
+      delegate_to: localhost
+      become: false
+
+    - name: "Upload sshd override to {{ item.name }}"
+      community.vmware.vmware_guest_file_operation:
+        hostname: "{{ vcenter_connect.hostname }}"
+        username: "{{ vcenter_connect.username }}"
+        password: "{{ vcenter_connect.password }}"
+        validate_certs: "{{ vcenter_connect.validate_certs }}"
+        datacenter: "{{ instance_datacenter }}"
+        folder: "{{ instance_folder_path }}"
+        vm_id: "{{ item.name }}"
+        vm_username: "{{ instance_user_name }}"
+        vm_password: "{{ instance_user_password }}"
+        copy:
+          src: "/tmp/sshd_override_{{ item.name }}.conf"
+          dest: "/tmp/sshd_override.conf"
+          overwrite: true
+      delegate_to: localhost
+      no_log: true
+
+    - name: "Install + activate sshd override on {{ item.name }}"
+      community.vmware.vmware_vm_shell:
+        hostname: "{{ vcenter_connect.hostname }}"
+        username: "{{ vcenter_connect.username }}"
+        password: "{{ vcenter_connect.password }}"
+        validate_certs: "{{ vcenter_connect.validate_certs }}"
+        datacenter: "{{ instance_datacenter }}"
+        folder: "{{ instance_folder_path }}"
+        vm_id: "{{ item.name }}"
+        vm_username: "{{ instance_user_name }}"
+        vm_password: "{{ instance_user_password }}"
+        vm_shell: /bin/bash
+        vm_shell_args: >-
+          -c "sudo install -o root -g root -m 0644
+          /tmp/sshd_override.conf
+          /etc/ssh/sshd_config.d/99-ansible.conf
+          && sudo sshd -t
+          && (sudo systemctl reload ssh 2>/dev/null || sudo systemctl reload sshd)
+          && rm -f /tmp/sshd_override.conf"
+      delegate_to: localhost
+      no_log: true
+
+    - name: "Remove local temp file for {{ item.name }}"
+      ansible.builtin.file:
+        path: "/tmp/sshd_override_{{ item.name }}.conf"
+        state: absent
+      delegate_to: localhost
+      become: false
+
+    - name: "Record instance_ssh_configs status for {{ item.name }}"
+      ansible.builtin.set_fact:
+        vm_ssh_config_status: >-
+          {{ vm_ssh_config_status | default({}) | combine({
+            item.name: {
+              'applied': true,
+              'directives': _ssh_config | dict2items | map(attribute='key') | list,
+              'port': _ssh_config.Port | default(22) | int
+            }
+          }) }}

@@ -1,0 +1,57 @@
+global
+    maxconn 1000
+    log stdout format raw local0
+
+defaults
+    mode tcp
+    log global
+    retries 3
+
+    timeout client 300s
+    timeout connect 10s
+    timeout server 300s
+    timeout check 5s
+
+    # Cap half-closed (FIN sent, peer hasn't closed back) connections so
+    # FDs from abrupt client/PgBouncer disconnects free quickly instead
+    # of waiting out the full `timeout client/server` (300s).
+    timeout client-fin 30s
+    timeout server-fin 30s
+
+    # Enable kernel TCP keepalives on both client- and server-side
+    # sockets. With os_tuning.yml's tcp_keepalive_time=60 / intvl=10 /
+    # probes=6, a dead peer (NAT timeout, crashed PgBouncer/PG) is
+    # detected ~2 min after the connection goes idle — important for
+    # PgBouncer's pooled server connections that can sit idle up to
+    # `server_lifetime=3600s` between uses.
+    option clitcpka
+    option srvtcpka
+
+listen stats
+    mode http
+    bind *:{{ haproxy_stats_port }}
+
+    stats enable
+    stats uri /
+    stats refresh 10s
+
+listen pg-primary
+    bind *:{{ haproxy_primary_port }}
+    option httpchk GET /primary
+    http-check expect status 200
+    default-server inter 3s fall 3 rise 2 on-marked-down shutdown-sessions
+
+{% for ip in node_ips %}
+    server {{ ip }} {{ ip }}:{{ pgbouncer_port }} maxconn 100 check port {{ patroni_api_port }} check-ssl ca-file /etc/certs/ca.crt crt /etc/certs/haproxy-client.pem verify required
+{% endfor %}
+
+listen pg-replicas
+    bind *:{{ haproxy_replicas_port }}
+    balance roundrobin
+    option httpchk GET /replica
+    http-check expect status 200
+    default-server inter 3s fall 3 rise 2 on-marked-down shutdown-sessions
+
+{% for ip in node_ips %}
+    server {{ ip }} {{ ip }}:{{ pgbouncer_port }} maxconn 100 check port {{ patroni_api_port }} check-ssl ca-file /etc/certs/ca.crt crt /etc/certs/haproxy-client.pem verify required
+{% endfor %}

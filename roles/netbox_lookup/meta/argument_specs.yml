@@ -1,0 +1,80 @@
+---
+argument_specs:
+  main:
+    short_description: Query NetBox and produce VM facts (ipv4, ipv6, tags, netbox_id, ...)
+    description:
+      - >-
+        Auto-selects one of three modes based on the shape of `instances` —
+        Enrich (names present, missing IPs), Resolve (only netbox_id),
+        or Query (build full list from filters).
+      - >-
+        See roles/netbox_lookup/README.md for field tables, precedence rules,
+        and gotchas.
+    options:
+      debug:
+        type: bool
+        default: false
+        description: Verbose / introspection output. Defensive `| bool` filter still used in tasks because CLI `-e debug=true` arrives as a string.
+      netbox_lookup_enabled:
+        type: bool
+        default: true
+
+      netbox_connect:
+        type: dict
+        required: true
+        description: NetBox API connection. Reused by netbox_register.
+        options:
+          url:
+            type: str
+            required: true
+          token:
+            type: str
+            required: true
+            no_log: true
+          validate_certs:
+            type: bool
+            default: false
+
+      # ── Enrich-mode scope ──
+      instance_cluster_name:
+        type: str
+        description: vCenter cluster name used to scope VM lookup.
+      instance_folder:
+        type: str
+        description: Fallback scope (cf_vcenter_folder) when instance_cluster_name is unset.
+      netbox_vrf:
+        type: str
+        default: ""
+        description: VRF name. Resolved to vrf_id and used when fetching IPs.
+      netbox_lookup_interface:
+        type: str
+        default: ens192
+
+      # ── Query-mode filters ──
+      netbox_query_cluster:
+        type: str
+        default: ""
+      netbox_query_site:
+        type: str
+        default: ""
+      netbox_query_tenant:
+        type: str
+        default: ""
+      netbox_query_role:
+        type: str
+        default: ""
+      netbox_query_status:
+        type: str
+        default: ""
+      netbox_query_tags:
+        type: list
+        elements: str
+        default: []
+      netbox_query_custom_fields:
+        type: dict
+        default: {}
+
+      netbox_lookup_set_instances:
+        type: bool
+        default: true
+        description: Query mode only. When true, overwrites `instances` with the built list.

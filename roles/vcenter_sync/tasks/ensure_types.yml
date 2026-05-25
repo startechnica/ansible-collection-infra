@@ -1,0 +1,81 @@
+---
+# Ensure required NetBox object types exist
+# Dry-run: query and report status. Normal: create if missing.
+
+- name: Check existing NetBox types
+  uri:
+    url: "{{ netbox_connect.url }}/api/{{ nb_type.endpoint }}/?slug={{ nb_type.slug }}"
+    method: GET
+    headers:
+      Authorization: "Token {{ netbox_connect.token }}"
+    validate_certs: "{{ netbox_connect.validate_certs | default(false) }}"
+    status_code: [200]
+  delegate_to: localhost
+  loop:
+    - { endpoint: dcim/manufacturers, slug: "{{ vcenter_sync_manufacturer }}", label: manufacturer }
+    - { endpoint: dcim/device-roles, slug: "{{ vcenter_sync_role }}", label: device_role }
+    - { endpoint: dcim/device-types, slug: "{{ vcenter_sync_device_type }}", label: device_type }
+    - { endpoint: virtualization/cluster-types, slug: "{{ vcenter_sync_cluster_type }}", label: cluster_type }
+  loop_control:
+    loop_var: nb_type
+    label: "{{ nb_type.label }}"
+  register: _nb_type_checks
+  when: dry_run | bool
+
+- name: "[DRY-RUN] NetBox types status"
+  ansible.builtin.debug:
+    msg: "{{ item.nb_type.label }} '{{ item.nb_type.slug }}': {{ 'exists' if (item.json.count | default(0) | int > 0) else 'MISSING — will be created' }}"
+  loop: "{{ _nb_type_checks.results | default([]) }}"
+  loop_control:
+    label: "{{ item.nb_type.label }}"
+  when: dry_run | bool
+
+- name: Ensure manufacturer exists in NetBox
+  netbox.netbox.netbox_manufacturer:
+    netbox_url: "{{ netbox_connect.url }}"
+    netbox_token: "{{ netbox_connect.token }}"
+    validate_certs: "{{ netbox_connect.validate_certs | default(false) }}"
+    state: present
+    data:
+      name: VMware
+      slug: "{{ vcenter_sync_manufacturer }}"
+  delegate_to: localhost
+  when: not (dry_run | bool)
+
+- name: Ensure device role exists in NetBox
+  netbox.netbox.netbox_device_role:
+    netbox_url: "{{ netbox_connect.url }}"
+    netbox_token: "{{ netbox_connect.token }}"
+    validate_certs: "{{ netbox_connect.validate_certs | default(false) }}"
+    state: present
+    data:
+      name: Hypervisor
+      slug: "{{ vcenter_sync_role }}"
+      vm_role: false
+  delegate_to: localhost
+  when: not (dry_run | bool)
+
+- name: Ensure device type exists in NetBox
+  netbox.netbox.netbox_device_type:
+    netbox_url: "{{ netbox_connect.url }}"
+    netbox_token: "{{ netbox_connect.token }}"
+    validate_certs: "{{ netbox_connect.validate_certs | default(false) }}"
+    state: present
+    data:
+      manufacturer: "{{ vcenter_sync_manufacturer }}"
+      model: ESXi Host
+      slug: "{{ vcenter_sync_device_type }}"
+  delegate_to: localhost
+  when: not (dry_run | bool)
+
+- name: Ensure cluster type exists in NetBox
+  netbox.netbox.netbox_cluster_type:
+    netbox_url: "{{ netbox_connect.url }}"
+    netbox_token: "{{ netbox_connect.token }}"
+    validate_certs: "{{ netbox_connect.validate_certs | default(false) }}"
+    state: present
+    data:
+      name: VMware vSphere
+      slug: "{{ vcenter_sync_cluster_type }}"
+  delegate_to: localhost
+  when: not (dry_run | bool)

@@ -1,0 +1,19 @@
+---
+# Free space sanity on /opt — both DB roles install under /opt/<service>.
+# Soft warning; <20GB is "fine for a smoke test, not for production".
+
+- name: Check free space on /opt
+  ansible.builtin.command: "df --output=avail -BG /opt"
+  register: _df
+  changed_when: false
+  failed_when: false
+
+- name: Warn if /opt is tight
+  ansible.builtin.debug:
+    msg: >-
+      WARNING: /opt has {{ (_df.stdout_lines[1] | trim | regex_replace('G$', '') | int) }}GB free.
+      Databases grow. Consider mounting a dedicated data volume before production use.
+  when:
+    - _df.rc == 0
+    - (_df.stdout_lines | length) > 1
+    - (_df.stdout_lines[1] | trim | regex_replace('G$', '') | int) < 20

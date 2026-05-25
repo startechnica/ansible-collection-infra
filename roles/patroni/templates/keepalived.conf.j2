@@ -1,0 +1,50 @@
+# {{ ansible_managed }}
+
+global_defs {
+    router_id pg_ha_{{ node_name }}
+    enable_script_security
+    script_user root
+}
+
+vrrp_script check_haproxy {
+    script "curl -sf http://127.0.0.1:{{ haproxy_stats_port }}"
+    interval 3
+    weight -20
+    fall 3
+    rise 2
+}
+
+vrrp_script check_patroni_leader {
+    script "curl -sf --cacert /etc/certs/ca.crt --cert /etc/certs/haproxy.crt --key /etc/certs/haproxy.key https://127.0.0.1:{{ patroni_api_port }}/leader"
+    interval 5
+    weight 10
+    fall 3
+    rise 2
+}
+
+vrrp_instance PG_VIP {
+{% if node_num == 1 %}
+    state MASTER
+{% else %}
+    state BACKUP
+{% endif %}
+    interface {{ patroni_vip_iface }}
+    virtual_router_id 51
+    priority {{ 100 + node_count - node_num }}
+    advert_int 1
+    nopreempt
+
+    authentication {
+        auth_type PASS
+        auth_pass ha_pg_vip_secret
+    }
+
+    virtual_ipaddress {
+        {{ patroni_vip_address }}/{{ patroni_vip_mask }}
+    }
+
+    track_script {
+        check_haproxy
+        check_patroni_leader
+    }
+}

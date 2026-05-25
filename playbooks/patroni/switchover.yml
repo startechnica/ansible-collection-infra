@@ -1,0 +1,29 @@
+---
+# ─── Patroni: Primary Switchover ────────────────────────────────────────────
+#
+# Controlled switchover of the PostgreSQL primary to a target node.
+# The current primary is demoted; the target is promoted via patronictl.
+# HAProxy and VIP follow automatically.
+#
+# Usage:
+#   ansible-playbook playbooks/patroni/switchover.yml -i inventories/<inv>.yml \
+#     -e target_node=<node_name>
+
+- name: Setup patroni hosts
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - ansible.builtin.include_tasks: _setup.yml
+
+- name: Patroni switchover
+  hosts: patroni_nodes
+  become: true
+  gather_facts: true
+  pre_tasks:
+    - ansible.builtin.include_role:
+        name: common
+        tasks_from: inherit_localhost_vars
+  roles:
+    - role: patroni
+      vars:
+        patroni_action: switchover

@@ -1,0 +1,35 @@
+---
+# Exercises the tasks_from files inside the common role that are safe to run
+# standalone (no SSH targets, no localhost vars, no add_host dependency).
+
+- name: Converge — validate_inventory happy path
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    instance_user_name: ubuntu
+    instance_user_password: changeme
+    instances:
+      - { name: demo-01, ipv4: 10.0.0.1/24 }
+      - { name: demo-02, ipv4: 10.0.0.2/24 }
+  tasks:
+    - name: Run common.validate_inventory
+      ansible.builtin.include_role:
+        name: common
+        tasks_from: validate_inventory
+
+- name: Converge — build_host_groups with a stub instances list
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    instance_user_name: ubuntu
+    instances:
+      - { name: demo-01, ipv4: 10.0.0.1/24 }
+      - { name: demo-02, ipv4: 10.0.0.2/24 }
+    target_groups: [demo_nodes]
+  tasks:
+    - name: Run common.build_host_groups
+      ansible.builtin.include_role:
+        name: common
+        tasks_from: build_host_groups

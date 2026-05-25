@@ -1,0 +1,19 @@
+---
+- name: Disable THP (runtime)
+  ansible.builtin.shell: |
+    [ -f /sys/kernel/mm/transparent_hugepage/enabled ] && echo never > /sys/kernel/mm/transparent_hugepage/enabled || true
+    [ -f /sys/kernel/mm/transparent_hugepage/defrag ] && echo never > /sys/kernel/mm/transparent_hugepage/defrag || true
+  changed_when: false
+
+- name: Deploy THP disable systemd service
+  ansible.builtin.template:
+    src: disable-thp.service.j2
+    dest: /etc/systemd/system/disable-thp.service
+    mode: "0644"
+
+- name: Enable and start THP disable service
+  ansible.builtin.systemd:
+    name: disable-thp
+    enabled: true
+    state: started
+    daemon_reload: true

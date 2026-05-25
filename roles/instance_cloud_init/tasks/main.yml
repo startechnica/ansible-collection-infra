@@ -1,0 +1,16 @@
+---
+# cloud-init phases for instance. Callers include specific phases via
+# `tasks_from:` inside a loop over instances_to_create (item = current VM).
+#
+# Phases:
+#   inject.yml           — write guestinfo.userdata / metadata / vapp_properties
+#   poweron.yml          — power VM on; cloud-init runs on first boot
+#   post_provision.yml   — run per-VM shell commands via VMware Tools
+#   cleanup.yml          — clear guestinfo after successful boot
+
+- name: "instance_cloud_init has no default entrypoint"
+  ansible.builtin.fail:
+    msg: >-
+      Do not invoke instance_cloud_init via `roles:` directly.
+      Use `include_role: name: instance_cloud_init tasks_from: <phase>.yml`
+      from inside a instances_to_create loop.

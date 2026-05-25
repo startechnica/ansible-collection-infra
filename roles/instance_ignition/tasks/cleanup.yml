@@ -1,0 +1,41 @@
+---
+# Clear ignition guestinfo data and temp files after successful boot.
+#
+# Invoked from deploy.yml's Stage 3.7, AFTER Stage 3.4 has confirmed
+# bootstrap_phase=ready (FCOS) — by that point Ignition has long since
+# consumed the guestinfo, so clearing it is race-free.
+
+- name: "Clear ignition data for {{ item.name }}"
+  community.vmware.vmware_guest:
+    hostname: "{{ vcenter_connect.hostname }}"
+    username: "{{ vcenter_connect.username }}"
+    password: "{{ vcenter_connect.password }}"
+    validate_certs: "{{ vcenter_connect.validate_certs }}"
+    datacenter: "{{ instance_datacenter }}"
+    folder: "{{ instance_folder_path }}"
+    name: "{{ item.name }}"
+    advanced_settings:
+      - key: "guestinfo.ignition.config.data"
+        value: ""
+      - key: "guestinfo.ignition.config.data.encoding"
+        value: ""
+  delegate_to: localhost
+
+- name: "Clean up temporary ignition files for {{ item.name }}"
+  file:
+    path: "{{ ignition_tmp_dir }}/{{ item.name }}.{{ ext }}"
+    state: absent
+  loop:
+    - bu
+    - ign
+  loop_control:
+    loop_var: ext
+  delegate_to: localhost
+
+- name: "Record ignition cleanup status for {{ item.name }}"
+  ansible.builtin.set_fact:
+    ignition_status: >-
+      {{ ignition_status | default({}) | combine({
+        item.name: (ignition_status | default({}))[item.name] | default({})
+                   | combine({'cleaned_up': true})
+      }) }}

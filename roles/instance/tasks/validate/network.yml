@@ -1,0 +1,113 @@
+---
+# Network (portgroup) preflight — discovers the available portgroups in
+# vCenter, builds the set of portgroups the inventory references, and
+# fails fast if anything is missing.
+#
+# Two discovery paths, mutually exclusive:
+#   - portgroup_vss.yml: standalone ESXi host (vsphere_esxi_hostname set,
+#     instance_cluster_name empty) — vSphere Standard Switch portgroups.
+#   - portgroup_dvs.yml: vSphere cluster (instance_cluster_name set) —
+#     Distributed Virtual Switch portgroups.
+#
+# Each branch is `include_tasks`-d so the entire branch collapses to a
+# single skipping line in the runner output when its condition is
+# false. (A `block:` would inherit the when: per child task and emit a
+# skipping line for every task in the branch.)
+
+# 1) Standalone-ESXi (vSS) discovery
+- name: Discover standard portgroups (standalone ESXi only)
+  ansible.builtin.include_tasks: portgroup_vss.yml
+  when:
+    - vsphere_esxi_hostname | length > 0
+    - instance_cluster_name | length == 0
+
+# 2) Cluster (DVS) discovery
+- name: Discover distributed portgroups (cluster only)
+  ansible.builtin.include_tasks: portgroup_dvs.yml
+  when: instance_cluster_name | length > 0
+
+# 3) Ensure available_networks is initialized — neither branch may have
+# set it (e.g., no vsphere_esxi_hostname AND no instance_cluster_name) or the
+# DVS branch may have skipped its set_fact on a failed query.
+- name: Initialize available_networks if not set
+  ansible.builtin.set_fact:
+    available_networks: []
+  run_once: true
+  when: available_networks is not defined
+
+# 4) Determine required networks (every portgroup any NIC references,
+# plus the role-level `portgroup_name` fallback).
+- name: Determine required networks
+  ansible.builtin.set_fact:
+    required_networks: >-
+      {{
+        (
+          ([portgroup_name] if (portgroup_name | length > 0) else []) +
+          (
+            instances
+            | default([])
+            | subelements('networks', skip_missing=True)
+            | map(attribute='1.name')
+            | select('defined')
+            | list
+          )
+        ) | unique
+      }}
+  run_once: true
+
+# 5) Determine which networks are missing
+- name: Determine missing networks
+  ansible.builtin.set_fact:
+    missing_networks: "{{ required_networks | difference(available_networks) }}"
+  run_once: true
+
+# The biggest fail-fast win in this file: if any required portgroup isn't
+# present in vCenter, vmware_guest later fails for each VM with a generic
+# "Network <name> doesn't exist on the ESXi/cluster" error during create —
+# easy to mistake for a credentials or hostname problem. Catching it here
+# names the missing portgroups and points at the inventory.
+#
+# Skipped when `portgroup_create: true` is set — in that mode,
+# tasks/network.yml is responsible for creating the missing portgroups
+# right after this validate phase, so it's expected that some are
+# absent here. The "Report portgroups to be created" debug below
+# surfaces the list before the create runs.
+#
+# Doubles as the network-validation report (success_msg). The previous
+# standalone debug printing the same triple is gone — `quiet:` is tied to
+# the global `debug` flag so the success output stays opt-in.
+- name: Assert all required portgroups exist in vCenter
+  ansible.builtin.assert:
+    that:
+      - missing_networks | length == 0
+    fail_msg: >-
+      Portgroup(s) {{ missing_networks | to_json }} referenced by NICs
+      (or `portgroup_name`) are not present in vCenter. Available on
+      {{ 'cluster ' ~ instance_cluster_name if (instance_cluster_name | length > 0)
+         else 'ESXi ' ~ vsphere_esxi_hostname }}:
+      {{ available_networks | to_json }}.
+      Either create the portgroup(s) in vCenter (Networking → DVS or
+      ESXi → Networking), correct the `portgroup_name`/`networks[*].name`
+      values in the inventory (names are case-sensitive), or set
+      `portgroup_create: true` to have this role create them
+      automatically using `portgroup_vlan_id`.
+    success_msg:
+      - "Available portgroups: {{ available_networks }}"
+      - "Required by inventory: {{ required_networks }}"
+      - "All required portgroups present."
+  run_once: true
+  when: not (portgroup_create | bool)
+
+- name: Report portgroups to be auto-created (portgroup_create=true)
+  ansible.builtin.debug:
+    msg:
+      - "Available portgroups: {{ available_networks }}"
+      - "Required by inventory: {{ required_networks }}"
+      - >-
+        Missing (will be created in tasks/network.yml using
+        portgroup_vlan_id={{ portgroup_vlan_id }}):
+        {{ missing_networks | to_json }}
+  run_once: true
+  when:
+    - portgroup_create | bool
+    - missing_networks | length > 0

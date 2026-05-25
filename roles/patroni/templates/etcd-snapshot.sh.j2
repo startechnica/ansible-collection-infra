@@ -1,0 +1,75 @@
+#!/bin/bash
+set -u
+SNAPSHOT_DIR="{{ etcd_snapshot_dir }}"
+RETAIN={{ etcd_snapshot_retain }}
+{% if s3_enabled %}
+S3_BUCKET="{{ s3_bucket }}"
+S3_ENDPOINT="{{ s3_endpoint }}"
+S3_ACCESS_KEY="{{ s3_access_key }}"
+S3_SECRET_KEY="{{ s3_secret_key }}"
+S3_REGION="{{ s3_region }}"
+{% endif %}
+
+STAMP=$(date +%Y%m%d-%H%M%S)
+SNAPSHOT_FILE="${SNAPSHOT_DIR}/etcd-snapshot-${STAMP}.db"
+
+mkdir -p "${SNAPSHOT_DIR}"
+
+docker exec etcd etcdctl snapshot save "/tmp/snap-${STAMP}.db" \
+  --cacert=/etc/certs/ca.crt \
+  --cert=/etc/certs/etcd-server.crt \
+  --key=/etc/certs/etcd-server.key 2>/dev/null
+
+docker cp "etcd:/tmp/snap-${STAMP}.db" "${SNAPSHOT_FILE}" 2>/dev/null
+docker exec etcd rm -f "/tmp/snap-${STAMP}.db" 2>/dev/null
+
+if [[ -f "${SNAPSHOT_FILE}" ]]; then
+  SIZE=$(du -sh "${SNAPSHOT_FILE}" | cut -f1)
+  echo "[$(date)] etcd snapshot saved: ${SNAPSHOT_FILE} (${SIZE})"
+{% if s3_enabled %}
+
+  # Upload to S3
+  s3_upload() {
+    local file="$1" key="$2"
+    local date_header content_type="application/octet-stream"
+    date_header=$(date -u '+%a, %d %b %Y %H:%M:%S GMT')
+    local string_to_sign
+    string_to_sign=$(printf 'PUT\n\n%s\n%s\n/%s/%s' \
+      "${content_type}" "${date_header}" "${S3_BUCKET}" "${key}")
+    local signature
+    signature=$(printf '%s' "${string_to_sign}" \
+      | openssl dgst -sha1 -hmac "${S3_SECRET_KEY}" -binary | base64)
+
+    local url
+    if [[ -n "${S3_ENDPOINT}" ]]; then
+      url="${S3_ENDPOINT}/${S3_BUCKET}/${key}"
+    else
+      url="https://${S3_BUCKET}.s3.${S3_REGION}.amazonaws.com/${key}"
+    fi
+
+    curl -sfS -X PUT -T "${file}" \
+      -H "Date: ${date_header}" \
+      -H "Content-Type: ${content_type}" \
+      -H "Authorization: AWS ${S3_ACCESS_KEY}:${signature}" \
+      "${url}"
+  }
+
+  S3_KEY="etcd-snapshots/etcd-snapshot-${STAMP}.db"
+  if s3_upload "${SNAPSHOT_FILE}" "${S3_KEY}"; then
+    echo "[$(date)] uploaded to s3://${S3_BUCKET}/${S3_KEY}"
+  else
+    echo "[$(date)] S3 upload FAILED (local snapshot preserved)"
+  fi
+{% endif %}
+
+  # Prune old local snapshots beyond retention count
+  SNAP_COUNT=$(find "${SNAPSHOT_DIR}" -name "etcd-snapshot-*.db" | wc -l)
+  if (( SNAP_COUNT > RETAIN )); then
+    find "${SNAPSHOT_DIR}" -name "etcd-snapshot-*.db" | sort | head -n -${RETAIN} | while read -r OLD; do
+      rm -f "${OLD}"
+      echo "  pruned: $(basename "${OLD}")"
+    done
+  fi
+else
+  echo "[$(date)] etcd snapshot FAILED"
+fi

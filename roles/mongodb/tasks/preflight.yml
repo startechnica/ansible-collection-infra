@@ -1,0 +1,53 @@
+---
+# MongoDB-specific preflight checks.
+# Common checks (root, docker, compose, RAM) + target Python venv with pymongo
+# are handled by the preflight role dependency.
+
+# Linux kernel ≥ 6.19 has a known incompatibility with current MongoDB
+# releases — mongod refuses to start (and earlier in our experience also
+# segfaults under the sharded TLS path). Upstream tracking ticket:
+# https://jira.mongodb.org/browse/SERVER-121912
+#
+# Override `mongodb_skip_kernel_check: true` in inventory to bypass once
+# upstream ships a fix and you've verified it works on your kernel.
+- name: Assert kernel is compatible with MongoDB
+  ansible.builtin.assert:
+    that:
+      - ansible_kernel is version(mongodb_unsupported_kernel, '<')
+    fail_msg: |
+      Kernel {{ ansible_kernel }} on {{ inventory_hostname }} is not compatible
+      with MongoDB.
+
+      Linux kernel >= 6.19 has a known incompatibility with current MongoDB
+      releases — mongod refuses to start (`MongoDB cannot start: Linux kernel
+      versions 6.19 and newer has a known incompatibility...`).
+      Tracking: https://jira.mongodb.org/browse/SERVER-121912
+
+      Resolution options:
+        1. Pin the host OS to a release with kernel < 6.19. Note the kernel
+           bump can land WITHIN a single FCOS major release: e.g. FCOS
+           43.20260217.3.1 shipped kernel 6.18 (works), FCOS 43.20260413.3.2
+           shipped kernel 6.19 (broken). Pinning the FCOS major isn't enough
+           — pin the specific stream build via `content_library_template`
+           in inventory.
+        2. Move MongoDB nodes to a different OS (Ubuntu 24.04 ships 6.8).
+        3. Wait for an upstream MongoDB patch that supports 6.19, then bump
+           `mongodb_image_tag` in inventory.
+        4. Bypass with `mongodb_skip_kernel_check: true` (use only after
+           verifying mongo runs on your kernel — running with this set on
+           an incompatible kernel crashes containers in a tight loop).
+    success_msg: "Kernel {{ ansible_kernel }} is compatible with MongoDB."
+  when: not (mongodb_skip_kernel_check | bool)
+
+- name: Validate cluster type
+  ansible.builtin.assert:
+    that: mongodb_cluster_type in ['sharded', 'replicaset']
+    fail_msg: "mongodb_cluster_type must be 'sharded' or 'replicaset', got '{{ mongodb_cluster_type }}'"
+    success_msg: "Cluster type: {{ mongodb_cluster_type }}"
+
+- name: Check admin password is set
+  ansible.builtin.assert:
+    that: mongodb_admin_password | length > 0
+    fail_msg: "mongodb_admin_password must be set (in group_vars or vault)"
+    success_msg: "mongodb_admin_password is set."
+  tags: [never, init]

@@ -1,0 +1,51 @@
+---
+# Inherit all non-ansible vars from localhost to the current host.
+# Uses a temp YAML file to avoid noisy set_fact loops.
+#
+# Excludes: ansible_*, inventory_hostname*, group_names, groups,
+# playbook_dir, role_path, and other Ansible magic variables.
+
+- name: Export localhost vars to temp file
+  ansible.builtin.copy:
+    content: >-
+      {{ dict(_keys | zip(_keys | map('extract', hostvars['localhost']))) | to_nice_yaml }}
+    dest: /tmp/.ansible_localhost_vars.yml
+    mode: "0600"
+  delegate_to: localhost
+  become: false
+  run_once: true
+  no_log: true
+  changed_when: false
+  check_mode: false
+  vars:
+    _excluded_vars:
+      - inventory_hostname
+      - inventory_hostname_short
+      - inventory_file
+      - inventory_dir
+      - group_names
+      - groups
+      - playbook_dir
+      - role_path
+      - environment
+      - omit
+    _keys: >-
+      {{ hostvars['localhost'].keys()
+         | reject('match', '^ansible_')
+         | reject('in', _excluded_vars)
+         | list }}
+
+- name: Inherit inventory vars from localhost
+  ansible.builtin.include_vars:
+    file: /tmp/.ansible_localhost_vars.yml
+  no_log: true
+
+- name: Clean up temp vars file
+  ansible.builtin.file:
+    path: /tmp/.ansible_localhost_vars.yml
+    state: absent
+  delegate_to: localhost
+  become: false
+  run_once: true
+  changed_when: false
+  check_mode: false

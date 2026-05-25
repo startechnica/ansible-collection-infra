@@ -1,0 +1,39 @@
+---
+# Operator confirmation gate for uninstall. Engine-agnostic — runs
+# before main.yml dispatches to docker/uninstall.yml or
+# podman/uninstall.yml. Same prompt-then-end_play pattern mongodb uses.
+
+- name: Display uninstall warning
+  ansible.builtin.debug:
+    msg:
+      - "╔══════════════════════════════════════════════════════════════╗"
+      - "║  WARNING: Patroni UNINSTALL on {{ inventory_hostname }}"
+      - "║  Engine:      {{ container_engine | default('docker') }}"
+      - "║  Patroni dir: {{ patroni_dir }}"
+      - "║  Prune data:  {{ patroni_destroy_prune }}"
+      - "╚══════════════════════════════════════════════════════════════╝"
+  run_once: true
+
+- name: Confirm uninstall
+  ansible.builtin.pause:
+    prompt: "Type 'prune' to confirm Patroni uninstall on {{ groups['patroni_nodes'] | join(', ') }}"
+  register: _uninstall_confirm
+  run_once: true
+  when: not (patroni_skip_confirm | bool)
+
+- name: Note uninstall was declined
+  ansible.builtin.debug:
+    msg: >-
+      Uninstall aborted by user
+      (input was {{ ((_uninstall_confirm | default({})).user_input | default('') | string) | to_json }}
+      — expected 'prune'). No changes made.
+  when:
+    - not (patroni_skip_confirm | bool)
+    - (_uninstall_confirm | default({})).user_input | default('') != 'prune'
+  run_once: true
+
+- name: End play (uninstall declined)
+  ansible.builtin.meta: end_play
+  when:
+    - not (patroni_skip_confirm | bool)
+    - (_uninstall_confirm | default({})).user_input | default('') != 'prune'

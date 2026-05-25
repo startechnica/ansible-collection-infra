@@ -1,0 +1,49 @@
+---
+# ─── Patroni: Cluster Install (POST-PROVISION) ──────────────────────────────
+#
+# ⚠ NOT A FROM-SCRATCH PIPELINE.
+# Assumes the VMs already exist AND Docker is already installed on them.
+# The preflight stage will fail with "Error connecting" if Docker isn't up.
+#
+# For fresh deployments, use ONE of:
+#   * playbooks/deploy.yml          — full pipeline
+#                                     (validate → netbox → provision →
+#                                      docker → mongodb → patroni →
+#                                      firewall → routeros)
+#   * playbooks/deploy_patroni.yml  — patroni-only full pipeline
+#                                     (netbox → provision → docker → patroni)
+#
+# Use THIS playbook when:
+#   * VMs already exist and Docker is already installed
+#   * Re-applying patroni config changes (patroni.yml, HAProxy, PgBouncer)
+#   * Day-2 operations that need the patroni role end-to-end
+#
+# Sets up:
+#   - Preflight checks (Docker, Compose)
+#   - OS tuning (sysctl, THP, I/O scheduler)
+#   - TLS certificate generation (etcd, patroni, haproxy, vip-manager)
+#   - etcd cluster bootstrap
+#   - Patroni + PostgreSQL deployment
+#   - HAProxy (read/write splitting) + PgBouncer (connection pooling)
+#   - VIP manager or Keepalived for virtual IP failover
+#   - WAL-G backup configuration (if S3 is configured)
+#
+# Usage:
+#   ansible-playbook playbooks/patroni/install.yml -i inventories/<your-inventory>.yml --diff
+
+- name: Setup patroni hosts
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - ansible.builtin.include_tasks: _setup.yml
+
+- name: Provision Patroni cluster
+  hosts: patroni_nodes
+  become: true
+  gather_facts: true
+  pre_tasks:
+    - ansible.builtin.include_role:
+        name: common
+        tasks_from: inherit_localhost_vars
+  roles:
+    - role: patroni

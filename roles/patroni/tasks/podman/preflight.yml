@@ -1,0 +1,37 @@
+---
+# Patroni preflight — podman engine. VIP config validation + image pulls
+# via containers.podman.podman_image. Common system-level checks (root,
+# podman, RAM) are handled by the preflight role dependency called
+# from main.yml.
+
+- name: Validate VIP configuration (when VIP is enabled)
+  ansible.builtin.assert:
+    that:
+      - patroni_vip_mask | string | length > 0
+      - vip_manager in ['vip-manager', 'keepalived']
+    fail_msg: >-
+      patroni_vip_address='{{ patroni_vip_address }}' is set but patroni_vip_mask is empty or
+      vip_manager='{{ vip_manager }}' is not
+      'vip-manager' / 'keepalived'. Set patroni_vip_mask (e.g. 24) and a valid
+      vip_manager, or unset 'patroni_vip_address' to disable the floating-IP service.
+    success_msg: "VIP {{ patroni_vip_address }}/{{ patroni_vip_mask }} configured for {{ vip_manager }}."
+  when: patroni_vip_address | length > 0
+  run_once: true
+
+- name: Pull required images
+  containers.podman.podman_image:
+    name: "{{ item }}"
+    pull: true
+  loop:
+    - "{{ patroni_image }}"
+    - "{{ etcd_image }}"
+    - "{{ haproxy_image }}"
+    - "{{ pgbouncer_image }}"
+  loop_control:
+    label: "{{ item }}"
+
+- name: Pull postgres-exporter image (when enabled)
+  containers.podman.podman_image:
+    name: "{{ postgres_exporter_image }}"
+    pull: true
+  when: postgres_exporter_enabled | bool

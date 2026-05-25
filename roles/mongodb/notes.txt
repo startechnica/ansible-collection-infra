@@ -1,0 +1,26 @@
+# Full provision (first time setup — provisions all 3 nodes + init cluster)
+ansible-playbook playbooks/mongodb-cluster.yml -i inventories/<your-inventory>.yml \
+  -e mongodb_admin_password="Uq6H9u9kzpvXrX13Lbc1h1Pb0JngTvDkqZa1QqFvdGD8kH99wnYdPX6pBYtftT4K"
+
+# Status check
+ansible-playbook playbooks/mongodb-cluster.yml -i inventories/<your-inventory>.yml --tags status
+
+# Backup
+ansible-playbook playbooks/mongodb-cluster.yml -i inventories/<your-inventory>.yml --tags backup \
+  -e mongodb_admin_password="..."
+
+# Renew certs
+ansible-playbook playbooks/mongodb-cluster.yml -i inventories/<your-inventory>.yml --tags renew-certs
+
+# Uninstall (keeps data)
+ansible-playbook playbooks/mongodb-cluster.yml -i inventories/<your-inventory>.yml --tags uninstall
+
+# Uninstall (delete everything)
+ansible-playbook playbooks/mongodb-cluster.yml -i inventories/<your-inventory>.yml --tags uninstall \
+  -e mongodb_destroy_prune=true
+
+# Dry run (check mode — shows what would change without doing it)
+ansible-playbook playbooks/mongodb-cluster.yml -i inventories/<your-inventory>.yml --check
+
+# Verbose output (for debugging)
+ansible-playbook playbooks/mongodb-cluster.yml -i inventories/<your-inventory>.yml -vvv

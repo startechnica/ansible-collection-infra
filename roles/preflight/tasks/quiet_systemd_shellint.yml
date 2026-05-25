@@ -1,0 +1,35 @@
+---
+# Silence the "Module invocation had junk after the JSON data" warning on
+# every become task on FCOS / Fedora 43+ hosts.
+#
+# Cause: systemd 256+'s `systemd-executor` wraps PAM-session-spawned
+# commands (sudo, on every Ansible become task) with OSC 3008
+# hierarchical-context escape sequences (`\x1b]3008;end=<hash>\x1b\\`).
+# Ansible captures stdout, finds JSON followed by the OSC sequence, and
+# warns. The executor skips OSC emission when TERM=dumb (see
+# /usr/lib/systemd/profile.d/80-systemd-osc-context.sh line 16).
+#
+# Fix: ansible.cfg [ssh_connection] sets `-o SetEnv=TERM=dumb`, but
+# sshd's default AcceptEnv (LANG, LC_*) rejects TERM. This task drops
+# /etc/ssh/sshd_config.d/99-accept-term.conf so the client-side SetEnv
+# is honored. New FCOS provisions get this directly via fcos.bu.j2; this
+# task brings existing hosts up to date.
+
+- name: Allow ansible to forward TERM via sshd
+  ansible.builtin.copy:
+    dest: /etc/ssh/sshd_config.d/99-accept-term.conf
+    content: |
+      # Accept TERM from clients. Ansible sets TERM=dumb to silence
+      # systemd-executor's OSC 3008 hierarchical-context markers that
+      # otherwise land after the JSON of every become task.
+      AcceptEnv TERM
+    owner: root
+    group: root
+    mode: "0644"
+  register: _sshd_term_drop
+
+- name: Reload sshd to pick up AcceptEnv TERM
+  ansible.builtin.systemd:
+    name: sshd.service
+    state: reloaded
+  when: _sshd_term_drop is changed

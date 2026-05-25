@@ -1,0 +1,133 @@
+---
+# Show cluster status (podman) — containers, Patroni cluster state, and VIP location.
+
+- name: Get container status
+  containers.podman.podman_container_info:
+    name: "{{ item }}"
+  register: container_checks
+  failed_when: false
+  loop: >-
+    {{ ['etcd', 'patroni', 'haproxy', 'pgbouncer', 'vip-manager', 'keepalived']
+       + (['postgres-exporter'] if postgres_exporter_enabled | bool else [])
+       + (['walg-init'] if walg_enabled else []) }}
+
+- name: Display container status
+  ansible.builtin.debug:
+    msg: >-
+      {%- set lines = ['Containers on ' ~ inventory_hostname ~ ':'] -%}
+      {%- for r in container_checks.results -%}
+        {%- set status = (r.containers[0].State.Status
+                          if (r.containers | default([]) | length > 0)
+                          else 'not found') -%}
+        {%- set _ = lines.append('  - %-20s %s' | format(r.item, status)) -%}
+      {%- endfor -%}
+      {{ lines }}
+
+- name: Show Patroni cluster state
+  containers.podman.podman_container_exec:
+    name: patroni
+    command: patronictl -c /etc/patroni/patroni.yml list
+  register: patroni_status
+  changed_when: false
+  failed_when: false
+
+- name: Display Patroni status
+  ansible.builtin.debug:
+    msg: "{{ patroni_status.stdout_lines }}"
+  when: patroni_status.rc | default(1) == 0
+
+- name: Check VIP location
+  ansible.builtin.shell: |
+    if ip addr show 2>/dev/null | grep -q "{{ patroni_vip_address }}"; then
+      echo "VIP {{ patroni_vip_address }} is on THIS node"
+    else
+      echo "VIP {{ patroni_vip_address }} is NOT on this node"
+    fi
+  register: vip_status
+  changed_when: false
+  when: patroni_vip_enabled | default(patroni_vip_address | length > 0)
+
+- name: Display VIP status
+  ansible.builtin.debug:
+    msg: "{{ vip_status.stdout | default('VIP service disabled (patroni_vip_address not set).') }}"
+
+- name: Show WAL-G archive status (wal-show)
+  containers.podman.podman_container_exec:
+    name: patroni
+    command: /opt/walg/wal-g wal-show
+  register: walg_wal_show
+  changed_when: false
+  failed_when: false
+  run_once: true
+  when: walg_enabled
+
+- name: Display WAL-G archive status
+  ansible.builtin.debug:
+    msg: "{{ walg_wal_show.stdout_lines | default(['(no WAL archived yet — wal-show empty)'], true) }}"
+  run_once: true
+  when: walg_enabled
+
+# ── Structured health fact (for monitoring / scripting consumers) ────────────
+
+- name: Fetch Patroni cluster state as JSON
+  containers.podman.podman_container_exec:
+    name: patroni
+    command: patronictl -c /etc/patroni/patroni.yml list --format json
+  register: _patroni_json
+  changed_when: false
+  failed_when: false
+  run_once: true
+
+- name: Build container status map
+  ansible.builtin.set_fact:
+    _patroni_container_states: >-
+      {%- set m = {} -%}
+      {%- for r in container_checks.results -%}
+        {%- set status = (r.containers[0].State.Status
+                          if (r.containers | default([]) | length > 0)
+                          else 'not found') -%}
+        {%- set _ = m.update({r.item: status}) -%}
+      {%- endfor -%}
+      {{ m }}
+
+- name: Publish patroni_cluster_health fact
+  ansible.builtin.set_fact:
+    patroni_cluster_health:
+      timestamp: "{{ ansible_date_time.iso8601 | default(lookup('pipe', 'date -u +%FT%TZ')) }}"
+      scope: "{{ patroni_scope }}"
+      members: >-
+        {{ (_patroni_json.stdout | default('[]') | from_json)
+           if _patroni_json.rc | default(1) == 0
+           else [] }}
+      leader: >-
+        {%- if _patroni_json.rc | default(1) == 0 -%}
+          {%- set leaders = (_patroni_json.stdout | default('[]') | from_json)
+                            | selectattr('Role', 'equalto', 'Leader')
+                            | map(attribute='Member') | list -%}
+          {{ leaders[0] if leaders | length > 0 else '' }}
+        {%- else -%}{%- endif -%}
+      containers: "{{ _patroni_container_states }}"
+      patroni_vip_address:
+        address: "{{ patroni_vip_address }}"
+        on_this_node: "{{ 'on THIS node' in (vip_status.stdout | default('')) }}"
+      overall: >-
+        {{
+          'healthy' if (_patroni_json.rc | default(1) == 0
+                        and ((_patroni_json.stdout | default('[]') | from_json)
+                             | selectattr('Role', 'equalto', 'Leader')
+                             | list | length) == 1)
+          else ('degraded' if _patroni_json.rc | default(1) == 0 else 'down')
+        }}
+
+- name: Display structured health summary
+  vars:
+    _vip: "{{ patroni_cluster_health.patroni_vip_address }}"
+    _vip_loc: "{{ 'here' if _vip.on_this_node else 'elsewhere' }}"
+  ansible.builtin.debug:
+    msg:
+      - "Scope:    {{ patroni_cluster_health.scope }}"
+      - "Leader:   {{ patroni_cluster_health.leader or '(none elected)' }}"
+      - "Members:  {{ patroni_cluster_health.members | length }}"
+      - "VIP:      {{ _vip.address }} ({{ _vip_loc }})"
+      - "Overall:  {{ patroni_cluster_health.overall }}"
+  run_once: true

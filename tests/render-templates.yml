@@ -1,0 +1,138 @@
+---
+# Render tests for cloud-init + Butane templates.
+#
+# Why: every template-rendering bug we hit recently (Jinja list
+# comprehension, wrong loop var name, missing variable rename) only
+# surfaced at task-execute time. This playbook templates every
+# .j2 file against representative fixture instances and asserts each
+# output is parseable YAML — catching those bugs in seconds.
+#
+# How it mimics production scope:
+#   1. vars_files load the role's defaults/main.yml + vars/main.yml
+#      (same files Ansible would inject when the role is included),
+#      then the fixture overrides.
+#   2. Loops over `fixture_instances` use the same loop_var names the
+#      production tasks use (`item` for cloud-init, `instance` for ignition).
+#
+# Run from collection root:
+#   ansible-playbook tests/render-templates.yml
+#
+# Output: each rendered file at /tmp/render-test/<host>-<kind>.yml — kept
+# on success so a developer can inspect; cleaned on next run.
+
+- name: "render-test :: cloud-init"
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  vars_files:
+    - ../roles/instance/defaults/main.yml
+    - ../roles/instance/vars/main.yml
+    - fixtures/cloud-init-overrides.yml
+  vars:
+    _render_dir: /tmp/render-test/cloud-init
+
+  tasks:
+    - name: "ci :: clean and create render dir"
+      ansible.builtin.file:
+        path: "{{ _render_dir }}"
+        state: "{{ ci_state }}"
+      loop: [absent, directory]
+      loop_control:
+        loop_var: ci_state
+
+    - name: "ci :: render cloudinit-metadata.yml.j2 per fixture VM"
+      ansible.builtin.template:
+        src: ../roles/instance_cloud_init/templates/cloudinit-metadata.yml.j2
+        dest: "{{ _render_dir }}/{{ item.hostname }}-metadata.yml"
+      loop: "{{ fixture_instances }}"
+      loop_control:
+        label: "{{ item.hostname }}"
+
+    - name: "ci :: render cloudinit-user-data.yml.j2 per fixture VM"
+      ansible.builtin.template:
+        src: ../roles/instance_cloud_init/templates/cloudinit-user-data.yml.j2
+        dest: "{{ _render_dir }}/{{ item.hostname }}-user-data.yml"
+      loop: "{{ fixture_instances }}"
+      loop_control:
+        label: "{{ item.hostname }}"
+
+    - name: "ci :: assert every rendered file is parseable YAML"
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - |
+            import sys, yaml
+            for p in sys.argv[1:]:
+                yaml.safe_load(open(p))
+                print('OK', p)
+          - "{{ _render_dir }}/{{ item }}"
+      changed_when: false
+      loop: >-
+        {{
+          fixture_instances | map(attribute='hostname') | product(['metadata', 'user-data'])
+          | map('join', '-')
+          | map('regex_replace', '$', '.yml')
+          | list
+        }}
+
+# ── Ignition (Butane) — repeat per flavour to catch flavour-specific bugs.
+- name: "render-test :: ignition Butane (fcos)"
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  vars_files:
+    - ../roles/instance/defaults/main.yml
+    - ../roles/instance/vars/main.yml
+    - ../roles/instance_ignition/defaults/main.yml
+    - ../roles/instance_ignition/vars/main.yml
+    - fixtures/ignition-overrides.yml
+  vars:
+    _render_dir: /tmp/render-test/ignition
+
+  tasks:
+    - name: "ig :: clean and create render dir"
+      ansible.builtin.file:
+        path: "{{ _render_dir }}"
+        state: "{{ ig_state }}"
+      loop: [absent, directory]
+      loop_control:
+        loop_var: ig_state
+
+    # One render per (flavour × instance). Default loop_var (item) is the
+    # FLAVOUR; the inner loop var that the Butane template expects is named
+    # `instance` (matches production render_ignition.yml).
+    - name: "ig :: render Butane templates for each flavour × fixture instance"
+      ansible.builtin.template:
+        src: "../roles/instance_ignition/templates/{{ ignition_flavour_map[ignition_flavour].butane_template }}"
+        dest: "{{ _render_dir }}/{{ ignition_flavour }}-{{ instance.hostname }}.bu"
+      vars:
+        ignition_flavour: "{{ _pair.0 }}"
+        instance: "{{ _pair.1 }}"
+      loop: "{{ ['fcos', 'flatcar', 'rhcos', 'opensuse'] | product(fixture_instances) | list }}"
+      loop_control:
+        loop_var: _pair
+        label: "{{ _pair.0 }}/{{ _pair.1.hostname }}"
+
+    - name: "ig :: assert every rendered Butane file is parseable YAML"
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - |
+            import sys, yaml
+            for p in sys.argv[1:]:
+                doc = yaml.safe_load(open(p))
+                assert 'variant' in doc, f'{p}: missing top-level `variant`'
+                assert 'version' in doc, f'{p}: missing top-level `version`'
+                print('OK', p)
+          - "{{ _render_dir }}/{{ item }}"
+      changed_when: false
+      loop: >-
+        {{
+          ['fcos', 'flatcar', 'rhcos', 'opensuse']
+          | product(fixture_instances | map(attribute='hostname'))
+          | map('join', '-')
+          | map('regex_replace', '$', '.bu')
+          | list
+        }}

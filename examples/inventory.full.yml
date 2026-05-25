@@ -1,0 +1,136 @@
+# Production-shaped inventory — NetBox IPAM, S3 backups, firewall, RouterOS,
+# Patroni with VIP, vault-backed secrets.
+#
+# Companion file: inventory.vault.yml (vault-encrypted, contains all vault_*
+# values). In practice you'd put it under inventories/group_vars/all/vault.yml
+# and `ansible-vault encrypt` it.
+
+all:
+  hosts:
+    localhost:
+      ansible_connection: local
+  vars:
+    # ── Secrets — resolved from inventories/group_vars/all/vault.yml ────────
+    instance_user_name: ubuntu
+    instance_user_password: "{{ vault_default_user_password }}"
+    instance_user_ssh_authorized_keys:
+      - "{{ vault_operator_ssh_key }}"
+
+    vcenter_connect:
+      hostname: vcenter.example.com
+      username: svc-ansible@vsphere.local
+      password: "{{ vault_vcenter_password }}"
+      validate_certs: false
+
+    netbox_enabled: true
+    netbox_connect:
+      url: https://netbox.example.com
+      token: "{{ vault_netbox_token }}"
+      validate_certs: true
+
+    # ── vCenter placement ───────────────────────────────────────────────────
+    instance_datacenter: <your-datacenter>
+    instance_cluster_name: Deviruchi
+    instance_folder: <your-project>
+    portgroup_name: v3244
+    portgroup_dvswitch_name: DSwitch1-Data
+
+    # Per-NIC defaults — merged into every entry of every VM's `networks:`.
+    instance_networks:
+      gateway4: 10.147.8.1
+      mtu: 1500
+
+    # Per-disk defaults — merged into every entry of every VM's `disks:`.
+    # `datastore` is the project-level default; per-disk override lives in
+    # `disks[i].datastore`.
+    instance_disks:
+      size_gb: 40
+      type: thin
+      datastore: vsanDatastore
+    instance_dns_servers: [10.147.1.1, 10.147.1.2]
+
+    # NetBox scope for enrichment — resolves missing ipv4 from NetBox records.
+    netbox_vrf: production
+    netbox_lookup_enabled: true
+
+    # ── Templates ──────────────────────────────────────────────────────────
+    instance_init_type: cloud-init
+    content_library_name: library-rocky
+    content_library_template: noble-server-cloudimg-amd64
+    content_library_type: ovf
+
+    # ── VMs ────────────────────────────────────────────────────────────────
+    # Per-VM `tags` override the global `instance_tags` below. Mix freely.
+    instances:
+      - hostname: host1-lin-db
+        networks:
+          - ipv4: 10.147.8.56/24
+      - hostname: host2-lin-db   # ipv4 enriched from NetBox into networks[0]
+      - hostname: host3-lin-db
+
+    instance_tags:
+      - mongodb
+      - patroni
+
+    # ── MongoDB ─────────────────────────────────────────────────────────────
+    mongodb_cluster_type: replicaset
+    mongodb_admin_password: "{{ vault_mongodb_admin_password }}"
+    mongodb_databases:
+      - name: app_primary
+        users:
+          - name: app_user
+            password: "{{ vault_mongodb_app_password }}"
+            roles: [readWrite]
+
+    # ── Patroni ─────────────────────────────────────────────────────────────
+    patroni_scope: <your-project>-pg         # must be unique per etcd DCS
+    postgresql_postgres_password: "{{ vault_postgres_password }}"
+    pgversion: 16
+    vip_manager: vip-manager              # keepalived | none | vip-manager
+    patroni_vip_address: 10.147.8.60
+    # patroni_vip_mask + patroni_vip_iface inferred from instance_networks + node IP
+
+    patroni_databases:
+      - name: app_primary
+        owner: app_user
+        users:
+          - name: app_user
+            password: "{{ vault_patroni_app_password }}"
+            roles: [LOGIN]
+            grants:
+              - { privs: ALL, on_type: database, on_target: app_primary }
+
+    # ── S3 backups (shared by MongoDB and Patroni) ──────────────────────────
+    s3_endpoint: https://s3.example.com
+    s3_bucket: <your-project>-backups
+    s3_access_key: "{{ vault_s3_access_key }}"
+    s3_secret_key: "{{ vault_s3_secret_key }}"
+    s3_region: us-east-1
+    s3_prefix: <your-project>
+    walg_retention: 14                    # keep 14 full Patroni backups
+    mongodb_backup_retain_days: 14                # keep 14 days of MongoDB dumps
+
+    # ── Host firewall (UFW / firewalld) ─────────────────────────────────────
+    firewall_enabled: true
+    firewall_trusted_sources:
+      - 10.147.0.0/16                     # jump-hosts + monitoring net
+    # DB ports auto-included from mongodb_services / patroni_services facts.
+    # Add anything else (e.g. node_exporter on 9100) below:
+    firewall_rules:
+      - { port: 9100, protocol: tcp, comment: node_exporter }
+
+    # ── MikroTik address-list ───────────────────────────────────────────────
+    routeros_enabled: true
+    routeros_host: 10.147.0.1
+    routeros_user: ansible
+    routeros_password: "{{ vault_routeros_password }}"
+    routeros_tls: true
+    routeros_validate_certs: false
+    routeros_address_list: db-<your-project>
+    routeros_prune_stale: true            # remove entries when instances shrinks
+
+    # ── Optional: kernel modules beyond the Docker baseline ─────────────────
+    service_kernel_modules:
+      - overlay
+      - br_netfilter
+      - nf_conntrack

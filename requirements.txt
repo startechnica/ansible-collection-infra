@@ -1,0 +1,55 @@
+# Python package dependencies for the controller.
+# Install: pip install -r requirements.txt
+#
+# For Ansible collection deps, see requirements.yml (ansible-galaxy).
+
+# ── VMware (community.vmware / vmware.vmware) ──
+# pyvmomi: SOAP SDK used by community.vmware modules.
+#   >= 8.0.3 required for Python 3.12+ (older versions use the removed ssl.wrap_socket).
+# vmware-vcenter: REST SDK used by vmware.vmware modules. Pulls in
+# vmware-vapi-common-client, vmware-vapi-runtime, and the com.vmware.* namespace
+# packages as transitive deps. DON'T install the full vsphere-automation-sdk-python
+# requirements.txt — its nsx-python-sdk pin has a broken upstream tarball.
+pyvmomi>=9.0.0.0
+vmware-vcenter>=9.0.0.0
+# vmware.vapi.l10n.bundle still imports pkg_resources, which was removed from
+# setuptools 81.0.0. Pin below that until VMware fixes the SDK.
+setuptools>=68.0.0,<81
+
+# ── TLS / certs (community.crypto) ──
+# Ceiling here is dictated by VMware's SDK: vmware-vcenter 9.0.0.0 pins
+# vmware-vapi-runtime==2.61.2, which caps pyOpenSSL<24.3.0. pyOpenSSL 24.2.x
+# in turn caps cryptography<44. Bumping past these caps causes import-time
+# failures like "module 'lib' has no attribute 'X509_V_FLAG_NOTIFY_POLICY'"
+# (that constant was removed in cryptography 46+). Bump these only after
+# vmware-vapi-runtime relaxes its pyOpenSSL pin.
+cryptography>=42.0.0,<44
+pyOpenSSL>=24.0.0,<24.3.0
+
+# ── PostgreSQL (community.postgresql) ──
+# Also installed host-side by the patroni role's preflight; listed here for
+# controller-side use (e.g. running postgresql_query via delegate_to: localhost).
+psycopg2-binary>=2.9.12
+
+# ── MongoDB (community.mongodb) ──
+pymongo>=4.17.0
+
+# ── Docker (community.docker) ──
+docker>=7.1.0
+
+# ── HTTP / REST (community.vmware REST tasks, netbox.netbox, most uri calls) ──
+requests>=2.33.1
+requests-toolbelt>=1.0.0
+
+# ── NetBox (netbox.netbox collection) ──
+pynetbox>=7.6.1
+
+# ── MikroTik RouterOS (community.routeros) ──
+librouteros>=4.0.1
+
+# ── Utilities ──
+jmespath>=1.1.0
+netaddr>=1.3.0
+# passlib: required by Ansible's `password_hash` filter (used in Butane/Ignition
+# templates to render hashed passwords for FCOS core user).
+passlib>=1.7.4

@@ -1,0 +1,36 @@
+---
+
+debug: false
+# Opt-in — adds cluster VM IPs (and VIP, if set) to a named entry in
+# MikroTik RouterOS `/ip firewall address-list`. Lets you write firewall
+# rules on the MikroTik side that reference {{ routeros_address_list }}
+# instead of individual IPs.
+
+routeros_enabled: false
+
+# RouterOS API connection — typically sourced from vault.
+routeros_host: ""
+routeros_user: ""
+routeros_password: ""
+routeros_port: 0               # 0 = module default (8729 TLS, 8728 plain)
+routeros_tls: true
+routeros_validate_certs: false
+
+# Name of the address-list to populate on the MikroTik.
+# Default matches the collection namespace so multiple clusters can share
+# one RouterOS without collision as long as each sets its own list name.
+routeros_address_list: startechnica
+routeros_address_list_comment: "Managed by startechnica.infra"
+
+# What to populate.
+routeros_include_instances: true     # every instances[] entry with an ipv4
+routeros_include_vip: true     # the `patroni_vip_address` var, if non-empty
+
+# Extra ad-hoc entries. Each: { address: IP-or-CIDR, comment: optional }
+routeros_extra_entries: []
+
+# Remove entries that exist on the MikroTik under our list name but are no
+# longer in our desired set (e.g. a node dropped from instances). Scope is strictly
+# limited to `routeros_address_list` — entries in other lists are not touched.
+# Default off for safety — opt in once you're sure the role owns the list.
+routeros_prune_stale: false

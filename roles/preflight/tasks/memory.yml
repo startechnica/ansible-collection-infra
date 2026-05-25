@@ -1,0 +1,23 @@
+---
+# RAM sanity vs container request. Caller (mongodb / patroni) sets
+# container_mem_request_mb to its expected aggregate; we warn if the host
+# can't realistically hold it.
+
+- name: Check available RAM
+  ansible.builtin.debug:
+    msg: >-
+      Total RAM: {{ ansible_memtotal_mb }}MB —
+      container requests: {{ container_mem_request_mb }}MB
+  when:
+    - ansible_memtotal_mb is defined
+    - container_mem_request_mb is defined
+
+- name: Warn if RAM insufficient
+  ansible.builtin.debug:
+    msg: >-
+      WARNING: container memory requests ({{ container_mem_request_mb }}MB)
+      exceed available RAM ({{ ansible_memtotal_mb }}MB). Expect OOM kills.
+  when:
+    - ansible_memtotal_mb is defined
+    - container_mem_request_mb is defined
+    - (container_mem_request_mb | int) > (ansible_memtotal_mb | int)

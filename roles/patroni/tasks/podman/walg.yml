@@ -1,0 +1,12 @@
+---
+# Build the local wal-g image (podman). Counterpart to vip_manager.yml.
+# Caller (podman/deploy.yml) gates on `walg_enabled`.
+
+- name: Build wal-g image (podman)
+  containers.podman.podman_image:
+    name: "localhost/wal-g"
+    tag: "pg-{{ walg_version }}"
+    path: "{{ walg_dir }}"
+    build:
+      format: oci
+      force_rm: true

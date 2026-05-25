@@ -1,0 +1,28 @@
+---
+# ─── MongoDB: On-Demand Backup ──────────────────────────────────────────────
+#
+# Runs mongodump against the cluster and stores the backup locally.
+# Old backups beyond mongodb_backup_retain_days are pruned automatically.
+# If S3 is configured (backup_s3_endpoint), the backup is also uploaded.
+#
+# Usage:
+#   ansible-playbook playbooks/mongodb/backup.yml -i inventories/<your-inventory>.yml
+
+- name: Setup mongodb hosts
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - ansible.builtin.include_tasks: _setup.yml
+
+- name: MongoDB backup
+  hosts: mongodb_nodes
+  become: true
+  gather_facts: true
+  pre_tasks:
+    - ansible.builtin.include_role:
+        name: common
+        tasks_from: inherit_localhost_vars
+  roles:
+    - role: mongodb
+      vars:
+        mongodb_action: backup

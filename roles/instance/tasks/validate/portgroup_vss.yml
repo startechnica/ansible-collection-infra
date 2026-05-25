@@ -1,0 +1,53 @@
+---
+# Standard portgroup discovery — used when targeting a standalone ESXi
+# host (no instance_cluster_name set). Standard portgroups live on a
+# vSphere Standard Switch (vSS) attached to a single host, so we query
+# them per-host via vmware_portgroup_info.
+#
+# Included by validate/network.yml as a single `include_tasks` so the
+# whole branch can short-circuit with a single skipping line in the
+# runner output when the cluster path is taken instead.
+
+- name: Get standard portgroups from ESXi host
+  community.vmware.vmware_portgroup_info:
+    hostname: "{{ vcenter_connect.hostname }}"
+    username: "{{ vcenter_connect.username }}"
+    password: "{{ vcenter_connect.password }}"
+    validate_certs: "{{ vcenter_connect.validate_certs }}"
+    esxi_hostname: "{{ vsphere_esxi_hostname }}"
+  delegate_to: localhost
+  run_once: true
+  register: portgroup_standard_info
+  ignore_errors: true
+
+# Without this, a vCenter API failure (auth, network, SSL) on the
+# standard-portgroup query above is silently turned into "no portgroups
+# found" by `default({})` below — every NIC's portgroup ends up in
+# missing_networks and the user gets an opaque "portgroup not found"
+# error.
+- name: Assert standard portgroup query succeeded
+  ansible.builtin.assert:
+    that:
+      - not (portgroup_standard_info.failed | default(false))
+    fail_msg: >-
+      Could not list standard portgroups on ESXi host '{{ vsphere_esxi_hostname }}':
+      {{ portgroup_standard_info.msg | default('unknown error') }}
+    success_msg: >-
+      Standard portgroup query succeeded
+      ({{ portgroup_standard_info.hosts_portgroup_info | default({}) | length }} host[s] returned)
+    quiet: true
+  run_once: true
+
+- name: Normalize standard portgroup list
+  ansible.builtin.set_fact:
+    available_networks: >-
+      {{
+        portgroup_standard_info.hosts_portgroup_info
+        | default({})
+        | dict2items
+        | map(attribute='value')
+        | flatten
+        | map(attribute='portgroup')
+        | list
+      }}
+  run_once: true

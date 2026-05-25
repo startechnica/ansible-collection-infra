@@ -1,0 +1,29 @@
+#!/bin/bash
+# {{ ansible_managed }}
+# Upload a mongodump backup to S3 via containerised mc (no host mc dep).
+set -euo pipefail
+
+ARCHIVE="{{ _backup.backup_path }}.tar.gz"
+OBJECT_NAME="{{ _backup.backup_name }}.tar.gz"
+
+# Pack the mongodump tree
+tar -czf "$ARCHIVE" -C "{{ mongodb_backup_dir }}" "{{ _backup.backup_name }}"
+
+# Run mc in a throwaway container. Mount the archive read-only; pass creds via env.
+docker run --rm \
+  -v "$ARCHIVE:/backup/${OBJECT_NAME}:ro" \
+  -e MC_HOST_s3="{{ s3_endpoint | regex_replace('^(https?://)', '\\1' ~ s3_access_key ~ ':' ~ s3_secret_key ~ '@') }}" \
+  {{ s3_client_image }} \
+  cp "/backup/${OBJECT_NAME}" "s3/{{ s3_bucket }}/{{ s3_prefix }}/${OBJECT_NAME}"
+
+{% if (s3_retain_days | int) > 0 %}
+# Prune remote objects older than retention window
+docker run --rm \
+  -e MC_HOST_s3="{{ s3_endpoint | regex_replace('^(https?://)', '\\1' ~ s3_access_key ~ ':' ~ s3_secret_key ~ '@') }}" \
+  {{ s3_client_image }} \
+  rm --recursive --force --older-than "{{ s3_retain_days }}d" \
+  "s3/{{ s3_bucket }}/{{ s3_prefix }}/"
+{% endif %}
+
+rm -f "$ARCHIVE"
+echo "S3 upload complete: s3://{{ s3_bucket }}/{{ s3_prefix }}/${OBJECT_NAME}"

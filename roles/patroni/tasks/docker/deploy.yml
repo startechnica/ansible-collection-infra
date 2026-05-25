@@ -1,0 +1,52 @@
+---
+# Docker Compose deploy path. Mirrors what tasks/docker_compose.yml +
+# tasks/start.yml used to do, consolidated into one file with clear
+# ordering: render compose → build local images (vip-manager OR
+# keepalived) → up → register services in NetBox.
+
+- name: Render docker-compose.yml
+  ansible.builtin.template:
+    src: compose/docker-compose.yml.j2
+    dest: "{{ patroni_dir }}/docker-compose.yml"
+    mode: "0644"
+  notify: restart stack
+
+- name: Build vip-manager image
+  ansible.builtin.include_tasks: vip_manager.yml
+  when:
+    - patroni_vip_enabled
+    - use_vip_manager
+
+- name: Build keepalived image
+  ansible.builtin.include_tasks: keepalived.yml
+  when:
+    - patroni_vip_enabled
+    - not use_vip_manager
+
+- name: Build wal-g image (no upstream container published)
+  ansible.builtin.include_tasks: walg.yml
+  when:
+    - walg_enabled
+    - walg_build_local
+
+- name: Pull prebuilt wal-g image
+  community.docker.docker_image:
+    name: "{{ walg_image }}"
+    source: pull
+  when:
+    - walg_enabled
+    - not walg_build_local
+
+- name: Start the stack (docker compose up)
+  community.docker.docker_compose_v2:
+    project_src: "{{ patroni_dir }}"
+    state: present
+    # Tear down services that were dropped from the rendered compose
+    # (e.g. walg-init/walg-cron when flipping walg_enabled true → false).
+    remove_orphans: true
+
+- name: Restore SELinux contexts (no-op on non-SELinux hosts)
+  ansible.builtin.include_tasks: ../shared/selinux_relabel.yml
+
+- name: Publish service ports + register in NetBox
+  ansible.builtin.include_tasks: ../shared/netbox_register_services.yml

@@ -1,0 +1,54 @@
+#!/usr/sbin/nft -f
+# Managed by Ansible firewall role — do not edit by hand.
+#
+# Single `inet startechnica` table that coexists with docker's own
+# nftables tables (docker uses family `ip` for nat + filter). We delete
+# and recreate just our table on each apply, leaving docker untouched.
+
+table inet startechnica
+delete table inet startechnica
+
+table inet startechnica {
+    chain input {
+        type filter hook input priority filter; policy {{ 'drop' if firewall_default_incoming == 'deny' else 'accept' }};
+
+        # Loopback always allowed
+        iif lo accept
+
+        # Established / related connections
+        ct state established,related accept
+        ct state invalid drop
+
+        # ICMP echo (ping)
+        ip protocol icmp icmp type echo-request accept
+        ip6 nexthdr ipv6-icmp icmpv6 type echo-request accept
+{% for src in _fw_trusted_sources | default([]) %}
+
+        # Trusted source: blanket allow
+        ip saddr {{ src }} accept comment "trusted source {{ src }}"
+{% endfor %}
+{% for rule in _fw_rules %}
+{%   set _proto = rule.protocol | default('tcp') %}
+{%   set _port  = rule.port | string | replace(':', '-') %}
+{%   set _src   = rule.source | default('') | string %}
+{%   set _label = (rule.comment | default(rule.name | default((_proto ~ '/' ~ _port)))) | replace('"', "'") %}
+
+{%   if _src | length > 0 %}
+        ip saddr {{ _src }} {{ _proto }} dport {{ _port }} accept comment "{{ _label }}"
+{%   else %}
+        {{ _proto }} dport {{ _port }} accept comment "{{ _label }}"
+{%   endif %}
+{% endfor %}
+    }
+
+    chain forward {
+        # Docker manages its own forward chain in `ip filter` (priority 0)
+        # and adds DOCKER-USER for operator overrides. Keep policy=accept
+        # here so our hook doesn't preempt container traffic.
+        type filter hook forward priority filter; policy accept;
+    }
+
+    chain output {
+        type filter hook output priority filter; policy {{ 'accept' if firewall_default_outgoing == 'allow' else 'drop' }};
+    }
+}

@@ -1,0 +1,74 @@
+---
+- name: Check MongoDB cluster status
+  mongodb_status:
+    containers:
+      - mongodb-mongod
+      - mongodb-configsvr
+      - mongodb-mongos
+      - mongodb-exporter
+    replica_sets:
+      - name: "{{ mongodb_shard_replset }}"
+        port: "{{ mongodb_mongod_exec_port }}"
+        type: shard
+      - name: "{{ mongodb_config_replset }}"
+        port: "{{ mongodb_configsvr_exec_port }}"
+        type: configsvr
+    tls_certfile: /etc/mongo/ssl/healthcheck.pem
+    tls_cafile: /etc/mongo/ssl/ca.pem
+    mongodb_tls_dir: "{{ mongodb_tls_dir }}"
+  register: _status
+
+- name: Show container details
+  ansible.builtin.debug:
+    msg: "{{ item.key }}: {{ item.value }}"
+  loop: "{{ _status.containers | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+
+- name: Show replica set details
+  ansible.builtin.debug:
+    msg: "{{ item.key }}: primary={{ item.value.primary | default('none') }}, members={{ item.value.members | default(0) }}"
+  loop: "{{ _status.replica_sets | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  run_once: true
+
+- name: Show certificate expiry
+  ansible.builtin.debug:
+    msg: "{{ item.key }}: expires={{ item.value.expires | default('unknown') }}, days_remaining={{ item.value.days_remaining | default('unknown') }}"
+  loop: "{{ _status.certificates | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  when: _status.certificates | length > 0
+
+# ── Structured health fact (for monitoring / scripting consumers) ────────────
+
+- name: Publish mongodb_cluster_health fact
+  ansible.builtin.set_fact:
+    mongodb_cluster_health:
+      timestamp: "{{ ansible_date_time.iso8601 | default(lookup('pipe', 'date -u +%FT%TZ')) }}"
+      cluster_type: "{{ mongodb_cluster_type }}"
+      containers: "{{ _status.containers | default({}) }}"
+      replica_sets: "{{ _status.replica_sets | default({}) }}"
+      certificates: "{{ _status.certificates | default({}) }}"
+      overall: >-
+        {{
+          'healthy' if (
+            (_status.containers | default({}) | dict2items
+             | rejectattr('value.state', 'defined')
+             | list | length == 0)
+            and (_status.replica_sets | default({}) | dict2items
+                 | selectattr('value.primary', 'defined')
+                 | list | length == (_status.replica_sets | default({}) | length))
+          )
+          else 'degraded'
+        }}
+
+- name: Display structured health summary
+  ansible.builtin.debug:
+    msg:
+      - "Type:     {{ mongodb_cluster_health.cluster_type }}"
+      - "RS:       {{ mongodb_cluster_health.replica_sets | dict2items | map(attribute='key') | list }}"
+      - "Primary:  {{ mongodb_cluster_health.replica_sets | dict2items | map(attribute='value.primary') | list }}"
+      - "Overall:  {{ mongodb_cluster_health.overall }}"
+  run_once: true

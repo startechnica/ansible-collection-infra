@@ -1,0 +1,214 @@
+---
+# ─── MongoDB Cluster Role ────────────────────────────────────────────────────
+#
+# Actions (controlled by mongodb_action variable, default: provision):
+#   provision    — Full provisioning (default, runs all setup tasks)
+#   init         — Cluster initialization only (rs.initiate, createUser, addShard)
+#   backup       — Run mongodump backup
+#   restore      — Restore from mongodump (-e restore_path=...)
+#   renew-certs  — Regenerate member certificates
+#   upgrade      — Rolling MongoDB version upgrade (-e mongodb_image_tag_new=...)
+#   status       — Show cluster health and cert expiry
+#   uninstall    — Remove all MongoDB provisioning
+#
+# Usage:
+#   # Full provisioning (default):
+#   ansible-playbook ... (no extra var needed)
+#
+#   # Specific action:
+#   ansible-playbook ... -e mongodb_action=status
+#   ansible-playbook ... -e mongodb_action=backup
+#   ansible-playbook ... -e mongodb_action=uninstall -e mongodb_destroy_prune=true
+#   ansible-playbook ... -e mongodb_action=restore -e restore_path=/opt/mongodb/backups/...
+#   ansible-playbook ... -e mongodb_action=upgrade -e mongodb_image_tag_new=8.2.7
+
+# ── Skip if disabled ──
+
+- name: Skip MongoDB role (mongodb_enabled is false)
+  ansible.builtin.debug:
+    msg: "MongoDB role is disabled (mongodb_enabled={{ mongodb_enabled }}). Skipping."
+  when: not (mongodb_enabled | bool)
+
+- name: End role if disabled
+  ansible.builtin.meta: end_role
+  when: not (mongodb_enabled | bool)
+
+# ── Skip if the selected container engine isn't actually installed ──
+# `container_engine` is the authoritative selector; docker_install and
+# podman_enabled are independent install/enable toggles. If the
+# selected engine's toggle is off, there's nothing to dispatch against
+# — bail gracefully instead of trying to start containers on a runtime
+# that isn't there. See roles/instance/defaults/main.yml truth table.
+#
+# Exception: uninstall always runs. It tears down host-level state
+# (sysctl, ulimits, user/group, data dir) that may exist independently
+# of the container runtime, and the engine-specific container
+# teardown branches inside uninstall.yml are themselves gated on
+# container_engine — they no-op when the runtime isn't there.
+
+- name: Skip MongoDB role (selected container_engine has no installed runtime)
+  ansible.builtin.debug:
+    msg: >-
+      container_engine={{ container_engine | default('docker') }} but
+      {{ 'docker_install' if container_engine | default('docker') == 'docker' else 'podman_enabled' }}=false
+      on this host. Skipping mongodb role.
+  when:
+    - mongodb_action | default('provision') != 'uninstall'
+    - (container_engine | default('docker')) == 'docker' and not (docker_install | default(false) | bool)
+      or (container_engine | default('docker')) == 'podman' and not (podman_enabled | default(false) | bool)
+
+- name: End role if selected container engine is inactive
+  ansible.builtin.meta: end_role
+  when:
+    - mongodb_action | default('provision') != 'uninstall'
+    - (container_engine | default('docker')) == 'docker' and not (docker_install | default(false) | bool)
+      or (container_engine | default('docker')) == 'podman' and not (podman_enabled | default(false) | bool)
+
+# ── Derived variables (always available) ──
+
+# Snapshot the cluster topology at a known point. Inventory-derived
+# (groups['mongodb_nodes'] + hostvars), so it's left as set_fact rather
+# than moved to vars/main.yml — vars/ would lazily re-evaluate on every
+# reference and would silently resolve to [] if anything ran before
+# the group was populated. Other computed values that depend only on
+# defaults (mongodb_image, *_exec_port) live in vars/main.yml.
+- name: Snapshot mongodb_nodes from inventory
+  ansible.builtin.set_fact:
+    mongodb_nodes: >-
+      {%- set nodes = [] -%}
+      {%- for h in groups['mongodb_nodes'] -%}
+        {%- set node = {'ipv4': hostvars[h].ansible_host | split('/') | first, 'name': h} -%}
+        {%- if hostvars[h].ansible_host_ipv6 is defined -%}
+          {%- set node = node | combine({'ipv6': hostvars[h].ansible_host_ipv6 | split('/') | first}) -%}
+        {%- endif -%}
+        {%- if hostvars[h].netbox_id is defined -%}
+          {%- set node = node | combine({'netbox_id': hostvars[h].netbox_id}) -%}
+        {%- endif -%}
+        {%- set _ = nodes.append(node) -%}
+      {%- endfor -%}
+      {{ nodes }}
+
+# ── Resolve admin password (auto-generate if empty) ──
+
+- name: Resolve mongodb_admin_password
+  ansible.builtin.include_tasks: passwords.yml
+  when: mongodb_action | default('provision') in ['provision', 'init', 'backup', 'restore', 'status']
+
+# ── Preflight role (system + docker + venv) ──
+# Replaces the meta/main.yml dependency. Skipped on uninstall/status/etc.
+# so we don't burn 30s on kernel module / time sync / ulimit checks just
+# to tear things down or read state.
+- name: Run preflight role (system + docker + venv)
+  ansible.builtin.include_role:
+    name: preflight
+  vars:
+    container_mem_request_mb: >-
+      {{ mongod_mem_limit_mb + (configsvr_mem_limit_mb + mongos_mem_limit_mb if mongodb_cluster_type == 'sharded' else 0) }}
+  when: >-
+    mongodb_action | default('provision') in
+    ['provision', 'init', 'backup', 'restore', 'renew-certs', 'upgrade']
+
+# ── Provisioning (default) ──
+
+- name: Preflight validation
+  ansible.builtin.include_tasks: preflight.yml
+  when: mongodb_action | default('provision') in ['provision', 'init', 'renew-certs']
+
+- name: Setup system user and group
+  ansible.builtin.include_tasks: system_user.yml
+  when: mongodb_action | default('provision') == 'provision'
+
+- name: Create data directories
+  ansible.builtin.include_tasks: directories.yml
+  when: mongodb_action | default('provision') == 'provision'
+
+- name: Generate SSL/TLS certificates
+  ansible.builtin.include_tasks: certificates.yml
+  when: mongodb_action | default('provision') == 'provision'
+
+- name: Configure ulimits
+  ansible.builtin.include_tasks: ulimits.yml
+  when: mongodb_action | default('provision') == 'provision'
+
+- name: Configure kernel parameters
+  ansible.builtin.include_tasks: sysctl.yml
+  when: mongodb_action | default('provision') == 'provision'
+
+- name: Disable Transparent HugePages
+  ansible.builtin.include_tasks: thp.yml
+  when: mongodb_action | default('provision') == 'provision'
+
+# Container runtime dispatch. `container_engine` is the authoritative
+# selector. The skip-all guard at the top of this file already
+# end_roles when the selected engine's install/enable toggle is off,
+# so by the time we reach the dispatch we know the engine is active.
+#
+#   container_engine | path
+#   -----------------|------
+#   docker           | docker.yml + docker_compose.yml
+#                      (cloud-init: geerlingguy.docker;
+#                       ignition FCOS: docker-ce layered via rpm-ostree)
+#   podman           | quadlet.yml
+#                      (.container units in /etc/containers/systemd/
+#                       on Network=host; ignition only)
+#
+# Cloud-init + podman is intentionally NOT supported — that path uses
+# geerlingguy.docker and there's no podman alternative wired up.
+# Podman without Quadlet is also not supported: on FCOS we want
+# container lifecycle integrated with systemd (boot persistence,
+# journald logging, dependency ordering), and Quadlet is the
+# upstream-recommended way to do that.
+- name: Configure Docker daemon and network (docker)
+  ansible.builtin.include_tasks: docker.yml
+  when:
+    - mongodb_action | default('provision') == 'provision'
+    - container_engine == 'docker'
+
+- name: Deploy and start Docker Compose (docker)
+  ansible.builtin.include_tasks: docker_compose.yml
+  when:
+    - mongodb_action | default('provision') == 'provision'
+    - container_engine == 'docker'
+
+- name: Render Podman Quadlets and start services (podman)
+  ansible.builtin.include_tasks: quadlet.yml
+  when:
+    - mongodb_action | default('provision') == 'provision'
+    - container_engine == 'podman'
+
+- name: Initialize cluster (replica sets, admin user, shards)
+  ansible.builtin.include_tasks: init_cluster.yml
+  when:
+    - mongodb_action | default('provision') in ['provision', 'init']
+
+# ── On-demand actions ──
+
+- name: Run backup
+  ansible.builtin.include_tasks: backup.yml
+  when:
+    - mongodb_action | default('provision') == 'backup'
+
+- name: Restore from backup
+  ansible.builtin.include_tasks: restore.yml
+  when:
+    - mongodb_action | default('provision') == 'restore'
+
+- name: Renew member certificates
+  ansible.builtin.include_tasks: renew_certs.yml
+  when:
+    - mongodb_action | default('provision') == 'renew-certs'
+
+- name: Rolling upgrade
+  ansible.builtin.include_tasks: rolling_upgrade.yml
+  when:
+    - mongodb_action | default('provision') == 'upgrade'
+
+- name: Show cluster status
+  ansible.builtin.include_tasks: status.yml
+  when: 
+    - mongodb_action | default('provision') == 'status'
+
+- name: Uninstall MongoDB cluster
+  ansible.builtin.include_tasks: uninstall.yml
+  when: 
+    - mongodb_action | default('provision') == 'uninstall'

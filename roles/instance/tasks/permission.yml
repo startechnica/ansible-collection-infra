@@ -1,0 +1,33 @@
+---
+- name: Check VM permissions
+  community.vmware.vmware_object_role_permission_info:
+    hostname: "{{ vcenter_connect.hostname }}"
+    username: "{{ vcenter_connect.username }}"
+    password: "{{ vcenter_connect.password }}"
+    validate_certs: "{{ vcenter_connect.validate_certs }}"
+    object_name: "{{ item.name }}"
+    object_type: VirtualMachine
+  loop: "{{ instances }}"
+  loop_control:
+    label: "{{ item.name }}"
+  delegate_to: localhost
+  register: perm_info
+
+- name: Assign permission if missing
+  community.vmware.vmware_object_role_permission:
+    hostname: "{{ vcenter_connect.hostname }}"
+    username: "{{ vcenter_connect.username }}"
+    password: "{{ vcenter_connect.password }}"
+    validate_certs: "{{ vcenter_connect.validate_certs }}"
+    object_name: "{{ item.1.name }}"
+    object_type: VirtualMachine
+    principal: "{{ vcenter_principal_user }}"
+    role: "{{ vcenter_permission_role }}"
+    propagate: "{{ vcenter_permission_propagate }}"
+    is_group: "{{ vcenter_principal_is_group }}"
+    state: present
+  loop: "{{ perm_info.results | zip(instances) | list }}"
+  loop_control:
+    label: "{{ item.1.name }}"
+  when: item.0.permissions | selectattr('principal','equalto',vcenter_principal_user) | list | length == 0
+  delegate_to: localhost

@@ -1,0 +1,65 @@
+instance-id: {{ item.name }}
+{% if instance_domain_name | default('') | length > 0 %}
+local-hostname: {{ item.hostname }}.{{ instance_domain_name }}
+{% else %}
+local-hostname: {{ item.hostname }}
+{% endif %}
+{#
+  Cloud-init network-config v2 (netplan flavor). Loop over the per-VM
+  `networks:` list, merging `instance_networks` defaults into each entry.
+
+  Interface naming: VMware vmxnet3 NICs in EFI mode appear as ens192,
+  ens224, ens256, ens288, … (PCI slot offset = +32 per NIC). Override
+  per-NIC with `device: <name>` if your firmware/HW combo differs.
+
+  Default route + DNS land on the first NIC only — multiple default
+  routes would conflict. For multi-homed hosts where a non-first NIC
+  should carry the default, set `gateway4`/`gateway6` only on that NIC
+  and leave the others without (or use policy routing post-boot).
+#}
+network:
+  version: 2
+  ethernets:
+{% for nic in item.networks %}
+{%   set _eff = (instance_networks | default({})) | combine(nic) %}
+{%   set _ifname = _eff.device | default('ens' ~ (192 + loop.index0 * 32) | string) %}
+{%   set _static4 = _eff.ipv4 is defined and _eff.ipv4 != 'dhcp' %}
+{%   set _static6 = _eff.ipv6 is defined and _eff.ipv6 != 'dhcp6' %}
+    {{ _ifname }}:
+{%   if _eff.ipv4 | default('') == 'dhcp' %}
+      dhcp4: true
+{%   endif %}
+{%   if _eff.ipv6 | default('') == 'dhcp6' %}
+      dhcp6: true
+{%   endif %}
+{%   if _static4 or _static6 %}
+      addresses:
+{%     if _static4 %}
+        - {{ _eff.ipv4 if '/' in (_eff.ipv4 | string) else (_eff.ipv4 ~ '/24') }}
+{%     endif %}
+{%     if _static6 %}
+        - {{ _eff.ipv6 if '/' in (_eff.ipv6 | string) else (_eff.ipv6 ~ '/64') }}
+{%     endif %}
+{%   endif %}
+{%   if loop.first and (_eff.gateway4 is defined or _eff.gateway6 is defined) %}
+      routes:
+{%     if _eff.gateway4 is defined %}
+        - to: default
+          via: {{ _eff.gateway4 }}
+{%     endif %}
+{%     if _eff.gateway6 is defined %}
+        - to: "::/0"
+          via: {{ _eff.gateway6 }}
+{%     endif %}
+{%   endif %}
+{%   if loop.first and (instance_dns_servers | default([]) | length > 0) %}
+      nameservers:
+        addresses:
+{%     for dns in instance_dns_servers %}
+          - {{ dns }}
+{%     endfor %}
+{%   endif %}
+{%   if _eff.mtu is defined %}
+      mtu: {{ _eff.mtu | int }}
+{%   endif %}
+{% endfor %}

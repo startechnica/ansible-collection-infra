@@ -1,0 +1,101 @@
+---
+# ─── Full Patroni Deployment: NetBox → VMs → Docker → Deploy Cluster ─────────
+#
+# Single playbook that runs all stages in order:
+#   1. Query NetBox for VM definitions (optional)
+#   2. Provision VMs on vCenter + NetBox register
+#   3. Build dynamic host group
+#   4. Install Docker
+#   5. Deploy Patroni HA PostgreSQL cluster
+#
+# Usage:
+#   ansible-playbook playbooks/deploy_patroni.yml \
+#     -i inventories/d3trans.yml --ask-vault-pass
+#
+# Skip VM provisioning (docker + cluster only):
+#   ansible-playbook playbooks/deploy_patroni.yml \
+#     -i inventories/d3trans.yml --ask-vault-pass --tags patroni
+#
+# Skip Patroni (provision only):
+#   ansible-playbook playbooks/deploy_patroni.yml \
+#     -i inventories/d3trans.yml --ask-vault-pass --tags provision
+
+# ── Stage 1: Gather facts from NetBox (optional) ─────────────────────────────
+
+- name: "Stage 1: Query NetBox for VMs"
+  hosts: localhost
+  gather_facts: false
+  tags: [netbox, provision, patroni]
+  roles:
+    - role: netbox_lookup
+      when:
+        - netbox_enabled | default(false) | bool
+        - netbox_lookup_enabled | default(true) | bool
+
+# ── Stage 2: Provision VMs on vCenter ─────────────────────────────────────────
+
+- name: "Stage 2: Provision VMs on vCenter"
+  hosts: localhost
+  gather_facts: true
+  tags: [provision]
+  collections:
+    - community.vmware
+    - netbox.netbox
+  roles:
+    - role: instance
+    - role: netbox_register
+      when:
+        - netbox_enabled | default(false) | bool
+        - netbox_connect.token | default('') | length > 0
+
+# ── Stage 3: Build patroni_nodes group from instances ──────────────────────────────
+
+- name: "Stage 3: Build patroni_nodes host group"
+  hosts: localhost
+  gather_facts: false
+  tags: [patroni]
+  tasks:
+    - ansible.builtin.include_tasks: patroni/_setup.yml
+
+# ── Stage 4: Install Docker ──────────────────────────────────────────────────
+
+- name: "Stage 4: Install Docker"
+  hosts: patroni_nodes
+  become: true
+  # Defer fact-gathering: cloud-init may still be holding the dpkg lock
+  # / blocking new sudo sessions. wait_for_cloud_init runs as `raw:` so
+  # it doesn't need become or Python — once it returns, fact-gather and
+  # the docker role are safe.
+  gather_facts: false
+  tags: [patroni]
+  pre_tasks:
+    - name: Wait for cloud-init to finish
+      ansible.builtin.include_role:
+        name: common
+        tasks_from: wait_for_cloud_init
+
+    - name: Gather facts
+      ansible.builtin.setup:
+
+    - name: Inherit localhost vars
+      ansible.builtin.include_role:
+        name: common
+        tasks_from: inherit_localhost_vars
+  roles:
+    - role: geerlingguy.docker
+      when: docker_install | default(false) | bool
+
+# ── Stage 5: Deploy Patroni HA PostgreSQL Cluster ─────────────────────────────
+
+- name: "Stage 5: Deploy Patroni cluster"
+  hosts: patroni_nodes
+  become: true
+  gather_facts: true
+  tags: [patroni]
+  pre_tasks:
+    - name: Inherit localhost vars
+      ansible.builtin.include_role:
+        name: common
+        tasks_from: inherit_localhost_vars
+  roles:
+    - role: patroni

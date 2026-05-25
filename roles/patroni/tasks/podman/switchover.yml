@@ -1,0 +1,65 @@
+---
+# Switchover primary to a target node (podman).
+# Requires extra var: target_node=<node_name>
+
+- name: Validate target_node is specified
+  ansible.builtin.assert:
+    that:
+      - target_node | length > 0
+    fail_msg: "Specify target node: -e target_node=<node_name>"
+    success_msg: "Switchover target: {{ target_node }}"
+
+- name: Show current cluster state
+  containers.podman.podman_container_exec:
+    name: patroni
+    command: patronictl -c /etc/patroni/patroni.yml list
+  register: pre_state
+  changed_when: false
+
+- name: Display current state
+  ansible.builtin.debug:
+    msg: "{{ pre_state.stdout_lines }}"
+
+- name: Get current leader (JSON)
+  containers.podman.podman_container_exec:
+    name: patroni
+    command: patronictl -c /etc/patroni/patroni.yml list -f json
+  register: leader_json
+  changed_when: false
+
+- name: Parse leader name
+  ansible.builtin.set_fact:
+    current_leader: "{{ (leader_json.stdout | from_json | selectattr('Role', 'equalto', 'Leader') | first).Member }}"
+  failed_when: current_leader | default('') == ''
+
+- name: Skip if target is already leader
+  ansible.builtin.debug:
+    msg: "{{ target_node }} is already the leader. Nothing to do."
+  when: current_leader == target_node
+
+- name: Execute switchover
+  when: current_leader != target_node
+  containers.podman.podman_container_exec:
+    name: patroni
+    command: >
+      patronictl -c /etc/patroni/patroni.yml switchover
+      --leader {{ current_leader }} --candidate {{ target_node }} --force
+  register: switchover_result
+
+- name: Wait for switchover
+  ansible.builtin.pause:
+    seconds: 5
+  when: current_leader != target_node
+
+- name: Show post-switchover state
+  containers.podman.podman_container_exec:
+    name: patroni
+    command: patronictl -c /etc/patroni/patroni.yml list
+  register: post_state
+  changed_when: false
+  when: current_leader != target_node
+
+- name: Display post-switchover state
+  ansible.builtin.debug:
+    msg: "{{ post_state.stdout_lines }}"
+  when: current_leader != target_node

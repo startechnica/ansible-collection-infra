@@ -1,0 +1,19 @@
+# {{ ansible_managed }}
+ip: {{ patroni_vip_address }}
+netmask: {{ patroni_vip_mask }}
+interface: {{ patroni_vip_iface }}
+trigger-key: /service/{{ patroni_scope }}/leader
+trigger-value: {{ node_name }}
+manager-type: basic
+dcs-type: etcd
+dcs-endpoints:
+{% for ip in node_ips %}
+  - https://{{ ip }}:{{ etcd_client_port }}
+{% endfor %}
+etcd-ca-file: /etc/certs/ca.crt
+etcd-cert-file: /etc/certs/vip-manager.crt
+etcd-key-file: /etc/certs/vip-manager.key
+interval: 1000
+retry-after: 5000
+retry-num: 3
+verbose: false

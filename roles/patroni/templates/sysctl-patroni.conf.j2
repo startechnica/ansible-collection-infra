@@ -1,0 +1,32 @@
+# Patroni / PostgreSQL OS tuning — managed by Ansible
+vm.swappiness = 1
+vm.dirty_ratio = 10
+vm.dirty_background_ratio = 3
+
+{% if ansible_swaptotal_mb | int > 0 %}
+vm.overcommit_ratio = 80
+vm.overcommit_memory = 2
+{% endif %}
+
+kernel.shmmax = {{ (ansible_memtotal_mb * 1024 * 1024 * 0.75) | int }}
+kernel.shmall = {{ ((ansible_memtotal_mb * 1024 * 1024 * 0.75) / 4096) | int }}
+
+net.core.somaxconn = 4096
+net.ipv4.tcp_keepalive_time = 60
+net.ipv4.tcp_keepalive_intvl = 10
+net.ipv4.tcp_keepalive_probes = 6
+net.ipv4.ip_nonlocal_bind = 1
+net.ipv4.ip_local_port_range = 1024 65535
+
+# Reserved so the kernel never picks these as ephemeral source ports —
+# otherwise a busy outbound client on this host (e.g. a co-located
+# mongos) can grab one of our service ports and block the matching
+# daemon from binding on restart.
+net.ipv4.ip_local_reserved_ports = {{
+  ([haproxy_primary_port, haproxy_replicas_port,
+    haproxy_stats_port | default(7000),
+    pgbouncer_port | default(6543),
+    patroni_api_port, postgresql_port,
+    etcd_client_port | default(2379),
+    etcd_peer_port | default(2380)]
+   | map('string') | list) | join(',') }}

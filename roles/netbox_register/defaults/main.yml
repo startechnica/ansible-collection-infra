@@ -1,0 +1,126 @@
+---
+
+debug: false
+## @section NetBox VM Registration Parameters
+## @description Configuration for registering provisioned VMs into NetBox.
+
+## @param netbox_enabled [default: true] Whether to enable NetBox registration.
+## Set to true to register VMs in NetBox after provisioning. Requires valid API token.
+## Set to false to skip NetBox registration entirely.
+##
+netbox_enabled: true
+
+## @param netbox_connect [default: see below] Connection parameters for NetBox API.
+## Must include a valid URL and API token to enable NetBox registration.
+##
+
+## @section netbox_connect
+## @description Connection parameters for the NetBox API.
+##
+## @param netbox_connect.url [default: ""] Base URL of the NetBox instance, e.g. "https://netbox.example.com".
+## Must include the scheme (http or https) and should not have a trailing slash.
+## e.g. "https://netbox.example.com"
+##
+## @param netbox_connect.token [default: ""] API token for authenticating with NetBox.
+## Must have permissions to create and update VM records.
+## e.g. "your-api-token-here"
+##
+## @param netbox_connect.validate_certs [default: false] Whether to validate SSL certificates.
+## Default is false because most lab/internal NetBox instances use self-signed certs.
+## Override to true in inventory for production NetBox with a trusted CA chain.
+##
+netbox_connect:
+  url: ""
+  token: ""
+  validate_certs: false
+
+## @section netbox_device_*
+## @description Device/VM properties for NetBox registration. Flat variables
+## (not a dict) — Ansible's shallow dict merge silently drops keys you don't
+## re-declare on override, so these stay at the top level.
+
+## @param netbox_device_name [default: ""] NetBox device name representing the
+## physical ESXi host the VMs run on. Decoupled from `vsphere_esxi_hostname` because the
+## host's connection address (IP or hostname used by the VMware API) often
+## differs from the canonical asset name in NetBox DCIM.
+## When empty, falls back to `vsphere_esxi_hostname`.
+## e.g. "esxi-prod-01" while vsphere_esxi_hostname="202.150.161.50"
+##
+netbox_device_name: ""
+
+## @param netbox_device_role [default: ""] Device role slug to assign to the VM.
+## Must match an existing device role in NetBox. Leave empty to skip.
+## e.g. "database", "web-server", "application"
+##
+netbox_device_role: ""
+
+## @param netbox_device_vm_status [default: active] Status to assign to the VM in NetBox.
+## Allowed values: active, staged, planned, decommissioning, offline
+##
+netbox_device_vm_status: active
+
+## @param netbox_device_interface_name [default: ens192] Name of the primary network interface.
+## This is the interface name as seen inside the guest OS. VMware typically uses ens192
+## for the first virtual NIC on Ubuntu. Can be overridden per VM with `netbox_interface`.
+##
+netbox_device_interface_name: "ens192"
+
+## @param netbox_device_platform [default: ubuntu-24-04-lts] Platform slug to assign to the VM.
+## Must match an existing platform in NetBox. Used to identify the OS/distribution.
+## e.g. "ubuntu-24.04", "centos-9", "windows-2022"
+##
+netbox_device_platform: "ubuntu-24-04-lts"
+
+## @section netbox_cluster_name
+## @description NetBox Cluster identity. The Cluster the VMs are registered into.
+## Kept separate from netbox_device_* because the NetBox Cluster name is often
+## independent of the underlying ESXi device name (e.g., site-based naming).
+##
+## @param netbox_cluster_name [default: ""] NetBox Cluster name VMs are
+## registered into. Resolution chain (most-specific wins):
+##   item.cluster_name -> netbox_cluster_name -> instance_cluster_name
+## Leave empty to fall back to `instance_cluster_name` (the vCenter / inventory
+## cluster identifier).
+## e.g. "prod-cluster-01"
+##
+netbox_cluster_name: ""
+
+## @section netbox_site_slug / netbox_tenant_slug
+## @description Organizational ownership in NetBox. Flat scalars, not a dict.
+
+## @param netbox_site_slug [default: ""] Site slug where the VM is located.
+## Must match an existing site in NetBox. Leave empty to skip.
+## e.g. "dc-jakarta-1", "dc-singapore-2"
+##
+netbox_site_slug: ""
+
+## @param netbox_tenant_slug [default: ""] Tenant slug that owns the VM.
+## Must match an existing tenant in NetBox. Leave empty to skip.
+## e.g. "engineering", "finance", "operations"
+##
+netbox_tenant_slug: ""
+
+## @param netbox_vrf [default: ""] VRF name to assign to IP addresses.
+## Must match an existing VRF in NetBox. Leave empty to use the global table.
+## Can be overridden per-VM with `vrf` in the instances list.
+## e.g. "production", "management"
+##
+netbox_vrf: ""
+
+## @param instance_tags [default: []] List of tags to apply to the VM.
+## Tags must already exist in NetBox or auto-creation must be enabled.
+## e.g. ["production", "managed", "docker"]
+##
+instance_tags: []
+
+## @param netbox_custom_fields [default: {}] Custom field key-value pairs to set on the VM.
+## Custom fields must be pre-defined in NetBox under Customization > Custom Fields.
+## e.g. { "environment": "production", "cost_center": "IT-001" }
+##
+netbox_custom_fields: {}
+
+## @param netbox_update_existing [default: true] Whether to update VMs that already exist in NetBox.
+## When true, existing VM records will be patched with current specs (CPU, memory, disk, etc.).
+## When false, existing VMs are skipped entirely.
+##
+netbox_update_existing: true

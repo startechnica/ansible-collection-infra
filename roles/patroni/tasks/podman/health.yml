@@ -1,0 +1,77 @@
+---
+# Quick health check (podman) — verify all stack containers and HAProxy
+# stats endpoint. Reads container state via containers.podman.podman_container_info.
+
+- name: Check etcd container
+  containers.podman.podman_container_info:
+    name: etcd
+  register: etcd_check
+  failed_when: false
+
+- name: Check patroni container
+  containers.podman.podman_container_info:
+    name: patroni
+  register: patroni_check
+  failed_when: false
+
+- name: Check haproxy container
+  containers.podman.podman_container_info:
+    name: haproxy
+  register: haproxy_check
+  failed_when: false
+
+- name: Check pgbouncer container
+  containers.podman.podman_container_info:
+    name: pgbouncer
+  register: pgbouncer_check
+  failed_when: false
+
+- name: Check vip-manager container
+  containers.podman.podman_container_info:
+    name: vip-manager
+  register: vip_mgr_check
+  failed_when: false
+
+- name: Check keepalived container
+  containers.podman.podman_container_info:
+    name: keepalived
+  register: keepalived_check
+  failed_when: false
+
+- name: Check postgres-exporter container
+  containers.podman.podman_container_info:
+    name: postgres-exporter
+  register: pg_exporter_check
+  failed_when: false
+  when: postgres_exporter_enabled | bool
+
+- name: Check HAProxy stats endpoint
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ haproxy_stats_port }}"
+    timeout: 3
+  register: haproxy_stats
+  failed_when: false
+
+# Podman's container_info returns `containers: [...]` (a list); docker's
+# returns top-level `container: {...}` (a dict). The summary inlines
+# the podman-shape access so we don't need a normalizer.
+- name: Display health summary
+  vars:
+    _running: "{{ ((etcd_check.containers | first).State.Status | default('') == 'running') }}"
+    _running_patroni: "{{ ((patroni_check.containers | first).State.Status | default('') == 'running') }}"
+    _running_haproxy: "{{ ((haproxy_check.containers | first).State.Status | default('') == 'running') }}"
+    _running_pgbouncer: "{{ ((pgbouncer_check.containers | first).State.Status | default('') == 'running') }}"
+    _running_vip_mgr: "{{ ((vip_mgr_check.containers | first).State.Status | default('') == 'running') }}"
+    _running_keepalived: "{{ ((keepalived_check.containers | first).State.Status | default('') == 'running') }}"
+    _running_pg_exporter: "{{ ((pg_exporter_check.containers | default([]) | first | default({})).State.Status | default('') == 'running') }}"
+    vip_running: "{{ _running_vip_mgr or _running_keepalived }}"
+    _haproxy_stats_ok: "{{ haproxy_stats.status is defined and haproxy_stats.status == 200 }}"
+  ansible.builtin.debug:
+    msg:
+      - "{{ inventory_hostname }} ({{ ansible_host }}):"
+      - "  etcd:        {{ 'running' if _running else 'NOT RUNNING' }}"
+      - "  patroni:     {{ 'running' if _running_patroni else 'NOT RUNNING' }}"
+      - "  haproxy:     {{ 'running' if _running_haproxy else 'NOT RUNNING' }}{{ ' (stats OK)' if _haproxy_stats_ok else '' }}"
+      - "  pgbouncer:   {{ 'running' if _running_pgbouncer else 'NOT RUNNING' }}"
+      - "  vip-manager: {{ 'running' if vip_running else 'NOT RUNNING' }}"
+      - "  pg-exporter: {{ 'disabled' if not (postgres_exporter_enabled | bool) else ('running' if _running_pg_exporter else 'NOT RUNNING') }}"

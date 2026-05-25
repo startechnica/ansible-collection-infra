@@ -1,0 +1,21 @@
+---
+# Prometheus postgres-exporter config.
+#
+# The exporter container itself is configured via env vars in
+# docker-compose.yml.j2 (DATA_SOURCE_NAME), so there's no required config
+# file at this layer. This task file is a hook for the optional
+# `postgres_exporter_custom_queries` variable — if set, it's rendered into
+# /opt/patroni/postgres_exporter_queries.yaml and mounted into the
+# postgres-exporter container so operators can add per-cluster Prometheus
+# metrics (slow-query buckets, custom counters, etc.) without rebuilding
+# the image.
+
+- name: Render postgres_exporter custom queries (if defined)
+  ansible.builtin.copy:
+    content: "{{ postgres_exporter_custom_queries }}"
+    dest: "{{ patroni_dir }}/postgres_exporter_queries.yaml"
+    mode: "0644"
+  when:
+    - postgres_exporter_enabled | bool
+    - postgres_exporter_custom_queries | length > 0
+  notify: restart postgres-exporter

@@ -1,0 +1,142 @@
+---
+# Build dynamic host groups from the `instances` list produced by instance / netbox_lookup.
+# Single source of truth for bridging VM provisioning output → Ansible hosts.
+#
+# Parameters:
+#   target_groups:  list of groups to add ALL instances to (default: [cluster_nodes])
+#   use_tags:       filter instances into groups by tags (default: false)
+#                     - "mongodb" tag → mongodb_nodes
+#                     - "patroni" tag → patroni_nodes
+#                     - All VMs      → cluster_nodes (always)
+#
+# Connection parameters are derived from:
+#   - IP:       instances[].ipv4 (CIDR stripped)
+#   - User:     instance_user_name
+#   - Password: instance_user_password (if set)
+#   - SSH key:  instance_user_ssh_private_key (if set)
+#   - Port:     item.ssh_config.Port, else instance_ssh_configs.Port, else 22
+#               (honors a custom SSH port applied by instance instance_ssh_configs)
+
+- name: Add VMs to host groups
+  vars:
+    _first_nic: "{{ (item.networks | default([{}]))[0] | default({}) }}"
+  ansible.builtin.add_host:
+    name: "{{ item.hostname }}"
+    ansible_host: "{{ (_first_nic.ipv4 if (_first_nic.ipv4 | default('') and _first_nic.ipv4 != 'dhcp') else '') | split('/') | first }}"
+    ansible_host_ipv6: "{{ _first_nic.ipv6 | default(omit) }}"
+    ansible_user: "{{ instance_user_name | default('ubuntu') }}"
+    ansible_password: "{{ instance_user_password | default(omit) }}"
+    ansible_ssh_private_key_file: "{{ instance_user_ssh_private_key | default(omit) }}"
+    ansible_port: "{{ item.ssh_config.Port | default(instance_ssh_configs.Port | default(22)) | int }}"
+    ansible_become: true
+    ansible_become_method: sudo
+    node_ip: "{{ (_first_nic.ipv4 if (_first_nic.ipv4 | default('') and _first_nic.ipv4 != 'dhcp') else '') | split('/') | first }}"
+    netbox_id: "{{ item.netbox_id | default(omit) }}"
+    # Propagate instance_init_type so downstream plays (Stage 4 docker skip,
+    # mongodb/patroni runtime dispatch, preflight venv) can see it on the
+    # dynamically-added host. Without this, instance_init_type only applies to
+    # localhost (which is in the inventory's `ignition`/`cloud_init` group).
+    instance_init_type: "{{ instance_init_type | default('ignition') }}"
+    # Container runtime: container_engine is the authoritative selector,
+    # docker_install / podman_enabled are independent install toggles.
+    # Both propagated as-is so dispatch (mongodb, patroni) sees what the
+    # inventory actually said. See roles/instance/defaults/main.yml for
+    # the truth table.
+    podman_enabled: "{{ podman_enabled | default(false) }}"
+    container_engine: "{{ container_engine | default('docker') }}"
+    # Propagate docker_install too — dynamic hosts join `cluster_nodes` /
+    # `mongodb_nodes` / `patroni_nodes` (no group_vars files for those) and
+    # `all` (where group_vars/all/docker.yaml sets docker_install: false).
+    # Without this, Stage 4's `Skip Docker install on this host` end_host
+    # gate fires unconditionally on dynamic hosts and docker never installs.
+    docker_install: "{{ docker_install | default(false) }}"
+    # Propagate docker_daemon_options for the same reason — it's defined in
+    # group_vars/{ignition,cloud_init}.yml, which only applies to localhost.
+    # Without this, preflight/docker_daemon_config.yml on FCOS hosts and
+    # geerlingguy.docker on cloud-init hosts both see it as undefined and
+    # leave /etc/docker/daemon.json unwritten. `default(omit)` keeps the
+    # add_host call clean when it really is unset rather than forwarding {}.
+    docker_daemon_options: "{{ docker_daemon_options | default(omit) }}"
+    groups: "{{ target_groups | default(['cluster_nodes']) }}"
+  loop: "{{ instances }}"
+  loop_control:
+    label: "{{ item.hostname }}"
+  when: not (use_tags | default(false) | bool)
+
+- name: Add all VMs to cluster_nodes group (tag mode)
+  vars:
+    _first_nic: "{{ (item.networks | default([{}]))[0] | default({}) }}"
+  ansible.builtin.add_host:
+    name: "{{ item.hostname }}"
+    ansible_host: "{{ (_first_nic.ipv4 if (_first_nic.ipv4 | default('') and _first_nic.ipv4 != 'dhcp') else '') | split('/') | first }}"
+    ansible_host_ipv6: "{{ _first_nic.ipv6 | default(omit) }}"
+    ansible_user: "{{ instance_user_name | default('ubuntu') }}"
+    ansible_password: "{{ instance_user_password | default(omit) }}"
+    ansible_ssh_private_key_file: "{{ instance_user_ssh_private_key | default(omit) }}"
+    ansible_port: "{{ item.ssh_config.Port | default(instance_ssh_configs.Port | default(22)) | int }}"
+    ansible_become: true
+    ansible_become_method: sudo
+    node_ip: "{{ (_first_nic.ipv4 if (_first_nic.ipv4 | default('') and _first_nic.ipv4 != 'dhcp') else '') | split('/') | first }}"
+    netbox_id: "{{ item.netbox_id | default(omit) }}"
+    instance_init_type: "{{ instance_init_type | default('ignition') }}"
+    container_engine: "{{ container_engine | default('docker') }}"
+    # See the non-tag branch above for why container_engine /
+    # podman_enabled / docker_install all need to ride along.
+    podman_enabled: "{{ podman_enabled | default(false) }}"
+    # Propagate docker_install too — dynamic hosts join `cluster_nodes` /
+    # `mongodb_nodes` / `patroni_nodes` (no group_vars files for those) and
+    # `all` (where group_vars/all/docker.yaml sets docker_install: false).
+    # Without this, Stage 4's `Skip Docker install on this host` end_host
+    # gate fires unconditionally on dynamic hosts and docker never installs.
+    docker_install: "{{ docker_install | default(false) }}"
+    # See the non-tag branch above for why docker_daemon_options has to
+    # ride along on add_host instead of being inherited via group_vars.
+    docker_daemon_options: "{{ docker_daemon_options | default(omit) }}"
+    groups: cluster_nodes
+  loop: "{{ instances }}"
+  loop_control:
+    label: "{{ item.hostname }}"
+  when: use_tags | default(false) | bool
+
+- name: Add mongodb-tagged VMs to mongodb_nodes group
+  ansible.builtin.add_host:
+    name: "{{ item.hostname }}"
+    groups: mongodb_nodes
+  loop: "{{ instances }}"
+  loop_control:
+    label: "{{ item.hostname }}"
+  # Tag set is the UNION of per-VM `tags` and inventory-wide `instance_tags`.
+  # If either contains 'mongodb', the VM joins mongodb_nodes.
+  when:
+    - use_tags | default(false) | bool
+    - mongodb_enabled | default(true) | bool
+    - "'mongodb' in ((item.tags | default([])) + (instance_tags | default([])) | unique)"
+
+- name: Add patroni-tagged VMs to patroni_nodes group
+  ansible.builtin.add_host:
+    name: "{{ item.hostname }}"
+    groups: patroni_nodes
+  loop: "{{ instances }}"
+  loop_control:
+    label: "{{ item.hostname }}"
+  when:
+    - use_tags | default(false) | bool
+    - patroni_enabled | default(true) | bool
+    - "'patroni' in ((item.tags | default([])) + (instance_tags | default([])) | unique)"
+
+- name: Display group assignments (tag mode)
+  ansible.builtin.debug:
+    msg: >-
+      {{ ['cluster_nodes: ' ~ (groups['cluster_nodes'] | default([]) | join(', '))]
+         + (['mongodb_nodes: ' ~ (groups['mongodb_nodes'] | default([]) | join(', '))]
+            if (mongodb_enabled | default(true) | bool) else [])
+         + (['patroni_nodes: ' ~ (groups['patroni_nodes'] | default([]) | join(', '))]
+            if (patroni_enabled | default(true) | bool) else []) }}
+  when: use_tags | default(false) | bool
+
+- name: Display group assignments
+  ansible.builtin.debug:
+    msg:
+      - "{{ (target_groups | default(['cluster_nodes'])) | join(', ') }}:"
+      - "  {{ instances | map(attribute='hostname') | join(', ') }}"
+  when: not (use_tags | default(false) | bool)

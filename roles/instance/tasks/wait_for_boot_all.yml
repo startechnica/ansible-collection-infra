@@ -1,0 +1,95 @@
+---
+# Phase 2b.5: wait for VMware Tools running + IP reported on EVERY VM in
+# instances_to_create, in a single batch.
+#
+# Why batch instead of per-VM:
+#   * The previous per-VM wait inside verify.yml (called from configure_all
+#     in a sequential loop) took ~17 min × N VMs serially — 51 min for a
+#     3-node cluster, dominated by the slowest VM.
+#   * vmware_vm_info returns *every* VM in the folder in one API call. Each
+#     VM entry includes ip_address — populated by vmtoolsd once it starts.
+#     If vmtoolsd isn't running yet, ip_address is empty/undefined.
+#   * One until-loop checking "every expected VM has a non-empty
+#     ip_address" subsumes both the vmtools-running and IP-reported gates
+#     for the whole fleet at once. Wall clock is dominated by the slowest
+#     single VM (~17 min), not by N × that wait.
+#
+# After this task succeeds, verify.yml's per-VM `Wait for VMware Tools
+# running` and `Wait for IP` succeed on the FIRST attempt — they're still
+# there as defensive per-VM probes, but the long waiting already happened
+# here in parallel.
+
+- name: "Probe vCenter once to identify VMs already OK (poweredOn + IP)"
+  community.vmware.vmware_vm_info:
+    hostname: "{{ vcenter_connect.hostname }}"
+    username: "{{ vcenter_connect.username }}"
+    password: "{{ vcenter_connect.password }}"
+    validate_certs: "{{ vcenter_connect.validate_certs }}"
+    folder: "{{ instance_folder_path }}"
+  delegate_to: localhost
+  register: _boot_probe
+  changed_when: false
+  when: instances_to_create | length > 0
+
+- name: "Partition into already-OK vs pending"
+  vars:
+    _ok_names: >-
+      {{ (_boot_probe.virtual_machines | default([]))
+         | selectattr('power_state', 'equalto', 'poweredOn')
+         | selectattr('ip_address', 'defined')
+         | rejectattr('ip_address', 'equalto', '')
+         | rejectattr('ip_address', 'equalto', None)
+         | map(attribute='guest_name') | list }}
+  ansible.builtin.set_fact:
+    _instances_pending: "{{ instances_to_create | rejectattr('name', 'in', _ok_names) | list }}"
+    _instances_already_ok: "{{ instances_to_create | selectattr('name', 'in', _ok_names) | list }}"
+  when: instances_to_create | length > 0
+
+- name: "Report VMs already OK (skipping wait for these)"
+  ansible.builtin.debug:
+    msg: "Already OK (skipped wait): {{ _instances_already_ok | map(attribute='name') | list }}"
+  when:
+    - instances_to_create | length > 0
+    - _instances_already_ok | length > 0
+
+- name: "Wait for VMware Tools + IP on pending VMs (single batch, parallel)"
+  community.vmware.vmware_vm_info:
+    hostname: "{{ vcenter_connect.hostname }}"
+    username: "{{ vcenter_connect.username }}"
+    password: "{{ vcenter_connect.password }}"
+    validate_certs: "{{ vcenter_connect.validate_certs }}"
+    folder: "{{ instance_folder_path }}"
+  delegate_to: localhost
+  register: _boot_wait
+  retries: 50
+  delay: 20
+  until: >-
+    ((_instances_pending | map(attribute='name') | list)
+     | difference(
+         (_boot_wait.virtual_machines | default([]))
+         | selectattr('ip_address', 'defined')
+         | rejectattr('ip_address', 'equalto', '')
+         | rejectattr('ip_address', 'equalto', None)
+         | map(attribute='guest_name') | list
+       ))
+    | length == 0
+  when:
+    - instances_to_create | length > 0
+    - _instances_pending | length > 0
+
+- name: "Show batch wait result"
+  vars:
+    # _boot_wait is undefined when the wait task was skipped (all VMs already OK).
+    # Fall back to the up-front probe so the summary still renders.
+    _vm_snapshot: "{{ (_boot_wait.virtual_machines | default(_boot_probe.virtual_machines, true)) | default([]) }}"
+  ansible.builtin.debug:
+    msg: |-
+      Boot complete for all {{ instances_to_create | length }} VM(s):
+      {% for vm in _vm_snapshot %}
+      {%- if vm.guest_name in (instances_to_create | map(attribute='name') | list) %}
+        {{ vm.guest_name }}: ip={{ vm.ip_address | default('?') }}, power={{ vm.power_state | default('?') }}
+      {%- endif %}
+      {% endfor %}
+  when:
+    - debug | bool
+    - instances_to_create | length > 0

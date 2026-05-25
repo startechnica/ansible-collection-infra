@@ -1,0 +1,9 @@
+---
+# Confirms the play is running as root (or with become). Patroni / mongodb
+# manage Docker, sysctl, and systemd — none of which work unprivileged.
+
+- name: Check running as root
+  ansible.builtin.assert:
+    that: ansible_user_id == 'root' or ansible_become
+    fail_msg: "This role must run with become: true (needs root for Docker + sysctl + systemd)."
+    success_msg: "Running with sufficient privilege ({{ 'become enabled' if ansible_become else 'as root' }})."

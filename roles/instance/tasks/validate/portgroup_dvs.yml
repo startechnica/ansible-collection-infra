@@ -1,0 +1,57 @@
+---
+# Distributed Virtual Switch (DVS) portgroup discovery — used when
+# targeting a vSphere cluster (instance_cluster_name set). DVS
+# portgroups span the cluster rather than living on individual hosts,
+# so we query them at the instance_datacenter level.
+#
+# Included by validate/network.yml as a single `include_tasks` so the
+# whole branch can short-circuit with a single skipping line in the
+# runner output when the standalone-ESXi path is taken instead.
+
+- name: Get distributed portgroups
+  community.vmware.vmware_dvs_portgroup_info:
+    hostname: "{{ vcenter_connect.hostname }}"
+    username: "{{ vcenter_connect.username }}"
+    password: "{{ vcenter_connect.password }}"
+    validate_certs: "{{ vcenter_connect.validate_certs }}"
+    datacenter: "{{ instance_datacenter }}"
+  delegate_to: localhost
+  run_once: true
+  register: dvs_pg_info
+  ignore_errors: true
+
+# Same rationale as the standard-portgroup branch — guard against the
+# ignored API failure becoming a silent "no portgroups exist"
+# downstream.
+- name: Assert DVS portgroup query succeeded
+  ansible.builtin.assert:
+    that:
+      - not (dvs_pg_info.failed | default(false))
+    fail_msg: >-
+      Could not list DVS portgroups in instance_datacenter '{{ instance_datacenter }}':
+      {{ dvs_pg_info.msg | default('unknown error') }}
+    success_msg: >-
+      DVS portgroup query succeeded
+      ({{ dvs_pg_info.dvs_portgroup_info | default({}) | length }} switch[es] returned)
+    quiet: true
+  run_once: true
+
+- name: Debug DVS portgroup info
+  ansible.builtin.debug:
+    var: dvs_pg_info
+  when: debug | bool
+
+- name: Set available networks from DVS portgroups
+  ansible.builtin.set_fact:
+    available_networks: >-
+      {{
+        dvs_pg_info.dvs_portgroup_info
+        | default({})
+        | dict2items
+        | map(attribute='value')
+        | flatten
+        | map(attribute='portgroup_name')
+        | list
+      }}
+  run_once: true
+  when: dvs_pg_info is not failed

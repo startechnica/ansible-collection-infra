@@ -1,0 +1,179 @@
+---
+# os_tuning.yml - Linux kernel and sysctl tuning for PostgreSQL / Patroni
+#
+# Variables used:
+#   postgresql_dir              – PostgreSQL data directory (used for I/O scheduler detection)
+#   ansible_memtotal_mb – auto-gathered Ansible fact (total RAM in MiB)
+
+###############################################################################
+# 1. Compute derived values
+###############################################################################
+- name: Gather page size
+  ansible.builtin.command: getconf PAGE_SIZE
+  register: _page_size_raw
+  changed_when: false
+
+- name: Set sysctl calculation facts
+  ansible.builtin.set_fact:
+    _page_size: "{{ _page_size_raw.stdout | int }}"
+    _shmmax: "{{ ((ansible_memtotal_mb | int) * 1048576 * 0.75) | int }}"
+
+- name: Derive shmall from shmmax and page size
+  ansible.builtin.set_fact:
+    _shmall: "{{ (_shmmax | int / _page_size | int) | int }}"
+
+###############################################################################
+# 2. Detect whether swap is present
+###############################################################################
+- name: Check if swap is enabled
+  ansible.builtin.command: swapon --show --noheadings
+  register: _swap_check
+  changed_when: false
+  failed_when: false
+
+- name: Set swap_present fact
+  ansible.builtin.set_fact:
+    _swap_present: "{{ _swap_check.stdout | length > 0 }}"
+
+###############################################################################
+# 3. Build the full sysctl parameter dict
+###############################################################################
+# Reserve all patroni-stack service ports so the kernel never picks
+# them as ephemeral source ports for outbound connections. Without
+# this, ip_local_port_range covers 1024-65535 and a heavy outbound
+# client (e.g., a co-located mongos opening many connections to
+# mongod) will eventually grab one of our service ports as a
+# source port — and when that happens, the corresponding daemon
+# can't bind on restart ("Address already in use").
+- name: Define base sysctl parameters
+  ansible.builtin.set_fact:
+    _sysctl_params: >-
+      {{
+        {
+          'vm.swappiness': '1',
+          'vm.dirty_ratio': '10',
+          'vm.dirty_background_ratio': '3',
+          'kernel.shmmax': _shmmax | string,
+          'kernel.shmall': _shmall | string,
+          'net.core.somaxconn': '4096',
+          'net.ipv4.tcp_keepalive_time': '60',
+          'net.ipv4.tcp_keepalive_intvl': '10',
+          'net.ipv4.tcp_keepalive_probes': '6',
+          'net.ipv4.ip_nonlocal_bind': '1',
+          'net.ipv4.ip_local_port_range': '1024 65535',
+          'net.ipv4.ip_local_reserved_ports':
+            (([haproxy_primary_port, haproxy_replicas_port,
+               haproxy_stats_port,
+               pgbouncer_port,
+               patroni_api_port, postgresql_port,
+               etcd_client_port,
+               etcd_peer_port]
+              | map('string') | list) | join(','))
+        }
+      }}
+
+- name: Add overcommit params when swap is present
+  ansible.builtin.set_fact:
+    _sysctl_params: >-
+      {{ _sysctl_params | combine({
+           'vm.overcommit_memory': '2',
+           'vm.overcommit_ratio': '80'
+         })
+      }}
+  when: _swap_present | bool
+
+###############################################################################
+# 4. Apply sysctl values (live) and deploy persistent conf file
+###############################################################################
+- name: Apply sysctl parameters
+  ansible.builtin.sysctl:
+    name: "{{ item.key }}"
+    value: "{{ item.value }}"
+    sysctl_set: true
+    state: present
+    reload: false
+  loop: "{{ _sysctl_params | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}={{ item.value }}"
+
+# Persistent configuration only — runtime values were already set live by
+# the `Apply sysctl parameters` loop above (each `sysctl name=X value=Y`
+# writes /proc/sys/* immediately). No `reload sysctl` notify because that
+# would just run `sysctl --system` at end-of-play, which is redundant
+# when every value is already in effect.
+- name: Deploy persistent sysctl configuration
+  ansible.builtin.template:
+    src: sysctl-patroni.conf.j2
+    dest: /etc/sysctl.d/99-patroni-postgres.conf
+    owner: root
+    group: root
+    mode: "0644"
+
+###############################################################################
+# 5. Disable Transparent Huge Pages (runtime)
+###############################################################################
+- name: Disable THP - enabled
+  ansible.builtin.shell: echo never > /sys/kernel/mm/transparent_hugepage/enabled
+  changed_when: false
+
+- name: Disable THP - defrag
+  ansible.builtin.shell: echo never > /sys/kernel/mm/transparent_hugepage/defrag
+  changed_when: false
+
+###############################################################################
+# 6. Persist THP disable across reboots via systemd unit
+###############################################################################
+- name: Create disable-thp systemd unit
+  ansible.builtin.template:
+    src: disable-thp.service.j2
+    dest: /etc/systemd/system/disable-thp.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: reload systemd
+
+- name: Flush handlers (daemon-reload before enable)
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable disable-thp service
+  ansible.builtin.systemd:
+    name: disable-thp
+    enabled: true
+    state: started
+
+###############################################################################
+# 7. Auto-detect I/O scheduler (none for SSD, mq-deadline for HDD)
+###############################################################################
+- name: Resolve block device for postgresql_dir
+  ansible.builtin.shell: |
+    DEV=$(df --output=source "{{ postgresql_dir }}" 2>/dev/null | tail -1)
+    BDEV=$(lsblk -ndo PKNAME "${DEV}" 2>/dev/null || basename "${DEV}" | sed 's/[0-9]*$//')
+    echo "${BDEV}"
+  args:
+    executable: /bin/bash
+  register: _block_dev
+  changed_when: false
+  failed_when: _block_dev.rc != 0 or _block_dev.stdout | length == 0
+
+- name: Detect if block device is rotational (HDD)
+  ansible.builtin.slurp:
+    src: "/sys/block/{{ _block_dev.stdout | trim }}/queue/rotational"
+  register: _rotational
+
+- name: Set I/O scheduler fact
+  ansible.builtin.set_fact:
+    _io_scheduler: "{{ 'mq-deadline' if (_rotational.content | b64decode | trim) == '1' else 'none' }}"
+
+- name: Apply I/O scheduler to block device
+  ansible.builtin.shell: |
+    echo {{ _io_scheduler }} > /sys/block/{{ _block_dev.stdout | trim }}/queue/scheduler
+  changed_when: false
+
+- name: Persist I/O scheduler via udev rule
+  ansible.builtin.template:
+    src: 60-ioscheduler.rules.j2
+    dest: /etc/udev/rules.d/60-patroni-ioscheduler.rules
+    owner: root
+    group: root
+    mode: "0644"
+  notify: reload udev

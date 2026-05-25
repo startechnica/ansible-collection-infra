@@ -1,0 +1,11 @@
+---
+- name: Converge
+  hosts: all
+  become: true
+  gather_facts: true
+  tasks:
+    - name: Run preflight role
+      ansible.builtin.import_role:
+        name: preflight
+      vars:
+        container_mem_request_mb: 512

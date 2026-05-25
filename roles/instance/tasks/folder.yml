@@ -1,0 +1,17 @@
+---
+# `vmware.vmware.folder` is idempotent — `state: present` returns
+# `changed: false` when the folder already exists, `changed: true` when
+# it created a new one. No need to query/check first.
+
+- name: Ensure VM folder exists
+  vmware.vmware.folder:
+    hostname: "{{ vcenter_connect.hostname }}"
+    username: "{{ vcenter_connect.username }}"
+    password: "{{ vcenter_connect.password }}"
+    validate_certs: "{{ vcenter_connect.validate_certs }}"
+    datacenter: "{{ instance_datacenter }}"
+    folder_type: vm
+    relative_path: "{{ instance_folder }}"
+    state: present
+  delegate_to: localhost
+  run_once: true

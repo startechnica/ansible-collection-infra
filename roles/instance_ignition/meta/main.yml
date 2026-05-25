@@ -1,0 +1,19 @@
+---
+galaxy_info:
+  role_name: instance_ignition
+  author: firmansyahn (firmansyah@nainggolan.id)
+  description: Ignition (Fedora CoreOS) phase tasks for instance
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Ubuntu
+      versions:
+        - noble
+        - jammy
+  galaxy_tags:
+    - vmware
+    - ignition
+    - fcos
+    - provision
+
+dependencies: []

@@ -1,0 +1,16 @@
+---
+# Syntax-only scaffold — see molecule/default/README.md.
+
+- name: Converge
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Parse-check vcenter_sync
+      ansible.builtin.import_role:
+        name: vcenter_sync
+      when: false
+
+    - name: Placeholder
+      ansible.builtin.debug:
+        msg: "vcenter_sync loaded cleanly."

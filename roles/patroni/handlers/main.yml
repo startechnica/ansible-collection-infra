@@ -1,0 +1,186 @@
+---
+# Per-service restart handlers. Each one listens on a stable name
+# (`restart stack`, `restart patroni`, etc.) and dispatches to the
+# matching engine implementation. Tasks `notify:` the listen-name
+# without caring which engine is in play.
+#
+# Pattern matches roles/mongodb/handlers/main.yml.
+
+# ── restart stack (whole patroni deploy) ────────────────────────────
+
+- name: restart stack (docker)
+  listen: restart stack
+  community.docker.docker_compose_v2:
+    project_src: "{{ patroni_dir }}"
+    state: restarted
+    remove_orphans: true
+  when: container_engine | default('docker') == 'docker'
+
+- name: restart stack (podman, systemd-managed)
+  listen: restart stack
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: restarted
+  loop:
+    - etcd.service
+    - walg-init.service
+    - patroni.service
+    - haproxy.service
+    - pgbouncer.service
+    - postgres-exporter.service
+    - vip-manager.service
+    - keepalived.service
+  loop_control:
+    label: "{{ item }}"
+  when: container_engine | default('docker') == 'podman'
+  failed_when: false
+
+# ── restart etcd ────────────────────────────────────────────────────
+
+- name: restart etcd (docker)
+  listen: restart etcd
+  community.docker.docker_compose_v2:
+    project_src: "{{ patroni_dir }}"
+    state: restarted
+    services: [etcd]
+  when: container_engine | default('docker') == 'docker'
+
+- name: restart etcd (podman)
+  listen: restart etcd
+  ansible.builtin.systemd:
+    name: etcd.service
+    state: restarted
+  when: container_engine | default('docker') == 'podman'
+
+# ── restart patroni ─────────────────────────────────────────────────
+
+- name: restart patroni (docker)
+  listen: restart patroni
+  community.docker.docker_compose_v2:
+    project_src: "{{ patroni_dir }}"
+    state: restarted
+    services: [patroni]
+  when: container_engine | default('docker') == 'docker'
+
+- name: restart patroni (podman)
+  listen: restart patroni
+  ansible.builtin.systemd:
+    name: patroni.service
+    state: restarted
+  when: container_engine | default('docker') == 'podman'
+
+# ── restart haproxy ─────────────────────────────────────────────────
+
+- name: restart haproxy (docker)
+  listen: restart haproxy
+  community.docker.docker_compose_v2:
+    project_src: "{{ patroni_dir }}"
+    state: restarted
+    services: [haproxy]
+  when: container_engine | default('docker') == 'docker'
+
+- name: restart haproxy (podman)
+  listen: restart haproxy
+  ansible.builtin.systemd:
+    name: haproxy.service
+    state: restarted
+  when: container_engine | default('docker') == 'podman'
+
+# ── restart pgbouncer ───────────────────────────────────────────────
+
+- name: restart pgbouncer (docker)
+  listen: restart pgbouncer
+  community.docker.docker_compose_v2:
+    project_src: "{{ patroni_dir }}"
+    state: restarted
+    services: [pgbouncer]
+  when: container_engine | default('docker') == 'docker'
+
+- name: restart pgbouncer (podman)
+  listen: restart pgbouncer
+  ansible.builtin.systemd:
+    name: pgbouncer.service
+    state: restarted
+  when: container_engine | default('docker') == 'podman'
+
+# ── restart walg (env file change) ──────────────────────────────────
+# Only the patroni container loads walg.env via EnvironmentFile (its
+# archive_command runs wal-g inside the container). walg-init has no
+# env file (it just copies the binary out at boot), and walg-cron is
+# now a host-side oneshot that exec's into patroni — it picks up new
+# env on the next timer fire automatically. So this handler restarts
+# patroni only.
+
+- name: restart walg (docker)
+  listen: restart walg
+  community.docker.docker_compose_v2:
+    project_src: "{{ patroni_dir }}"
+    state: restarted
+    services: [patroni]
+  when: container_engine | default('docker') == 'docker'
+
+- name: restart walg (podman)
+  listen: restart walg
+  ansible.builtin.systemd:
+    name: patroni.service
+    state: restarted
+  when: container_engine | default('docker') == 'podman'
+  failed_when: false
+
+# ── restart vip-manager (only when patroni_vip_enabled + use_vip_manager) ──
+
+- name: restart vip-manager (docker)
+  listen: restart vip-manager
+  community.docker.docker_compose_v2:
+    project_src: "{{ patroni_dir }}"
+    state: restarted
+    services: [vip-manager]
+  when:
+    - container_engine | default('docker') == 'docker'
+    - patroni_vip_enabled
+    - use_vip_manager
+
+- name: restart vip-manager (podman)
+  listen: restart vip-manager
+  ansible.builtin.systemd:
+    name: vip-manager.service
+    state: restarted
+  when:
+    - container_engine | default('docker') == 'podman'
+    - patroni_vip_enabled
+    - use_vip_manager
+
+# ── restart keepalived (only when patroni_vip_enabled + !use_vip_manager) ──
+
+- name: restart keepalived (docker)
+  listen: restart keepalived
+  community.docker.docker_compose_v2:
+    project_src: "{{ patroni_dir }}"
+    state: restarted
+    services: [keepalived]
+  when:
+    - container_engine | default('docker') == 'docker'
+    - patroni_vip_enabled
+    - not use_vip_manager
+
+- name: restart keepalived (podman)
+  listen: restart keepalived
+  ansible.builtin.systemd:
+    name: keepalived.service
+    state: restarted
+  when:
+    - container_engine | default('docker') == 'podman'
+    - patroni_vip_enabled
+    - not use_vip_manager
+
+# ── shared host-level handlers (engine-agnostic) ────────────────────
+
+- name: reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: reload sysctl
+  ansible.builtin.command: sysctl --system
+
+- name: reload udev
+  ansible.builtin.shell: udevadm control --reload-rules && udevadm trigger

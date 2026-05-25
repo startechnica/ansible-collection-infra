@@ -1,0 +1,136 @@
+---
+# All cert generation runs on the Ansible controller (localhost)
+# then distributes to remote hosts
+
+- name: Create local cert staging directory
+  ansible.builtin.file:
+    path: "{{ mongodb_local_certs_dir }}"
+    state: directory
+    mode: "0700"
+  delegate_to: localhost
+  run_once: true
+  become: false
+
+# ── Generate CA ──
+
+- name: Generate CA private key
+  community.crypto.openssl_privatekey:
+    path: "{{ mongodb_local_certs_dir }}/ca.key"
+    type: "{{ tls_key_type }}"
+    curve: "{{ tls_key_curve if tls_key_type == 'ECC' else omit }}"
+    size: "{{ tls_key_size if tls_key_type == 'RSA' else omit }}"
+  delegate_to: localhost
+  run_once: true
+  become: false
+
+- name: Generate CA CSR
+  community.crypto.openssl_csr:
+    path: "{{ mongodb_local_certs_dir }}/ca.csr"
+    privatekey_path: "{{ mongodb_local_certs_dir }}/ca.key"
+    subject:
+      O: "{{ mongodb_pki_o }}"
+      OU: "{{ mongodb_pki_member_ou }}"
+      CN: "{{ mongodb_pki_ca_cn }}"
+    basic_constraints:
+      - "CA:TRUE"
+    basic_constraints_critical: true
+    key_usage:
+      - keyCertSign
+      - cRLSign
+    key_usage_critical: true
+  delegate_to: localhost
+  run_once: true
+  become: false
+
+- name: Generate CA certificate
+  community.crypto.x509_certificate:
+    path: "{{ mongodb_local_certs_dir }}/ca.pem"
+    privatekey_path: "{{ mongodb_local_certs_dir }}/ca.key"
+    csr_path: "{{ mongodb_local_certs_dir }}/ca.csr"
+    provider: selfsigned
+    selfsigned_not_after: "+{{ ssl_ca_days }}d"
+  delegate_to: localhost
+  run_once: true
+  become: false
+
+# ── Generate per-container member certs (per host) ──
+
+- name: Build member cert list
+  ansible.builtin.set_fact:
+    _member_certs: >-
+      {{ ['mongodb-mongod'] +
+         (['mongodb-configsvr', 'mongodb-mongos'] if mongodb_cluster_type == 'sharded' else []) }}
+  run_once: true
+
+- name: Generate member certificates
+  ansible.builtin.include_tasks: _generate_member_cert.yml
+  loop: "{{ _member_certs }}"
+  loop_control:
+    loop_var: cert_cn
+
+# ── Generate healthcheck client cert ──
+
+- name: Generate healthcheck certificate
+  ansible.builtin.include_tasks: _generate_client_cert.yml
+  vars:
+    client_cn: "{{ mongodb_healthcheck_cn }}"
+    client_name: healthcheck
+
+# ── Generate exporter client cert ──
+
+- name: Generate exporter certificate
+  ansible.builtin.include_tasks: _generate_client_cert.yml
+  vars:
+    client_cn: "{{ mongodb_exporter_cn }}"
+    client_name: exporter
+  when: mongodb_exporter_enabled | bool
+
+# ── Distribute to remote hosts ──
+
+- name: Create SSL directory on remote hosts
+  ansible.builtin.file:
+    path: "{{ mongodb_tls_dir }}"
+    state: directory
+    owner: "{{ mongodb_uid }}"
+    group: "{{ mongodb_gid }}"
+    mode: "0700"
+
+- name: Distribute CA key
+  ansible.builtin.copy:
+    src: "{{ mongodb_local_certs_dir }}/ca.key"
+    dest: "{{ mongodb_tls_dir }}/ca.key"
+    owner: "{{ mongodb_uid }}"
+    group: "{{ mongodb_gid }}"
+    mode: "0400"
+
+- name: Distribute CA cert
+  ansible.builtin.copy:
+    src: "{{ mongodb_local_certs_dir }}/ca.pem"
+    dest: "{{ mongodb_tls_dir }}/ca.pem"
+    owner: "{{ mongodb_uid }}"
+    group: "{{ mongodb_gid }}"
+    mode: "0444"
+
+- name: Distribute member certs
+  ansible.builtin.copy:
+    src: "{{ mongodb_local_certs_dir }}/{{ inventory_hostname }}/{{ item }}"
+    dest: "{{ mongodb_tls_dir }}/{{ item }}"
+    owner: "{{ mongodb_uid }}"
+    group: "{{ mongodb_gid }}"
+    mode: "{{ '0400' if item.endswith('.key') or item.endswith('.pem') else '0444' }}"
+  loop: >-
+    {{ _member_certs | product(['.key', '.pem', '.crt']) | map('join') | list
+       + ['healthcheck.key', 'healthcheck.pem', 'healthcheck.crt'] }}
+
+- name: Distribute exporter cert
+  ansible.builtin.copy:
+    src: "{{ mongodb_local_certs_dir }}/{{ inventory_hostname }}/{{ item }}"
+    dest: "{{ mongodb_tls_dir }}/{{ item }}"
+    owner: "{{ mongodb_uid }}"
+    group: "{{ mongodb_gid }}"
+    mode: "{{ '0400' if item.endswith('.key') or item.endswith('.pem') else '0444' }}"
+  loop:
+    - exporter.key
+    - exporter.pem
+    - exporter.crt
+  when: mongodb_exporter_enabled | bool

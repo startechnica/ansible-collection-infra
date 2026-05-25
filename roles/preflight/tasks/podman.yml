@@ -1,0 +1,75 @@
+---
+# Podman engine + systemd Quadlet support. Counterpart to docker.yml —
+# included from main.yml when container_engine='podman'. We don't
+# install podman here; it ships preinstalled on FCOS (and is the
+# expected runtime on every Ignition host today). This file just
+# validates that the engine is present, recent enough for Quadlet, and
+# that the systemd-podman generator is wired up.
+#
+# Quadlet was introduced in Podman 4.4 (Jan 2023). Earlier versions
+# don't ship the systemd-generator that converts .container/.network
+# files in /etc/containers/systemd/ into .service units, so the whole
+# mongodb/quadlet.yml dispatch is dead without it.
+
+- name: Check Podman is installed
+  ansible.builtin.command: podman --version
+  changed_when: false
+  failed_when: false
+  register: _podman_version_check
+
+- name: Assert Podman is installed
+  ansible.builtin.assert:
+    that:
+      - _podman_version_check.rc == 0
+    fail_msg: >-
+      Podman is not installed or not on $PATH. On FCOS it should ship
+      preinstalled — confirm `podman --version` works as the SSH user
+      and as root. If you're on a non-FCOS Ignition flavour, layer
+      podman via the same rpm-ostree path used for docker on FCOS.
+    success_msg: "{{ _podman_version_check.stdout | trim }}"
+    quiet: true
+
+- name: Extract Podman version
+  ansible.builtin.set_fact:
+    _podman_version: "{{ _podman_version_check.stdout | trim | regex_replace('^podman version\\s+', '') }}"
+
+- name: Assert Podman version >= 4.4 (Quadlet support)
+  ansible.builtin.assert:
+    that:
+      - _podman_version is version('4.4', '>=')
+    fail_msg: >-
+      Podman {{ _podman_version }} predates Quadlet (introduced in
+      4.4). The mongodb role's quadlet.yml writes .container/.network
+      units that need the podman-system-generator to materialize them
+      as systemd services — without it, `systemctl start
+      mongodb-mongod` fails with "Unit not found". Upgrade podman.
+    success_msg: "Podman {{ _podman_version }} supports Quadlet."
+
+# The generator is what turns /etc/containers/systemd/*.container into
+# active .service units at daemon-reload. On FCOS it lives at
+# /usr/lib/systemd/system-generators/podman-system-generator. If the
+# binary is missing, Quadlet renders silently do nothing.
+- name: Check podman-system-generator is present
+  ansible.builtin.stat:
+    path: /usr/lib/systemd/system-generators/podman-system-generator
+  register: _podman_generator
+
+- name: Assert podman-system-generator is installed
+  ansible.builtin.assert:
+    that:
+      - _podman_generator.stat.exists
+    fail_msg: >-
+      podman-system-generator missing at
+      /usr/lib/systemd/system-generators/podman-system-generator —
+      Quadlet .container files won't be materialized as systemd units.
+      On FCOS the generator ships with the podman package; reinstall
+      or upgrade podman.
+    success_msg: "podman-system-generator present — Quadlet units will materialize on daemon-reload."
+    quiet: true
+
+# Optional: log in to private container registries before the calling
+# role pulls images. Mirror of docker.yml's docker_login include — same
+# `when` gate semantics so no separate tag is needed.
+- name: Authenticate to private container registries (podman)
+  ansible.builtin.include_tasks: podman_login.yml
+  when: docker_registries | length > 0

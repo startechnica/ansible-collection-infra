@@ -1,0 +1,154 @@
+#!/bin/bash
+# Single entry point for the HA PostgreSQL stack lifecycle.
+#
+# Usage: patroni-ctl.sh [start|stop|status]
+#   status   (default) Containers + Patroni cluster + etcd health + VIP holder.
+#   start    Bring the stack up.
+#   stop     Tear the stack down.
+#
+# Bare invocation runs `status` so a quick `./patroni-ctl.sh` gives operators
+# an at-a-glance health view without having to remember the subcommand.
+#
+# Engine: rendered for {{ container_engine | default('docker') }}.
+
+set -u
+cd "{{ patroni_dir }}" || exit 1
+
+# Colour helpers (no-op when stdout isn't a TTY).
+if [ -t 1 ]; then
+  c_hdr=$'\033[1;36m'; c_dim=$'\033[2m'; c_off=$'\033[0m'
+else
+  c_hdr=''; c_dim=''; c_off=''
+fi
+hdr() { printf "\n${c_hdr}── %s ──${c_off}\n" "$1"; }
+
+{% if container_engine | default('docker') == 'docker' %}
+# ── docker / docker-compose backend ──────────────────────────────────────────
+container_running() {
+  docker ps --format '{{ '{{' }}.Names{{ '}}' }}' | grep -qx "$1"
+}
+
+cmd_start() {
+  echo "Starting HA PostgreSQL stack..."
+  docker compose up -d
+  echo "Stack started. Check status with: $0"
+}
+
+cmd_stop() {
+  echo "Stopping HA PostgreSQL stack..."
+  docker compose down
+  echo "Stack stopped."
+}
+
+cmd_list_containers() {
+  docker compose ps
+}
+
+cmd_exec() {
+  # $1 = container name, rest = command + args
+  local name="$1"; shift
+  docker exec "$name" "$@"
+}
+{% else %}
+# ── podman / Quadlet (systemd) backend ───────────────────────────────────────
+# Each container is a systemd .service generated from a Quadlet .container
+# unit in /etc/containers/systemd/. Lifecycle is via systemctl, not podman
+# compose. The full set of services is enumerated explicitly so the script
+# stays deterministic regardless of which Quadlets actually exist on disk.
+SERVICES=(
+  etcd.service
+  walg-init.service
+  patroni.service
+  haproxy.service
+  pgbouncer.service
+  vip-manager.service
+{% if vip_manager == 'keepalived' %}
+  keepalived.service
+{% endif %}
+{% if postgres_exporter_enabled | bool %}
+  postgres-exporter.service
+{% endif %}
+)
+
+container_running() {
+  podman ps --format '{{ '{{' }}.Names{{ '}}' }}' | grep -qx "$1"
+}
+
+cmd_start() {
+  echo "Starting HA PostgreSQL stack..."
+  systemctl start "${SERVICES[@]}"
+  echo "Stack started. Check status with: $0"
+}
+
+cmd_stop() {
+  echo "Stopping HA PostgreSQL stack..."
+  # Reverse order on stop so dependents go down before what they depend on.
+  for svc in $(printf '%s\n' "${SERVICES[@]}" | tac); do
+    systemctl stop "$svc" || true
+  done
+  echo "Stack stopped."
+}
+
+cmd_list_containers() {
+  podman ps --format 'table {{ '{{' }}.Names{{ '}}' }}\t{{ '{{' }}.Status{{ '}}' }}\t{{ '{{' }}.Image{{ '}}' }}'
+}
+
+cmd_exec() {
+  # $1 = container name, rest = command + args
+  local name="$1"; shift
+  podman exec "$name" "$@"
+}
+{% endif %}
+
+cmd_status() {
+  hdr "Containers"
+  cmd_list_containers
+
+  hdr "Patroni cluster"
+  if container_running patroni; then
+    cmd_exec patroni patronictl -c /etc/patroni/patroni.yml list
+  else
+    echo "${c_dim}patroni container not running.${c_off}"
+  fi
+
+  hdr "etcd endpoint health"
+  if container_running etcd; then
+    cmd_exec etcd etcdctl \
+      --endpoints="https://127.0.0.1:{{ etcd_client_port }}" \
+      --cacert=/etc/certs/ca.crt \
+      --cert=/etc/certs/etcd-healthcheck.crt \
+      --key=/etc/certs/etcd-healthcheck.key \
+      endpoint status --write-out=table
+  else
+    echo "${c_dim}etcd container not running.${c_off}"
+  fi
+
+  hdr "VIP holder"
+  if ip -4 -o addr show | grep -q "{{ patroni_vip_address }}"; then
+    echo "{{ patroni_vip_address | default('(no VIP configured)') }} is on THIS host ({{ inventory_hostname }})"
+  else
+    echo "{{ patroni_vip_address | default('(no VIP configured)') }} is NOT on this host ({{ inventory_hostname }})"
+  fi
+
+  echo
+}
+
+usage() {
+  cat <<EOF
+Usage: $0 [start|stop|status]
+
+  status   (default) Show containers, Patroni cluster, etcd health, VIP holder.
+  start    Bring the stack up.
+  stop     Tear the stack down.
+
+Engine: {{ container_engine | default('docker') }}
+EOF
+}
+
+case "${1:-status}" in
+  start)          cmd_start ;;
+  stop)           cmd_stop ;;
+  status)         cmd_status ;;
+  -h|--help|help) usage ;;
+  *) echo "Unknown command: $1" >&2; usage; exit 2 ;;
+esac

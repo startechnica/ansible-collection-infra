@@ -1,0 +1,21 @@
+---
+# Run post-provision commands via VMware Tools
+
+- name: "Run post-provision commands on {{ item.name }}"
+  community.vmware.vmware_vm_shell:
+    hostname: "{{ vcenter_connect.hostname }}"
+    username: "{{ vcenter_connect.username }}"
+    password: "{{ vcenter_connect.password }}"
+    validate_certs: "{{ vcenter_connect.validate_certs }}"
+    datacenter: "{{ instance_datacenter }}"
+    folder: "/{{ instance_datacenter }}/vm/{{ instance_folder }}"
+    vm_id: "{{ item.name }}"
+    vm_username: "{{ instance_user_name | default('ubuntu') }}"
+    vm_password: "{{ instance_user_password | default('') }}"
+    vm_shell: /bin/bash
+    vm_shell_args: "-c '{{ cmd }}'"
+  delegate_to: localhost
+  loop: "{{ item.post_commands | default(instance_post_commands | default([])) }}"
+  loop_control:
+    loop_var: cmd
+    label: "{{ cmd }}"

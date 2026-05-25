@@ -1,0 +1,56 @@
+---
+# Render /etc/docker/daemon.json from `docker_daemon_options` and restart
+# docker if the file changed. Idempotent: re-runs are no-ops once the
+# rendered content matches.
+#
+# Cloud-init hosts get this via geerlingguy.docker — they should NOT also
+# include this file. Currently called only from
+# preflight/docker_install_fcos.yml (FCOS hosts have docker layered via
+# rpm-ostree without a daemon.json, so we render it here). Extracted to
+# its own file so any future rpm-ostree path (RHCOS, openSUSE MicroOS)
+# can reuse it without duplicating the render+restart logic.
+#
+# Caller-visible registers (read after include if needed):
+#   _daemon_json   — copy result; .changed indicates daemon.json was rewritten
+
+- name: Skip — docker_daemon_options not defined
+  ansible.builtin.debug:
+    msg: "docker_daemon_options not set; leaving /etc/docker/daemon.json untouched."
+  when: docker_daemon_options is not defined
+
+- name: Render docker daemon.json
+  when: docker_daemon_options is defined
+  block:
+    - name: Ensure /etc/docker exists
+      ansible.builtin.file:
+        path: /etc/docker
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Render /etc/docker/daemon.json from docker_daemon_options
+      ansible.builtin.copy:
+        content: "{{ docker_daemon_options | to_nice_json }}\n"
+        dest: /etc/docker/daemon.json
+        owner: root
+        group: root
+        mode: "0644"
+      register: _daemon_json
+
+    - name: Apply daemon.json changes
+      when: _daemon_json is changed
+      block:
+        - name: Restart docker.service to apply daemon.json changes
+          ansible.builtin.systemd:
+            name: docker.service
+            state: restarted
+
+        - name: Re-wait for docker.service after restart
+          ansible.builtin.command: systemctl is-active docker.service
+          register: _docker_active_post_restart
+          changed_when: false
+          failed_when: false
+          retries: 30
+          delay: 5
+          until: _docker_active_post_restart.stdout == 'active'

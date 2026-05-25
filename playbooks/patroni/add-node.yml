@@ -1,0 +1,78 @@
+---
+# ─── Patroni: Add a Cluster Member ──────────────────────────────────────────
+#
+# Adds a new Postgres replica to an existing Patroni cluster. Assumes:
+#   - The new VM is already listed in the inventory's `instances:`.
+#   - Existing cluster is healthy (etcd quorum, one leader).
+#
+# Patroni auto-discovers and joins via etcd + the shared `patroni_scope`, so
+# we just need to install the stack on the new node with etcd_cluster_state
+# set to "existing". The role's detect_etcd.yml handles this automatically
+# by probing the existing nodes.
+#
+# Usage:
+#   ansible-playbook playbooks/patroni/add-node.yml \
+#     -i inventories/<your-inventory>.yml \
+#     -e target_node=host4-lin-db
+
+- name: Setup patroni hosts
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - ansible.builtin.include_tasks: _setup.yml
+
+- name: Validate target
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Require target_node
+      ansible.builtin.assert:
+        that:
+          - target_node is defined
+          - target_node | length > 0
+          - target_node in (groups['patroni_nodes'] | default([]))
+        fail_msg: >-
+          Pass -e target_node=<hostname> where <hostname> is in instances[] and
+          therefore in groups['patroni_nodes'] after _setup.yml.
+        success_msg: "Adding node '{{ target_node }}' to patroni_nodes."
+
+- name: Install Patroni stack on new node
+  hosts: "{{ target_node }}"
+  become: true
+  gather_facts: true
+  pre_tasks:
+    - ansible.builtin.include_role:
+        name: common
+        tasks_from: inherit_localhost_vars
+  roles:
+    - role: patroni
+
+- name: Verify new node joined
+  hosts: "{{ (groups['patroni_nodes'] | reject('equalto', target_node) | list | first) }}"
+  become: true
+  gather_facts: false
+  pre_tasks:
+    - ansible.builtin.include_role:
+        name: common
+        tasks_from: inherit_localhost_vars
+  tasks:
+    - name: Poll Patroni cluster until new node appears
+      community.docker.docker_container_exec:
+        container: patroni
+        command: >-
+          curl -sk --cert /etc/certs/patroni.crt --key /etc/certs/patroni.key
+          --cacert /etc/certs/ca.crt
+          https://127.0.0.1:{{ patroni_api_port }}/cluster
+      register: _cluster
+      until: >-
+        ((_cluster.stdout | default('{}') | from_json).members | default([])
+         | selectattr('name', 'equalto', target_node) | list | length) > 0
+      retries: 60
+      delay: 5
+      changed_when: false
+
+    - name: New member state
+      ansible.builtin.debug:
+        msg: >-
+          {{ (_cluster.stdout | from_json).members
+             | selectattr('name', 'equalto', target_node) | list | first }}

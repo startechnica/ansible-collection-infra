@@ -1,0 +1,45 @@
+---
+# Wait for cloud-init to reach a terminal state (done / error / disabled)
+# before continuing with apt / dpkg operations.
+#
+# Why: SSH coming up doesn't mean cloud-init is finished. With
+# `package_upgrade: true` (the role default) cloud-init's apt phase can
+# run for several minutes after the SSH port is open. While it's running:
+#   - apt-daily / unattended-upgrades / cloud-init's own apt session
+#     hold /var/lib/dpkg/lock-frontend → downstream apt tasks fail with
+#     "Could not get lock /var/lib/dpkg/lock-frontend".
+#   - pam_systemd creating a new login session contends with apt's
+#     systemd session, so `sudo` briefly blocks → Ansible reports
+#     "Timeout (12s) waiting for privilege escalation prompt" on the
+#     next become task.
+#
+# Polls `cloud-init status` (NOT `cloud-init status --wait`, which can
+# block longer than the SSH command timeout) using retries until status
+# is `done`, `error`, or `disabled`. Errors don't fail the wait —
+# cloud-init having errored is still a terminal state, and downstream
+# tasks will surface real failures with better messages than this poll
+# could.
+#
+# Skipped on Ignition / FCOS hosts — they have their own bootstrap
+# signaling via vmtools guestinfo bootstrap_phase.
+#
+# Tunables (defaults: 90 retries × 10s = 15 min):
+#   cloud_init_wait_retries
+#   cloud_init_wait_delay
+
+- name: Wait for cloud-init to reach a terminal state
+  ansible.builtin.raw: |
+    if ! command -v cloud-init >/dev/null 2>&1; then
+      echo "cloud-init not installed"; exit 0
+    fi
+    status=$(cloud-init status 2>/dev/null | sed -n 's/^status: //p')
+    case "$status" in
+      done|error|disabled) echo "cloud-init: $status"; exit 0 ;;
+      *) echo "cloud-init: ${status:-unknown}"; exit 1 ;;
+    esac
+  register: _ci_status
+  changed_when: false
+  retries: "{{ cloud_init_wait_retries | default(90) | int }}"
+  delay: "{{ cloud_init_wait_delay | default(10) | int }}"
+  until: _ci_status.rc == 0
+  when: instance_init_type | default('ignition') == 'cloud-init'

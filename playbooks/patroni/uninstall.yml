@@ -1,0 +1,34 @@
+---
+# ─── Patroni: Uninstall Cluster ─────────────────────────────────────────────
+#
+# Removes all Patroni stack containers (etcd, patroni, haproxy, pgbouncer,
+# vip-manager/keepalived), systemd units, and configuration files.
+#
+# By default, PostgreSQL data directories are preserved.
+# Pass prune=true to delete all data as well.
+#
+# Usage:
+#   ansible-playbook playbooks/patroni/uninstall.yml -i inventories/<inv>.yml
+#
+#   # Delete data too:
+#   ansible-playbook playbooks/patroni/uninstall.yml -i inventories/<inv>.yml \
+#     -e prune=true
+
+- name: Setup patroni hosts
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - ansible.builtin.include_tasks: _setup.yml
+
+- name: Patroni uninstall
+  hosts: patroni_nodes
+  become: true
+  gather_facts: true
+  pre_tasks:
+    - ansible.builtin.include_role:
+        name: common
+        tasks_from: inherit_localhost_vars
+  roles:
+    - role: patroni
+      vars:
+        patroni_action: uninstall

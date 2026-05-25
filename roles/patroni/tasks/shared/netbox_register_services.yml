@@ -1,0 +1,51 @@
+---
+# Publish patroni_services as a host fact, then register each port against
+# every patroni_nodes member in NetBox. Delegated to localhost; runs once
+# from a single host. Other unrelated NetBox service entries are untouched.
+
+- name: Set patroni_services output fact
+  ansible.builtin.set_fact:
+    patroni_services: >-
+      {{
+        [
+          {'name': 'haproxy-primary',  'port': haproxy_primary_port  | int, 'protocol': 'tcp', 'description': 'HAProxy PostgreSQL primary'},
+          {'name': 'haproxy-replicas', 'port': haproxy_replicas_port | int, 'protocol': 'tcp', 'description': 'HAProxy PostgreSQL replicas'},
+          {'name': 'pgbouncer',        'port': pgbouncer_port        | int, 'protocol': 'tcp', 'description': 'PgBouncer connection pooler'},
+          {'name': 'patroni-api',      'port': patroni_api_port      | int, 'protocol': 'tcp', 'description': 'Patroni REST API'},
+          {'name': 'etcd-client',      'port': etcd_client_port      | int, 'protocol': 'tcp', 'description': 'etcd client'}
+        ]
+        + (
+          [{'name': 'postgres-exporter', 'port': postgres_exporter_port | int, 'protocol': 'tcp', 'description': 'Prometheus PostgreSQL exporter'}]
+          if postgres_exporter_enabled | bool else []
+        )
+      }}
+
+- name: Register Patroni services in NetBox
+  netbox.netbox.netbox_service:
+    netbox_url: "{{ netbox_connect.url }}"
+    netbox_token: "{{ netbox_connect.token }}"
+    validate_certs: "{{ netbox_connect.validate_certs | default(false) }}"
+    state: present
+    data:
+      virtual_machine: "{{ item.0 }}"
+      name: "{{ item.1.name }}"
+      ports:
+        - "{{ item.1.port | int }}"
+      protocol: "{{ item.1.protocol | default('tcp') }}"
+      description: "{{ item.1.description | default(omit) }}"
+      ipaddresses: "{{ _svc_ips if _svc_ips else omit }}"
+  vars:
+    _svc_ips: >-
+      {{ hostvars['localhost'].instances | default([])
+         | selectattr('name', 'equalto', item.0)
+         | selectattr('ipv4', 'defined')
+         | map(attribute='ipv4') | list }}
+  delegate_to: localhost
+  become: false
+  run_once: true
+  loop: "{{ groups['patroni_nodes'] | product(patroni_services) | list }}"
+  loop_control:
+    label: "{{ item.0 }}: {{ item.1.name }}:{{ item.1.port }}"
+  when:
+    - netbox_enabled | default(false) | bool
+    - netbox_register_enabled | default(true) | bool

@@ -1,0 +1,31 @@
+---
+- name: Fetch vCenter roles
+  community.vmware.vmware_local_role_info:
+    hostname: "{{ vcenter_connect.hostname }}"
+    username: "{{ vcenter_connect.username }}"
+    password: "{{ vcenter_connect.password }}"
+    validate_certs: "{{ vcenter_connect.validate_certs }}"
+  delegate_to: localhost
+  run_once: true
+  register: vcenter_roles
+  changed_when: false
+
+- name: "Assert vCenter permission role exists — {{ vcenter_permission_role }}"
+  ansible.builtin.assert:
+    that: >-
+      vcenter_permission_role in
+      (vcenter_roles.role_info | default([]) | map(attribute='role_name') | list)
+    fail_msg: >-
+      vCenter role '{{ vcenter_permission_role }}' does not exist.
+      Available roles:
+        {{ vcenter_roles.role_info | default([]) | map(attribute='role_name') | sort | join(', ') }}
+      Either pick one of the above, set `vcenter_permission_enabled: false`
+      to skip the permission step, or create the role in vCenter first.
+    success_msg: "vCenter permission role '{{ vcenter_permission_role }}' exists."
+    quiet: true
+  run_once: true
+
+- name: Debug vCenter roles
+  ansible.builtin.debug:
+    var: vcenter_roles
+  when: debug | bool

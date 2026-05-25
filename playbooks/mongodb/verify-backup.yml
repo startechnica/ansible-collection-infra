@@ -1,0 +1,168 @@
+---
+# ─── MongoDB: Backup Verification ───────────────────────────────────────────
+#
+# Spins up a disposable MongoDB container on the first node, restores the
+# latest mongodump into it, runs a smoke query (list DBs + a count), tears
+# it down. The real cluster is never touched.
+#
+# Usage:
+#   ansible-playbook playbooks/mongodb/verify-backup.yml \
+#     -i inventories/<your-inventory>.yml
+#
+# Optional:
+#   -e backup_path=/opt/mongodb/backups/mongodump_YYYYMMDD_HHMMSS  (default: latest local)
+#   -e backup_source=s3                                            (fetch latest from S3)
+
+- name: Setup mongodb hosts
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - ansible.builtin.include_tasks: _setup.yml
+
+- name: Verify latest backup is restorable
+  hosts: mongodb_nodes[0]
+  become: true
+  gather_facts: true
+  pre_tasks:
+    - ansible.builtin.include_role:
+        name: common
+        tasks_from: inherit_localhost_vars
+  tasks:
+    - name: Fetch latest backup from S3
+      when: (backup_source | default('local')) == 's3'
+      block:
+        - name: Ensure S3 verify directory
+          ansible.builtin.file:
+            path: /opt/mongodb/backups/_verify
+            state: directory
+            owner: "{{ mongodb_uid }}"
+            group: "{{ mongodb_gid }}"
+            mode: "0700"
+
+        - name: Download latest mongodump archive from S3
+          ansible.builtin.shell: |
+            set -euo pipefail
+            TMPDIR=/opt/mongodb/backups/_verify
+            docker run --rm \
+              -v "$TMPDIR:/out" \
+              -e MC_HOST_s3="{{ s3_endpoint | regex_replace('^(https?://)', '\\1' ~ s3_access_key ~ ':' ~ s3_secret_key ~ '@') }}" \
+              {{ s3_client_image }} \
+              sh -c "mc find s3/{{ s3_bucket }}/{{ s3_prefix }}/ --name '*.tar.gz' \
+                     | sort -r | head -n1 \
+                     | xargs -I{} mc cp {} /out/"
+            ls -t "$TMPDIR"/*.tar.gz | head -n1
+          register: _s3_fetch
+          changed_when: false
+
+        - name: Extract archive into _verify/
+          ansible.builtin.unarchive:
+            src: "{{ _s3_fetch.stdout_lines | last }}"
+            dest: /opt/mongodb/backups/_verify/
+            remote_src: true
+            owner: "{{ mongodb_uid }}"
+            group: "{{ mongodb_gid }}"
+
+        - name: Resolve extracted backup path
+          ansible.builtin.shell: ls -dt /opt/mongodb/backups/_verify/mongodump_* 2>/dev/null | head -n1
+          register: _extracted_path
+          changed_when: false
+
+    - name: Pick backup path (latest local if not specified)
+      ansible.builtin.shell: |
+        set -e
+        if [ -n "{{ backup_path | default('') }}" ]; then
+          echo -n "{{ backup_path }}"
+        elif [ "{{ backup_source | default('local') }}" = "s3" ]; then
+          echo -n "{{ _extracted_path.stdout | default('') }}"
+        else
+          ls -dt {{ mongodb_backup_dir }}/mongodump_* 2>/dev/null | head -n1
+        fi
+      register: _backup_path
+      changed_when: false
+
+    - name: Fail if no backup found
+      ansible.builtin.fail:
+        msg: "No mongodump backup available. Run playbooks/mongodb/backup.yml first, or -e backup_source=s3 to pull from S3."
+      when: _backup_path.stdout | trim | length == 0
+
+    - name: Show chosen backup
+      ansible.builtin.debug:
+        msg: "Restoring and verifying {{ _backup_path.stdout }}"
+
+    - name: Create scratch data volume
+      community.docker.docker_volume:
+        name: mongodb-verify-scratch
+        state: present
+
+    - name: Start disposable mongod for verification
+      community.docker.docker_container:
+        name: mongodb-verify
+        image: "{{ mongodb_image_registry }}/{{ mongodb_image_repository }}:{{ mongodb_image_tag }}"
+        state: started
+        recreate: true
+        command: mongod --port 37017 --bind_ip 127.0.0.1 --dbpath /data/db --nojournal
+        volumes:
+          - "mongodb-verify-scratch:/data/db"
+          - "{{ _backup_path.stdout }}:/backup:ro"
+        user: "{{ mongodb_uid }}:{{ mongodb_gid }}"
+        network_mode: bridge
+        detach: true
+        cleanup: false
+
+    - name: Wait for scratch mongod to accept connections
+      community.docker.docker_container_exec:
+        container: mongodb-verify
+        command: mongosh --port 37017 --quiet --eval "db.adminCommand('ping').ok"
+      register: _ping
+      until: _ping.stdout | default('0') | trim == '1'
+      retries: 20
+      delay: 2
+      changed_when: false
+
+    - name: Restore backup into scratch mongod
+      community.docker.docker_container_exec:
+        container: mongodb-verify
+        command: mongorestore --port 37017 --quiet --drop /backup
+      register: _restore
+      changed_when: false
+
+    - name: Smoke check — list databases
+      community.docker.docker_container_exec:
+        container: mongodb-verify
+        command: >-
+          mongosh --port 37017 --quiet --eval
+          "JSON.stringify(db.adminCommand('listDatabases').databases)"
+      register: _dbs
+      changed_when: false
+
+    - name: Smoke check — total collection count
+      community.docker.docker_container_exec:
+        container: mongodb-verify
+        command: >
+          mongosh --port 37017 --quiet --eval
+          "db.adminCommand('listDatabases').databases
+            .filter(d => !['admin','config','local'].includes(d.name))
+            .reduce((acc, d) => acc + db.getSiblingDB(d.name).getCollectionNames().length, 0)"
+      register: _colls
+      changed_when: false
+
+    - name: Backup verification report
+      ansible.builtin.debug:
+        msg:
+          - "Backup: {{ _backup_path.stdout }}"
+          - "Databases restored: {{ _dbs.stdout }}"
+          - "User collections: {{ _colls.stdout | trim }}"
+          - "Status: PASS"
+
+  post_tasks:
+    - name: Tear down scratch container
+      community.docker.docker_container:
+        name: mongodb-verify
+        state: absent
+      failed_when: false
+
+    - name: Remove scratch volume
+      community.docker.docker_volume:
+        name: mongodb-verify-scratch
+        state: absent
+      failed_when: false

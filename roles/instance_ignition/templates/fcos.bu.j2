@@ -1,0 +1,518 @@
+variant: {{ ignition_flavour_default.butane_variant }}
+version: {{ ignition_flavour_default.butane_spec_version }}
+
+# Drop the FCOS-default serial console karg. Cloud images set
+# `console=ttyS0,115200n8` so kernel logs and a getty land on the
+# emulated serial port. VMware VMs deployed without a configured
+# serial device have nothing on the host side to read it, so:
+#   * kernel writes to a black hole (cheap but pointless);
+#   * systemd auto-instantiates serial-getty@ttyS0 (because the karg
+#     is present), agetty hits I/O errors, the unit restart-loops
+#     forever, flooding the journal.
+# Removing the karg fixes both: kernel stops driving ttyS0, and
+# without `console=ttyS0` the auto-getty isn't pulled in either —
+# no need to also mask the unit.
+# Re-add the karg in inventory if you wire up a vSphere serial port
+# and want kernel/console output captured there.
+kernel_arguments:
+  should_not_exist:
+    - console=ttyS0,115200n8
+
+passwd:
+  users:
+    - name: {{ instance_user_name | default('core') }}
+{% if instance_user_password | default('') | length > 0 %}
+      password_hash: {{ instance_user_password | password_hash('sha512') }}
+{% endif %}
+{% if instance_user_ssh_authorized_keys | default([]) | length > 0 %}
+      ssh_authorized_keys:
+{% for k in instance_user_ssh_authorized_keys %}
+        - {{ k }}
+{% endfor %}
+{% endif %}
+{% for user in (instance_extra_users | default([])) + (instance.ignition.users | default([])) %}
+    - name: {{ user.name }}
+{% if user.ssh_authorized_keys | default([]) | length > 0 %}
+      ssh_authorized_keys:
+{% for k in user.ssh_authorized_keys %}
+        - {{ k }}
+{% endfor %}
+{% elif instance_user_ssh_authorized_keys | default([]) | length > 0 %}
+      ssh_authorized_keys:
+{% for k in instance_user_ssh_authorized_keys %}
+        - {{ k }}
+{% endfor %}
+{% endif %}
+{% endfor %}
+
+storage:
+{% if instance_timezone | default('') | length > 0 %}
+  links:
+    - path: /etc/localtime
+      target: ../usr/share/zoneinfo/{{ instance_timezone }}
+      overwrite: true
+{% endif %}
+  files:
+    # FQDN when instance_domain_name is set, short hostname otherwise.
+    - path: /etc/hostname
+      mode: 0644
+      contents:
+        inline: {{ instance.hostname }}{{ '.' ~ instance_domain_name if instance_domain_name | default('') | length > 0 else '' }}
+{% if instance_user_password | default('') | length > 0 %}
+
+    # FCOS sshd ships PasswordAuthentication=no by default. When the operator
+    # sets instance_user_password (typical for lab/dev), enable password SSH
+    # via a drop-in so the password they configured is actually usable.
+    # Files in /etc/ssh/sshd_config.d/ are loaded in lexical order; 30-* runs
+    # before any cloud-prov default that turns it back off.
+    - path: /etc/ssh/sshd_config.d/30-passwords.conf
+      mode: 0644
+      contents:
+        inline: |
+          PasswordAuthentication yes
+          PermitRootLogin prohibit-password
+{% endif %}
+{% if instance.ignition.role | default('') | length > 0 %}
+
+    - path: /etc/node-role
+      mode: 0644
+      contents:
+        inline: {{ instance.ignition.role }}
+{% endif %}
+{% for file in (instance.ignition.files | default([])) %}
+
+    - path: {{ file.path }}
+{% if file.mode is defined %}
+      mode: {{ file.mode }}
+{% endif %}
+      contents:
+        inline: {{ file.contents }}
+{% endfor %}
+
+    # NetworkManager keyfiles, one per NIC. FCOS uses NetworkManager (not
+    # systemd-networkd) by default — `.network` files in /etc/systemd/network/
+    # are silently ignored. Keyfiles MUST be mode 0600 or NM refuses to load.
+    #
+    # Interface naming: vmxnet3 NICs in EFI mode appear as ens192, ens224,
+    # ens256, ens288, … (PCI slot offset = +32 per NIC). Override per-NIC
+    # with `device: <name>` if your firmware/HW combo differs.
+    #
+    # Default route + DNS are emitted on the first NIC only — multiple
+    # default routes would conflict. For multi-homed hosts where a non-first
+    # NIC should carry the default, omit gateway4/gateway6 from earlier
+    # NICs and set them on the desired one.
+{% for nic in (instance.networks | default([])) %}
+{%   set _eff = (instance_networks | default({})) | combine(nic) %}
+{%   set _ifname = _eff.device | default('ens' ~ (192 + loop.index0 * 32) | string) %}
+{%   set _static4 = _eff.ipv4 is defined and _eff.ipv4 != 'dhcp' %}
+{%   set _static6 = _eff.ipv6 is defined and _eff.ipv6 != 'dhcp6' %}
+{%   set _addr4_cidr = _eff.ipv4 if (_static4 and '/' in (_eff.ipv4 | string)) else (_eff.ipv4 | default('') ~ '/24') %}
+{%   set _addr6_cidr = _eff.ipv6 if (_static6 and '/' in (_eff.ipv6 | string)) else (_eff.ipv6 | default('') ~ '/64') %}
+    - path: /etc/NetworkManager/system-connections/{{ _ifname }}.nmconnection
+      mode: 0600
+      contents:
+        inline: |
+          [connection]
+          id={{ _ifname }}
+          type=ethernet
+          interface-name={{ _ifname }}
+          autoconnect=true
+
+{%   if _eff.mtu is defined %}
+          [ethernet]
+          mtu={{ _eff.mtu | int }}
+
+{%   endif %}
+          [ipv4]
+{%   if _static4 %}
+          method=manual
+          address1={{ _addr4_cidr }}{{ ',' ~ _eff.gateway4 if (loop.first and _eff.gateway4 is defined) else '' }}
+{%     if loop.first and (instance_dns_servers | default([]) | length > 0) %}
+          dns={{ instance_dns_servers | join(';') }};
+{%     endif %}
+{%   elif (_eff.ipv4 | default('')) == 'dhcp' %}
+          method=auto
+{%   else %}
+          method=disabled
+{%   endif %}
+
+          [ipv6]
+{%   if _static6 %}
+          method=manual
+          address1={{ _addr6_cidr }}{{ ',' ~ _eff.gateway6 if (loop.first and _eff.gateway6 is defined) else '' }}
+{%   elif (_eff.ipv6 | default('')) == 'dhcp6' %}
+          method=auto
+{%   else %}
+          method=ignore
+{%   endif %}
+{% endfor %}
+{% if nm_unmanaged_devices | default([]) | length > 0 %}
+
+    # Tell NetworkManager not to touch CNI-managed interfaces (calico,
+    # flannel, wireguard, generic veth/cni). Without this, an NM event can
+    # bounce pod networking on running k8s nodes. Override
+    # `nm_unmanaged_devices` in inventory to replace the list (empty = disable).
+    - path: /etc/NetworkManager/conf.d/99-unmanaged-devices.conf
+      mode: 0644
+      contents:
+        inline: |
+          [keyfile]
+          unmanaged-devices={{ nm_unmanaged_devices | join(';') }}
+{% endif %}
+
+    # Disable systemd's pager for interactive shells. Without this,
+    # `systemctl status`, `journalctl`, etc. pipe into less and need `q` to
+    # exit — annoying over SSH and breaks scripts that capture output.
+    - path: /etc/profile.d/systemd-pager.sh
+      mode: 0644
+      contents:
+        inline: |
+          # Disable pager for systemctl / journalctl in interactive shells
+          export SYSTEMD_PAGER=
+          export SYSTEMD_LESS=FRXMK
+
+    # Blacklist the `floppy` kernel module. VMware VMs ship with a virtual
+    # floppy drive and the kernel polls it for media changes — generates
+    # `I/O error, dev fd0, sector 0 op 0x0:(READ)` on the system console
+    # every ~10s. The blacklist prevents the module from loading at boot.
+    - path: /etc/modprobe.d/blacklist-floppy.conf
+      mode: 0644
+      contents:
+        inline: |
+          blacklist floppy
+
+    # Snippet appended to /etc/vmware-tools/tools.conf by the
+    # rpm-ostree-install-open-vm-tools.service after the package install
+    # (the conf file may already exist or get created by RPM with
+    # defaults we don't want to clobber). Stored as a separate file so
+    # butane doesn't have to embed the heredoc inside the service's
+    # ExecStart. Pin vmtoolsd's reported primary-nic to the first NIC
+    # and exclude the noisy CNI / bridge / veth interface prefixes that
+    # crowd vSphere's "Networks" tab on container hosts.
+{% set _first_nic_ifname = (instance.networks | default([]))[0].device | default('ens192') if (instance.networks | default([])) else 'ens192' %}
+    - path: /etc/vmware-tools/tools.conf.startechnica
+      mode: 0644
+      contents:
+        inline: |
+
+          [guestinfo]
+          primary-nics={{ _first_nic_ifname }}
+          exclude-nics=antrea-*,bpfin.cali*,bpfout.cali*,cali*,cilium*,docker*,flannel*,genev_sys_*,gre_sys_*,lxc*,ovs-system,br*,kube-ipvs*,veth*,virbr*,vxlan_sys_*,stt_sys_*,????????-??????
+
+    # Set SELinux to permissive at first boot. The cluster roles bind
+    # container ports to host IPs, mount data dirs, and rely on inter-node
+    # TCP — the shipped targeted policy regularly produces AVC denials for
+    # these patterns and would need per-deployment tuning. Permissive
+    # keeps labelling and audit logging on but stops blocking. Switch
+    # back with `setenforce 1` for a forensic pass.
+    # `overwrite: true` because the base FCOS image already ships
+    # /etc/selinux/config with SELINUX=enforcing.
+    - path: /etc/selinux/config
+      mode: 0644
+      overwrite: true
+      contents:
+        inline: |
+          # See SELinux(8) man page.
+          # SELINUX= can take one of these three values:
+          #     enforcing - SELinux security policy is enforced.
+          #     permissive - SELinux prints warnings instead of enforcing.
+          #     disabled - No SELinux policy is loaded.
+          SELINUX=permissive
+          # SELINUXTYPE= can take one of these three values:
+          #     targeted - Targeted processes are protected,
+          #     minimum - Modification of targeted policy. Only selected processes are protected.
+          #     mls - Multi Level Security protection.
+          SELINUXTYPE=targeted
+
+    # systemd 256+'s `systemd-executor` wraps PAM-session-spawned commands
+    # (sudo on every Ansible become task) with OSC 3008 "hierarchical
+    # context" escape sequences. Ansible captures stdout, finds JSON
+    # followed by the OSC sequence, and warns "Module invocation had junk
+    # after the JSON data" on every task. The executor skips OSC emission
+    # when TERM=dumb (verified by inspecting
+    # /usr/lib/systemd/profile.d/80-systemd-osc-context.sh: line 16).
+    #
+    # Ansible's [ssh_connection] ssh_args sets TERM=dumb via -o SetEnv,
+    # but sshd's default AcceptEnv only allows LANG / LC_*. This drop-in
+    # adds TERM so the SetEnv from the client is actually applied.
+    - path: /etc/ssh/sshd_config.d/99-accept-term.conf
+      mode: 0644
+      contents:
+        inline: |
+          # Accept TERM from clients. Ansible sets TERM=dumb to silence
+          # systemd-executor's OSC 3008 hierarchical-context markers that
+          # otherwise land after the JSON of every become task and
+          # trigger "junk after JSON" warnings.
+          AcceptEnv TERM
+
+    # Quieter kernel console: suppress audit and other INFO/NOTICE-level
+    # kernel messages from spamming the serial / VGA console on a busy
+    # node. Format is `console_loglevel default_message_loglevel
+    # minimum_console_loglevel default_console_loglevel`. Setting console
+    # to 3 (KERN_ERR) means only ERR and above appear on console; the
+    # journal still receives everything for `journalctl -k`.
+    - path: /etc/sysctl.d/99-silent-audit.conf
+      mode: 0644
+      contents:
+        inline: |
+          kernel.printk = 3 4 1 7
+{% if not (fcos_zincati_enabled | default(false) | bool) %}
+
+    # Disable Zincati (FCOS auto-updater). Cluster nodes — Patroni
+    # leaders, Mongo primaries — cannot tolerate an unattended reboot
+    # mid-traffic. Operator owns patching cadence via planned
+    # `rpm-ostree upgrade` + ordered reboots during a maintenance
+    # window. Override fcos_zincati_enabled: true to re-enable on
+    # non-critical hosts.
+    # Reference: https://coreos.github.io/zincati/usage/auto-updates/
+    - path: /etc/zincati/config.d/55-disable-auto-updates.toml
+      mode: 0644
+      contents:
+        inline: |
+          # Managed by startechnica.infra — instance_ignition role.
+          [updates]
+          enabled = false
+{% endif %}
+{% if chrony_servers | default([]) | length > 0 %}
+
+    # Additional chrony NTP servers. Drop-ins under /etc/chrony.d/ are
+    # read AFTER /etc/chrony.conf so these ADD to FCOS's default Fedora
+    # pool (do NOT replace it). `iburst` sends initial bursts at startup
+    # so chronyd locks onto a source quickly — important for Patroni /
+    # Mongo replication and TLS handshakes that get cranky on drift.
+    - path: /etc/chrony.d/55-startechnica-servers.conf
+      mode: 0644
+      contents:
+        inline: |
+          # Managed by startechnica.infra — instance_ignition role.
+{% for s in chrony_servers %}
+          server {{ s }} iburst
+{% endfor %}
+{% endif %}
+
+    # Bootstrap phase publisher. Writes the current phase to BOTH:
+    #   1. vCenter guestinfo (machine-readable; consumed by Ansible's
+    #      wait_for_vm_bootstrap.yml + playbooks/probe_phase.yml).
+    #   2. /etc/issue.d/99-bootstrap.issue (human-readable; appears above the
+    #      console login prompt, so a quick console glance answers "what's
+    #      the install doing right now" without any vCenter / SSH access).
+    # vmware-rpctool is provided by open-vm-tools, so it's missing during the
+    # very first phase (open-vm-tools-installing) — the rpctool call no-ops
+    # via `|| true` and the /etc/issue.d write still works.
+    - path: /usr/local/bin/publish-phase
+      mode: 0755
+      contents:
+        inline: |
+          #!/bin/sh
+          # Usage: publish-phase <phase-name>
+          set -e
+          phase="${1:-(unknown)}"
+          /usr/bin/vmware-rpctool "info-set guestinfo.startechnica.bootstrap_phase ${phase}" 2>/dev/null || true
+          mkdir -p /etc/issue.d
+          if [ "${phase}" = "ready" ]; then
+              # Bootstrap complete — clear the marker so the completed state
+              # isn't sticky on the login screen forever.
+              rm -f /etc/issue.d/99-bootstrap.issue
+          else
+              printf 'Bootstrap: %s\n\n' "${phase}" > /etc/issue.d/99-bootstrap.issue
+          fi
+{% set _packages = (instance_packages | default([])) + (instance.ignition.packages | default([])) %}
+{% set _runcmds = (instance_runcmds | default([])) + (instance.ignition.runcmds | default([])) %}
+{% if _packages | length > 0 or _runcmds | length > 0 %}
+
+    - path: /usr/local/bin/first-boot-setup.sh
+      mode: 0755
+      contents:
+        inline: |
+          #!/bin/bash
+          set -euo pipefail
+{% if _packages | length > 0 %}
+          rpm-ostree install --apply-live --allow-inactive {{ _packages | join(' ') }}
+{% endif %}
+{% for cmd in _runcmds %}
+          {{ cmd }}
+{% endfor %}
+{% endif %}
+
+systemd:
+  units:
+    # FCOS base image lacks python3 (Ansible runtime), open-vm-tools (vSphere
+    # guest agent), and — when container_engine=docker — Docker CE. Each is
+    # layered by its own rpm-ostree-install-*.service:
+    #
+    #   * python3 + open-vm-tools use --apply-live (no reboot)
+    #   * docker-ce uses `override remove moby-engine` which requires a base
+    #     layer change → mandatory reboot
+    #
+    # Each unit stamps /var/lib/<unit>.stamp on success and is gated by
+    # ConditionPathExists, so re-runs are no-ops. They serialize with After=
+    # because rpm-ostree allows only one transaction at a time, and run
+    # Before=zincati.service so the auto-updater can't preempt them.
+
+    # Each install service publishes its phase to
+    # guestinfo.startechnica.bootstrap_phase via vmware-rpctool, so the
+    # Ansible controller can poll vCenter for progress without depending on
+    # SSH (which goes away during the docker-ce reboot). vmware-rpctool is
+    # provided by open-vm-tools, so the open-vm-tools service can only
+    # publish its `*-done` value (after install).
+    # Phase progression:
+    #   open-vm-tools-done → python3-installing → python3-done
+    #     → docker-ce-installing → docker-ce-done   (then reboot)
+
+    - name: rpm-ostree-install-open-vm-tools.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Layer open-vm-tools via rpm-ostree (vSphere guest agent)
+        Wants=network-online.target
+        After=network-online.target
+        Before=zincati.service
+        ConditionPathExists=!/var/lib/%N.stamp
+
+        [Service]
+        Type=oneshot
+        RemainAfterExit=yes
+        # publish-phase writes /etc/issue.d here (rpctool isn't installed yet
+        # — it's a no-op until open-vm-tools is layered below).
+        ExecStart=/usr/local/bin/publish-phase open-vm-tools-installing
+        ExecStart=/usr/bin/rpm-ostree install --idempotent --apply-live --allow-inactive open-vm-tools
+        # Append our [guestinfo] block to /etc/vmware-tools/tools.conf
+        # AFTER install (so the rpm-created file exists + we don't clobber
+        # any defaults). Idempotent via grep-guard: no-op if our marker
+        # `primary-nics=ens192` is already in the file.
+        ExecStart=/bin/sh -c 'mkdir -p /etc/vmware-tools && (grep -q "^primary-nics=" /etc/vmware-tools/tools.conf 2>/dev/null || cat /etc/vmware-tools/tools.conf.startechnica >> /etc/vmware-tools/tools.conf)'
+        ExecStart=/bin/systemctl enable --now vmtoolsd.service
+        ExecStart=/usr/local/bin/publish-phase open-vm-tools-done
+        ExecStart=/usr/bin/touch /var/lib/%N.stamp
+
+        [Install]
+        WantedBy=multi-user.target
+
+    - name: rpm-ostree-install-python3.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Layer python3 + python3-pip via rpm-ostree (Ansible runtime)
+        Wants=network-online.target
+        After=network-online.target rpm-ostree-install-open-vm-tools.service
+        Before=zincati.service
+        ConditionPathExists=!/var/lib/%N.stamp
+
+        [Service]
+        Type=oneshot
+        RemainAfterExit=yes
+        ExecStart=/usr/local/bin/publish-phase python3-installing
+        # Minimal system-Python footprint — only what `ansible.builtin.pip`
+        # needs to bootstrap the target venv at /opt/ansible-venv.
+        # python3-pip       : pip CLI itself.
+        # python3-packaging : `packaging` Python module — ansible.builtin.pip
+        #                     imports this from the TARGET's system Python
+        #                     before invoking pip inside the venv. NOT a
+        #                     dependency of python3-pip on Fedora — must be
+        #                     layered explicitly. Without it, preflight/venv
+        #                     fails with "Failed to import ... (packaging)".
+        # Everything else (requests, docker SDK, pymongo, psycopg2-binary,
+        # …) lives in the venv. See preflight/defaults/main.yml ::
+        # service_venv_packages. Downstream community.* tasks run under the
+        # venv via ansible_python_interpreter.
+        # The one pre-venv task that previously needed `requests`
+        # (preflight/docker_install_fcos.yml :: Probe Docker daemon) now uses
+        # `command: docker version ...` instead — no Python SDK / requests
+        # dependency, so the OS layer can stay this thin.
+        ExecStart=/usr/bin/rpm-ostree install --idempotent --apply-live --allow-inactive python3 python3-pip python3-packaging
+        ExecStart=/usr/local/bin/publish-phase python3-done
+        ExecStart=/usr/bin/touch /var/lib/%N.stamp
+
+        [Install]
+        WantedBy=multi-user.target
+{% if container_engine | default('docker') == 'docker' and (docker_install | default(false) | bool) %}
+
+    # Replace FCOS's moby-engine with upstream Docker CE.
+    # `override remove` modifies the base layer and cannot be --apply-live, so
+    # the unit reboots when done. docker.service (enabled below as a dangling
+    # symlink at provision time) starts on the post-reboot boot.
+    # docker-ce-done is published BEFORE reboot so the controller-side
+    # vmtools poll succeeds even while the host is rebooting.
+    # Reference: https://docs.fedoraproject.org/en-US/fedora-coreos/docker-ce/
+    - name: rpm-ostree-install-docker-ce.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Install Docker CE (replaces moby-engine)
+        Wants=network-online.target
+        After=network-online.target rpm-ostree-install-python3.service
+        Before=zincati.service
+        ConditionPathExists=!/var/lib/%N.stamp
+
+        [Service]
+        Type=oneshot
+        RemainAfterExit=yes
+        ExecStart=/usr/local/bin/publish-phase docker-ce-installing
+        ExecStart=/usr/bin/curl --output-dir /etc/yum.repos.d --remote-name https://download.docker.com/linux/fedora/docker-ce.repo
+        ExecStart=/usr/bin/rpm-ostree override remove moby-engine containerd runc docker-cli --install docker-ce --install docker-ce-cli --install containerd.io --install docker-buildx-plugin --install docker-compose-plugin
+        ExecStart=/usr/local/bin/publish-phase docker-ce-done
+        ExecStart=/usr/bin/touch /var/lib/%N.stamp
+        ExecStart=/usr/bin/systemctl --no-block reboot
+
+        [Install]
+        WantedBy=multi-user.target
+
+    # Pre-enable docker.service. The unit file doesn't exist on the base
+    # image so this writes a dangling symlink; systemd ignores it until
+    # rpm-ostree-install-docker-ce.service materializes the file post-reboot.
+    - name: docker.service
+      enabled: true
+{% endif %}
+
+    # Final post-reboot "ready" marker. Runs on every boot once the install
+    # services have settled; on the first boot of a docker-path FCOS host
+    # this only fires AFTER the docker-ce reboot has completed (because the
+    # install services skipped via ConditionPathExists, and docker.service
+    # has materialized and started). Publishes guestinfo.startechnica.
+    # bootstrap_phase=ready, which Ansible's docker_install_fcos.yml waits
+    # for — closes the race where wait_for_connection saw SSH still up
+    # briefly between docker-ce-done being published and the reboot
+    # actually disconnecting clients.
+    - name: startechnica-bootstrap-ready.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Publish startechnica bootstrap-ready phase via vmtools
+        After=multi-user.target rpm-ostree-install-open-vm-tools.service rpm-ostree-install-python3.service
+{% if container_engine | default('docker') == 'docker' and (docker_install | default(false) | bool) %}
+        After=docker.service rpm-ostree-install-docker-ce.service
+        Wants=docker.service
+{% endif %}
+
+        [Service]
+        Type=oneshot
+        RemainAfterExit=yes
+        ExecStart=/usr/local/bin/publish-phase ready
+
+        [Install]
+        WantedBy=multi-user.target
+{% if _packages | length > 0 or _runcmds | length > 0 %}
+    - name: first-boot-setup.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=First boot setup (packages and commands)
+        After=network-online.target
+        Wants=network-online.target
+        ConditionPathExists=!/var/lib/first-boot-setup.done
+
+        [Service]
+        Type=oneshot
+        ExecStart=/usr/local/bin/first-boot-setup.sh
+        ExecStartPost=/usr/bin/touch /var/lib/first-boot-setup.done
+        RemainAfterExit=true
+
+        [Install]
+        WantedBy=multi-user.target
+{% endif %}
+{% for unit in (instance.ignition.systemd_units | default([])) %}
+    - name: {{ unit.name }}
+      enabled: {{ unit.enabled | default(true) | lower }}
+      contents: |
+        {{ unit.contents | indent(8) }}
+{% endfor %}

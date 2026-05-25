@@ -1,0 +1,47 @@
+---
+
+debug: false
+# Target-side Python venv used by community.docker, community.mongodb, and
+# community.postgresql modules. Created by the preflight role, consumed by
+# mongodb and patroni roles via ansible_python_interpreter (set as a host
+# fact after creation).
+
+service_venv_path: /opt/ansible-venv
+
+service_venv_packages:
+  - pymongo==4.6.3
+  - psycopg2-binary
+  - docker
+  # requests is a transitive dep of `docker` already, but listed explicitly
+  # so target-side modules that import it directly (community.docker
+  # internals, some community.crypto paths, custom uri-style modules) work
+  # without surprises. On FCOS hosts this also keeps it out of the
+  # rpm-ostree layer (see fcos.bu.j2's python3 install service comment).
+  - requests
+
+# Kernel modules the role loads and persists (/etc/modules-load.d/<name>.conf).
+# Override the whole list to replace, or append in inventory to extend:
+#   service_kernel_modules:
+#     - overlay
+#     - br_netfilter
+#     - nf_conntrack   # e.g. needed by some ipvs setups
+service_kernel_modules:
+  - overlay
+  - br_netfilter
+
+# Optional Docker registry credentials. Empty by default (no login).
+# Each entry triggers `docker login` on every preflight target so subsequent
+# image pulls work for private registries (ghcr.io, internal harbor, ECR, ...).
+# Idempotent — re-running skips registries already authenticated.
+#
+# Always pass passwords through Ansible Vault, never inline plaintext.
+# Example (place in inventory group_vars or playbook vars):
+#   docker_registries:
+#     - registry: ghcr.io
+#       username: my-bot
+#       password: "{{ vault_ghcr_token }}"
+#     - registry: harbor.internal.example.com
+#       username: ci
+#       password: "{{ vault_harbor_password }}"
+#       reauthorize: false   # set true after rotating the password
+docker_registries: []

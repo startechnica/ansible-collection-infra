@@ -1,0 +1,80 @@
+---
+- name: Check CA exists locally
+  ansible.builtin.stat:
+    path: "{{ mongodb_local_certs_dir }}/ca.key"
+  delegate_to: localhost
+  run_once: true
+  become: false
+  register: _ca_key_check
+
+- name: Fail if CA not found
+  ansible.builtin.fail:
+    msg: "CA key not found — cannot renew certs without existing CA"
+  when: not _ca_key_check.stat.exists
+  run_once: true
+
+- name: Render cert backup script
+  ansible.builtin.template:
+    src: backup-certs.sh.j2
+    dest: /tmp/mongodb-backup-certs.sh
+    mode: "0700"
+
+- name: Backup current certs on remote hosts
+  ansible.builtin.command: /tmp/mongodb-backup-certs.sh
+  changed_when: false
+
+- name: Clean up cert backup script
+  ansible.builtin.file:
+    path: /tmp/mongodb-backup-certs.sh
+    state: absent
+
+- name: Remove old member cert files locally (force regeneration)
+  ansible.builtin.file:
+    path: "{{ mongodb_local_certs_dir }}/{{ inventory_hostname }}/{{ item[0] }}.{{ item[1] }}"
+    state: absent
+  loop: "{{ ['mongodb-mongod', 'mongodb-configsvr', 'mongodb-mongos'] | product(['pem', 'key', 'crt', 'csr']) | list }}"
+  loop_control:
+    label: "{{ item[0] }}.{{ item[1] }}"
+  delegate_to: localhost
+  become: false
+
+- name: Regenerate member certificates
+  ansible.builtin.include_tasks: _generate_member_cert.yml
+  loop:
+    - mongodb-mongod
+    - mongodb-configsvr
+    - mongodb-mongos
+  loop_control:
+    loop_var: cert_cn
+
+- name: Distribute renewed member certs
+  ansible.builtin.copy:
+    src: "{{ mongodb_local_certs_dir }}/{{ inventory_hostname }}/{{ item }}"
+    dest: "{{ mongodb_tls_dir }}/{{ item }}"
+    owner: "{{ mongodb_uid }}"
+    group: "{{ mongodb_gid }}"
+    mode: "{{ '0400' if item.endswith('.key') or item.endswith('.pem') else '0444' }}"
+  loop:
+    - mongodb-mongod.key
+    - mongodb-mongod.pem
+    - mongodb-mongod.crt
+    - mongodb-configsvr.key
+    - mongodb-configsvr.pem
+    - mongodb-configsvr.crt
+    - mongodb-mongos.key
+    - mongodb-mongos.pem
+    - mongodb-mongos.crt
+
+- name: Restart containers to pick up new certs
+  community.docker.docker_compose_v2:
+    project_src: "{{ mongodb_root_dir }}"
+    state: restarted
+
+- name: Read new cert expiry
+  community.crypto.x509_certificate_info:
+    path: "{{ mongodb_tls_dir }}/mongodb-mongod.crt"
+  register: _new_cert_info
+
+- name: Display renewal result
+  ansible.builtin.debug:
+    msg: "Renewed member certs on {{ inventory_hostname }} — expires {{ _new_cert_info.not_after }}"

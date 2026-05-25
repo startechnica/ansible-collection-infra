@@ -1,0 +1,78 @@
+# Minimal reference inventory — one cluster, MongoDB replica set, local backups.
+#
+# SECRETS HANDLING — DO NOT commit plaintext credentials:
+#   1. Create a vault file:    ansible-vault create inventories/group_vars/all/vault.yml
+#   2. Reference vault vars:   `{{ vault_instance_user_password }}`
+#   3. Encrypt this whole file: ansible-vault encrypt examples/inventory.minimal.yml
+# The example below shows the recommended `{{ vault_* }}` reference pattern.
+
+all:
+  hosts:
+    localhost:
+      ansible_connection: local
+  vars:
+    # ── Connection defaults (cloud-init user lands here) ────────────────────
+    instance_user_name: ubuntu
+    instance_user_password: "{{ vault_instance_user_password }}"
+    instance_user_ssh_authorized_keys:
+      - "ssh-ed25519 AAAAC3Nz... operator@workstation"
+
+    # ── vCenter connection ──────────────────────────────────────────────────
+    vcenter_connect:
+      hostname: vcenter.example.com
+      username: administrator@vsphere.local
+      password: "{{ vault_vcenter_password }}"
+      validate_certs: false    # default; set to true for production vCenters with a trusted CA chain
+
+    # ── Where new VMs get placed ────────────────────────────────────────────
+    instance_datacenter: idc-central
+    instance_cluster_name: MyCluster
+    instance_folder: <your-project>
+    portgroup_name: v101
+    portgroup_dvswitch_name: DSwitch1
+
+    # ── Per-NIC defaults (gateway + MTU shared by every NIC) ────────────────
+    instance_networks:
+      gateway4: 10.0.0.1
+      mtu: 1500
+
+    # ── Per-disk defaults (datastore + size shared by every disk) ──────────
+    instance_disks:
+      size_gb: 40
+      type: thin
+      datastore: vsanDatastore
+
+    # ── Template in the content library ─────────────────────────────────────
+    instance_init_type: cloud-init
+    content_library_name: templates
+    content_library_template: noble-server-cloudimg-amd64
+    content_library_type: ovf
+
+    # ── VMs to provision ────────────────────────────────────────────────────
+    # Each VM has a `networks:` list. The minimal entry uses the role-level
+    # portgroup_name and instance_networks defaults; per-NIC overrides go in
+    # the entry (name, ipv4, ipv6, gateway4, gateway6, mtu, mac).
+    instances:
+      - hostname: mysite-db-01
+        networks:
+          - ipv4: 10.0.0.10/24
+      - hostname: mysite-db-02
+        networks:
+          - ipv4: 10.0.0.11/24
+      - hostname: mysite-db-03
+        networks:
+          - ipv4: 10.0.0.12/24
+
+    # Global tag applied to every VM — routes them into mongodb_nodes group.
+    instance_tags:
+      - mongodb
+
+    # Disable integrations you're not using yet.
+    netbox_enabled: false
+    firewall_enabled: false
+    routeros_enabled: false
+
+    # ── MongoDB cluster settings ────────────────────────────────────────────
+    mongodb_cluster_type: replicaset
+    # mongodb_admin_password left empty → auto-generated + written to
+    # playbooks/artifacts/<inv-stem>/mongodb/admin.password on the controller.

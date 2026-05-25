@@ -1,0 +1,95 @@
+---
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  lint:
+    name: Lint (yamllint + ansible-lint)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install linters + collection deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install 'ansible-core>=2.16' ansible-lint yamllint
+          ansible-galaxy collection install -r requirements.yml
+          ansible-galaxy role install -r requirements.yml
+
+      - name: yamllint
+        run: yamllint .
+
+      - name: ansible-lint
+        run: ansible-lint
+
+  syntax-check:
+    name: Playbook syntax check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install ansible
+        run: |
+          python -m pip install --upgrade pip
+          pip install 'ansible-core>=2.16'
+          ansible-galaxy collection install -r requirements.yml
+          ansible-galaxy role install -r requirements.yml
+
+      - name: Check every playbook + every inventory parses
+        # Two passes via scripts/check-inventories.sh:
+        #   1) every playbook against the canonical inventory  (catches Jinja /
+        #      undefined / role-not-found regressions in any playbook)
+        #   2) playbooks/deploy.yml against every inventory declaring
+        #      `instances:` (catches inventory-shape regressions like the
+        #      old flat `ipv4:` per-VM after a `networks:` migration)
+        # The previous one-axis loop missed any inventory that didn't happen
+        # to be the canonical one — that's how a multi-inventory schema
+        # migration gap stayed silent until an IDE opened a stale file.
+        run: bash scripts/check-inventories.sh
+
+  molecule:
+    name: "Molecule — ${{ matrix.role }}"
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        role:
+          - preflight
+          - common
+          - firewall
+          - netbox_lookup
+          - netbox_register
+          - vcenter_sync
+          - instance
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install molecule + docker driver
+        run: |
+          python -m pip install --upgrade pip
+          pip install 'ansible-core>=2.16' 'molecule>=24' 'molecule-plugins[docker]'
+          ansible-galaxy collection install -r requirements.yml
+          ansible-galaxy role install -r requirements.yml
+
+      - name: Run molecule default scenario
+        working-directory: "roles/${{ matrix.role }}"
+        run: molecule test

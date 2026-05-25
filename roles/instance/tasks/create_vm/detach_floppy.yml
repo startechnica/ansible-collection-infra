@@ -1,0 +1,45 @@
+---
+# Remove the virtual floppy device from each provisioned VM.
+#
+# Why: VMware VMs ship with a virtual floppy by default. The Linux kernel
+# loads the `floppy` driver, polls the empty drive for media changes, and
+# spams `I/O error, dev fd0, sector 0 op 0x0:(READ)` to the system
+# console every ~10s. The cloud-init / butane templates blacklist the
+# kernel module as a quick fix, but the VM hardware still has the
+# device. This task removes it cleanly via the vSphere API.
+#
+# Floppy hot-remove is NOT supported by VMware ("operation cannot be
+# performed in the current state (Powered on)"), so this task is invoked
+# from prepare_all.yml — between deploy_all (creates VM, leaves it
+# powered off) and poweron_all (parallel async power-on). The script
+# detects power state and skips gracefully if a VM is somehow already
+# running, so re-runs against existing-up VMs are safe (just no-op).
+#
+# Implementation: thin shim around remove_virtual_floppy.py — community.
+# vmware doesn't have a floppy-management module, but the role's hosts
+# already have pyVmomi available (transitively via community.vmware).
+
+- name: "Remove virtual floppy device from {{ item.name }}"
+  ansible.builtin.command:
+    argv:
+      - "{{ ansible_python_interpreter | default('python3') }}"
+      - "{{ role_path }}/files/remove_virtual_floppy.py"
+      - --vm-name
+      - "{{ item.name }}"
+      - --datacenter
+      - "{{ instance_datacenter }}"
+      - --folder
+      - "{{ instance_folder_path }}"
+  environment:
+    VCENTER_HOSTNAME: "{{ vcenter_connect.hostname }}"
+    VCENTER_USERNAME: "{{ vcenter_connect.username }}"
+    VCENTER_PASSWORD: "{{ vcenter_connect.password }}"
+    VCENTER_VALIDATE_CERTS: "{{ vcenter_connect.validate_certs | default(false) | string }}"
+  delegate_to: localhost
+  register: _floppy_remove
+  changed_when: "'removed' in (_floppy_remove.stdout | default(''))"
+  no_log: false  # stdout has VM names only — no secrets — keep visible
+
+- name: "Floppy removal result for {{ item.name }}"
+  ansible.builtin.debug:
+    msg: "{{ _floppy_remove.stdout | default('(no output)') }}"
