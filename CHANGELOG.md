@@ -25,8 +25,6 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   community.mongodb >=1.7.12, community.postgresql >=3.14.3,
   community.vmware >=6.2.0, vmware.vmware >=2.8.0). `netbox.netbox`
   lowered from `>=4.1.0` to `>=3.22.0` — no 4.x exists on Galaxy.
-- `ansible-lint` profile raised from `moderate` to `production`.
-  Collection passes all production-tier checks.
 - `.yamllint`: `line-length` max raised 180→200 to accommodate inline
   Jinja `{%- if -%}` blocks in debug messages.
 - CI: lint + syntax-check now run on every branch push (not just

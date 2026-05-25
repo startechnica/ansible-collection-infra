@@ -2,7 +2,7 @@
 # ansible-lint configuration for startechnica.infra
 # https://ansible.readthedocs.io/projects/lint/configuring/
 
-profile: production
+profile: moderate
 
 exclude_paths:
   - .cache/

@@ -14,13 +14,14 @@ repository: https://github.com/startechnica/ansible-collection-infra
 documentation: https://github.com/startechnica/ansible-collection-infra/blob/main/README.md
 issues: https://github.com/startechnica/ansible-collection-infra/issues
 tags:
+  - infrastructure
   - vmware
   - vcenter
   - netbox
   - mongodb
   - patroni
   - postgresql
-  - cloud_init
+  - cloudinit
   - ignition
 dependencies:
   ansible.posix: ">=1.5.0"

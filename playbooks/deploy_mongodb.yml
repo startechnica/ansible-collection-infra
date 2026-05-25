@@ -38,9 +38,6 @@
   hosts: localhost
   gather_facts: true
   tags: [provision]
-  collections:
-    - community.vmware
-    - netbox.netbox
   roles:
     - role: instance
     - role: netbox_register

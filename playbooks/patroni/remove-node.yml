@@ -83,7 +83,10 @@
          | selectattr('role', 'equalto', 'leader') | map(attribute='name')
          | first | default('')) == inventory_hostname_short
 
-    - name: Wait for leadership to move
+    - name: Wait for leadership to move  # noqa: no-handler
+      # Inline (not a handler) because this is a polling wait that must
+      # run sequentially right after the switchover task, not deferred to
+      # end-of-play; it gates the uninstall play that follows.
       community.docker.docker_container_exec:
         container: patroni
         command: >-

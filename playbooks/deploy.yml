@@ -60,9 +60,6 @@
   hosts: localhost
   gather_facts: true
   tags: [provision]
-  collections:
-    - community.vmware
-    - netbox.netbox
   tasks:
     - name: Provision VMs
       ansible.builtin.include_role:

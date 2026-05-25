@@ -18,7 +18,7 @@ galaxy_info:
   galaxy_tags:
     - vmware
     - vcenter
-    - cloud_init
+    - cloudinit
     - ignition
     - fcos
 

@@ -62,7 +62,9 @@
       WantedBy=multi-user.target
   register: _nft_service
 
-- name: Reload systemd if unit changed
+- name: Reload systemd if unit changed  # noqa: no-handler
+  # Inline (not a handler) because daemon_reload MUST run between the
+  # unit-file copy and the `state: started` task below, not at end-of-play.
   ansible.builtin.systemd:
     daemon_reload: true
   when: _nft_service is changed
@@ -73,7 +75,10 @@
     enabled: true
     state: started
 
-- name: Reload startechnica-firewall.service if ruleset changed
+- name: Reload startechnica-firewall.service if ruleset changed  # noqa: no-handler
+  # Inline (not a handler) because the reload must run AFTER the service
+  # has been started above and BEFORE the informational `nft list` task
+  # below; deferring to end-of-play would make the listing show stale rules.
   ansible.builtin.systemd:
     name: startechnica-firewall.service
     state: reloaded
