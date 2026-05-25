@@ -113,8 +113,8 @@
     - name: Run patroni uninstall tasks
       ansible.builtin.import_role:
         name: patroni
-        tasks_from: uninstall.yml
       vars:
+        patroni_action: uninstall
         patroni_skip_confirm: true
 
 - name: Drop member from Patroni/etcd on a surviving node

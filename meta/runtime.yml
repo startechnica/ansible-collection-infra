@@ -1,0 +1,9 @@
+---
+requires_ansible: ">=2.15.0"
+
+action_groups:
+  mongodb:
+    - mongodb_backup
+    - mongodb_restore
+    - mongodb_rs_init
+    - mongodb_status
