@@ -17,7 +17,7 @@
   when: _instances_need_ip | length == 0
 
 - name: Fetch all clusters from NetBox (paginated)
-  uri:
+  ansible.builtin.uri:
     url: "{{ netbox_connect.url }}/api/virtualization/clusters/?limit=1000"
     method: GET
     headers:
@@ -53,7 +53,7 @@
     - instance_cluster_name | default('') | length > 0
 
 - name: Fail if cluster not found in NetBox
-  fail:
+  ansible.builtin.fail:
     msg: >-
       NetBox cluster '{{ instance_cluster_name }}' not found.
       API returned {{ _nb_clusters_all.json.count | default(0) }} clusters total.
@@ -73,7 +73,7 @@
   when: _instances_need_ip | length > 0
 
 - name: Query NetBox for VMs needing enrichment
-  uri:
+  ansible.builtin.uri:
     url: "{{ netbox_connect.url }}/api/virtualization/virtual-machines/?name={{ vm_item.name | urlencode }}{{ _nb_cluster_filter | default('') }}"
     method: GET
     headers:
@@ -92,7 +92,7 @@
 # ── Resolve VRF name → ID (NetBox's ip-address `vrf=` filter wants ID, not name) ──
 
 - name: Resolve vrf_id from netbox_vrf name
-  uri:
+  ansible.builtin.uri:
     url: "{{ netbox_connect.url }}/api/ipam/vrfs/?name={{ netbox_vrf | urlencode }}"
     method: GET
     headers:
@@ -107,7 +107,7 @@
     - netbox_vrf | length > 0
 
 - name: Fail if vrf not found in NetBox
-  fail:
+  ansible.builtin.fail:
     msg: >-
       netbox_vrf '{{ netbox_vrf }}' not found. API returned
       {{ _nb_vrf.json.count | default(0) }} VRFs for name={{ netbox_vrf }}.
@@ -128,7 +128,7 @@
   when: _instances_need_ip | length > 0
 
 - name: Query IPs for enriched VMs (optionally VRF-filtered)
-  uri:
+  ansible.builtin.uri:
     url: >-
       {{ netbox_connect.url }}/api/ipam/ip-addresses/?virtual_machine_id={{
       _nb_vm_result.json.results[0].id }}{{ _nb_vrf_filter | default('') }}
@@ -176,7 +176,7 @@
   when: _instances_need_ip | length > 0
 
 - name: Fail if any VM is still missing ipv4 after enrichment
-  fail:
+  ansible.builtin.fail:
     msg: >-
       NetBox enrichment could not resolve ipv4 for:
       {{ _instances_enriched
@@ -205,7 +205,7 @@
     _instances_need_tags: "{{ instances | selectattr('name', 'defined') | rejectattr('tags', 'defined') | list }}"
 
 - name: Query NetBox tags for those VMs
-  uri:
+  ansible.builtin.uri:
     url: "{{ netbox_connect.url }}/api/virtualization/virtual-machines/?name={{ vm_item.name | urlencode }}{{ _nb_cluster_filter | default('') }}"
     method: GET
     headers:

@@ -48,6 +48,7 @@
         state: directory
         owner: "{{ patroni_uid }}"
         group: "{{ patroni_gid }}"
+        mode: "0750"
 
     - name: Execute pg_basebackup
       containers.podman.podman_container_exec:

@@ -13,7 +13,7 @@
       - "NetBox connection parameters validated ({{ netbox_connect.url }})"
 
 - name: Validate NetBox API is reachable
-  uri:
+  ansible.builtin.uri:
     url: "{{ netbox_connect.url }}/api/status/"
     method: GET
     headers:

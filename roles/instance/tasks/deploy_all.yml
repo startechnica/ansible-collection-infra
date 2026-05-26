@@ -57,7 +57,7 @@
   # items poll independently — the downstream assert task surfaces per-VM
   # failures with their names so the operator sees the full picture
   # instead of bailing at the first failure.
-  async_status:
+  ansible.builtin.async_status:
     jid: "{{ job.ansible_job_id }}"
   delegate_to: localhost
   loop: "{{ _deploy_jobs.results }}"

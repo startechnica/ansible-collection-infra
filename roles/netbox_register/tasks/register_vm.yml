@@ -161,7 +161,7 @@
     _nb_vrf: "{{ item.vrf | default(netbox_vrf) }}"
 
 - name: Resolve VRF ID
-  uri:
+  ansible.builtin.uri:
     url: "{{ netbox_connect.url }}/api/ipam/vrfs/?name={{ _nb_vrf | urlencode }}"
     method: GET
     headers:
@@ -213,7 +213,7 @@
 
 # 7) Get the IP address ID we just created/found
 - name: Look up IP address ID
-  uri:
+  ansible.builtin.uri:
     url: >-
       {{ netbox_connect.url }}/api/ipam/ip-addresses/?address={{ _nb_ip_cidr | split('/') | first
       }}&virtual_machine={{ item.name
@@ -331,7 +331,7 @@
   when: debug
 
 - name: Look up NetBox VM ID
-  uri:
+  ansible.builtin.uri:
     url: "{{ netbox_connect.url }}/api/virtualization/virtual-machines/?name={{ item.name }}"
     method: GET
     headers:
@@ -347,7 +347,7 @@
 
 # 9) Set primary IP
 - name: Set primary IPv4 by ID
-  uri:
+  ansible.builtin.uri:
     url: "{{ netbox_connect.url }}/api/virtualization/virtual-machines/{{ _nb_vm_id }}/"
     method: PATCH
     headers:

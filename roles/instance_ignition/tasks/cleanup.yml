@@ -22,7 +22,7 @@
   delegate_to: localhost
 
 - name: "Clean up temporary ignition files for {{ item.name }}"
-  file:
+  ansible.builtin.file:
     path: "{{ ignition_tmp_dir }}/{{ item.name }}.{{ ext }}"
     state: absent
   loop:

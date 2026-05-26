@@ -21,7 +21,7 @@
          else 'https://builds.coreos.fedoraproject.org/streams/' ~ ignition_fcos_stream ~ '.json' }}
 
 - name: Fetch Fedora CoreOS stream metadata
-  uri:
+  ansible.builtin.uri:
     url: "{{ _fcos_metadata_url }}"
     method: GET
     return_content: true
@@ -42,7 +42,7 @@
       }}
 
 - name: Fail if FCOS metadata is invalid
-  fail:
+  ansible.builtin.fail:
     msg: >
       Fedora CoreOS stream metadata does not contain a VMware artifact for architecture '{{ ignition_fcos_arch }}'.
       URL: {{ _fcos_metadata_url }}

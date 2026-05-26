@@ -20,10 +20,10 @@
     or not (netbox_register_enabled | default(true) | bool)
 
 - name: Validate NetBox connection
-  import_tasks: validate.yml
+  ansible.builtin.import_tasks: validate.yml
 
 - name: Ensure vCenter custom fields exist in NetBox (once)
-  import_tasks: ensure_custom_fields.yml
+  ansible.builtin.import_tasks: ensure_custom_fields.yml
 
 - name: Register VM in NetBox
   ansible.builtin.include_tasks: register_vm.yml

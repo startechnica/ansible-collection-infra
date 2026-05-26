@@ -14,7 +14,7 @@
       }}
 
 - name: Query VMs from NetBox
-  uri:
+  ansible.builtin.uri:
     url: "{{ netbox_connect.url }}/api/virtualization/virtual-machines/?{{ _nb_query_filter | urlencode }}&limit=1000"
     method: GET
     headers:
@@ -30,7 +30,7 @@
     netbox_vms: "{{ _nb_vms_raw.json.results | default([]) }}"
 
 - name: Query IP addresses for each VM
-  uri:
+  ansible.builtin.uri:
     url: "{{ netbox_connect.url }}/api/ipam/ip-addresses/?virtual_machine_id={{ vm_item.id }}"
     method: GET
     headers:

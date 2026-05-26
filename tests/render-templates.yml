@@ -36,6 +36,7 @@
       ansible.builtin.file:
         path: "{{ _render_dir }}"
         state: "{{ ci_state }}"
+        mode: "0755"
       loop: [absent, directory]
       loop_control:
         loop_var: ci_state
@@ -44,6 +45,7 @@
       ansible.builtin.template:
         src: ../roles/instance_cloud_init/templates/cloudinit-metadata.yml.j2
         dest: "{{ _render_dir }}/{{ item.hostname }}-metadata.yml"
+        mode: "0644"
       loop: "{{ fixture_instances }}"
       loop_control:
         label: "{{ item.hostname }}"
@@ -52,6 +54,7 @@
       ansible.builtin.template:
         src: ../roles/instance_cloud_init/templates/cloudinit-user-data.yml.j2
         dest: "{{ _render_dir }}/{{ item.hostname }}-user-data.yml"
+        mode: "0644"
       loop: "{{ fixture_instances }}"
       loop_control:
         label: "{{ item.hostname }}"
@@ -95,6 +98,7 @@
       ansible.builtin.file:
         path: "{{ _render_dir }}"
         state: "{{ ig_state }}"
+        mode: "0755"
       loop: [absent, directory]
       loop_control:
         loop_var: ig_state
@@ -106,6 +110,7 @@
       ansible.builtin.template:
         src: "../roles/instance_ignition/templates/{{ ignition_flavour_map[ignition_flavour].butane_template }}"
         dest: "{{ _render_dir }}/{{ ignition_flavour }}-{{ instance.hostname }}.bu"
+        mode: "0644"
       vars:
         ignition_flavour: "{{ _pair.0 }}"
         instance: "{{ _pair.1 }}"

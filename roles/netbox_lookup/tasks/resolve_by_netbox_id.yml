@@ -10,7 +10,7 @@
     _instances_complete: "{{ instances | selectattr('name', 'defined') | list }}"
 
 - name: Fetch VM details from NetBox by ID
-  uri:
+  ansible.builtin.uri:
     url: "{{ netbox_connect.url }}/api/virtualization/virtual-machines/{{ vm_item.netbox_id }}/"
     method: GET
     headers:
@@ -26,7 +26,7 @@
   register: _nb_resolved_vms
 
 - name: Fetch IP for resolved VMs
-  uri:
+  ansible.builtin.uri:
     url: "{{ netbox_connect.url }}/api/ipam/ip-addresses/?virtual_machine_id={{ vm_item.netbox_id }}"
     method: GET
     headers:
