@@ -3,11 +3,11 @@
 # OVF-env CD-ROM (cloud-init only), run post-provision commands, apply
 # sshd overrides.
 #
-# Pre-boot work (configure_hardware + inject) runs in prepare_all.yml.
-# Power-on for ALL VMs runs in parallel from poweron_all.yml. By the time
-# this loop starts, every VM is already booting concurrently — so even
-# though this loop is sequential per-VM, the OS-boot wall clock has been
-# folded across all VMs instead of paid serially.
+# Pre-boot work (configure_hardware + inject + power-on) runs in
+# prepare_all.yml — each VM is powered on at the end of its prepare iter,
+# so by the time this loop starts every VM is already booting concurrently.
+# Even though this loop is sequential per-VM, the OS-boot wall clock has
+# been folded across all VMs instead of paid serially.
 #
 # CLEANUP IS NOT INVOKED HERE. First-boot guestinfo cleanup
 # (clearing guestinfo.ignition.config.data / guestinfo.userdata etc.) used

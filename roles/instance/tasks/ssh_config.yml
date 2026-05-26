@@ -104,8 +104,12 @@
              else '' }}
 
     # ── SELinux + socket-activation preflight (always, before any restart) ─
-    # Run regardless of port — semanage is no-op if port is already labeled;
-    # socket-activation toggle only fires when sockets are present.
+    # Three independent best-effort blocks, each terminated with `|| true`
+    # so any failure is silently ignored (semanage missing on FCOS,
+    # ssh.socket absent on non-Debian, etc.). Final `exit 0` guarantees
+    # the overall shell exit is 0 regardless of internal sub-failures.
+    # Intentionally NO `set -e` and NO `no_log` — these were the source
+    # of opaque "Module failed" errors before.
     - name: "Preflight — SELinux + socket activation on {{ item.name }}"
       when: _ssh_port | int != 22
       community.vmware.vmware_vm_shell:
@@ -120,27 +124,24 @@
         vm_password: "{{ instance_user_password }}"
         vm_shell: /bin/bash
         vm_shell_args: >-
-          -c "set -e;
-          OS_FAMILY=$(. /etc/os-release && echo \"${ID_LIKE:-$ID}\");
-          case \"$OS_FAMILY\" in
-            *rhel*|*fedora*|*centos*|*coreos*|*suse*|*opensuse*)
-              if command -v getenforce >/dev/null 2>&1 && [ \"$(getenforce 2>/dev/null)\" != 'Disabled' ] && command -v semanage >/dev/null 2>&1; then
-                sudo semanage port -a -t ssh_port_t -p tcp {{ _ssh_port }} 2>/dev/null
-                  || sudo semanage port -m -t ssh_port_t -p tcp {{ _ssh_port }} 2>/dev/null
-                  || true;
-              fi;;
-          esac;
+          -c "
+          if command -v semanage >/dev/null 2>&1; then
+            sudo semanage port -a -t ssh_port_t -p tcp {{ _ssh_port }} 2>&1
+            || sudo semanage port -m -t ssh_port_t -p tcp {{ _ssh_port }} 2>&1
+            || true;
+          fi;
           for sock in ssh.socket sshd.socket; do
-            if systemctl is-enabled \"$sock\" >/dev/null 2>&1; then
-              sudo systemctl disable --now \"$sock\" 2>/dev/null || true;
-            fi;
+            systemctl is-enabled \"$sock\" >/dev/null 2>&1
+            && sudo systemctl disable --now \"$sock\" 2>&1
+            || true;
           done;
-          (sudo systemctl enable ssh.service 2>/dev/null
-            || sudo systemctl enable sshd.service 2>/dev/null
-            || true)"
+          sudo systemctl enable ssh.service 2>&1
+          || sudo systemctl enable sshd.service 2>&1
+          || true;
+          exit 0
+          "
         wait_for_process: true
       delegate_to: localhost
-      no_log: true
 
     # ── Phase 1: transitional state (BOTH 22 and new port) ────────────────
     # Skip if port unchanged OR already migrated.

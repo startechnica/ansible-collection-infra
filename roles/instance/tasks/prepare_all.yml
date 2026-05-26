@@ -1,9 +1,24 @@
 ---
-# Phase 2a: per-VM pre-boot setup — hardware reconfigure + first-boot config
-# inject. These are fast vSphere API calls (no actual boot involved), so a
-# sequential per-VM loop is fine. Splitting them out of configure_all.yml
-# means the slow part (boot wait) can happen for ALL VMs in parallel after
-# poweron_all.yml fires the power-on commands together.
+# Phase 2a: per-VM pre-boot setup AND power-on. Sequential per VM:
+# hardware reconfigure → floppy remove → first-boot config inject →
+# power on (ack-only, ~sub-second). The vmware_guest power-on returns
+# once vSphere acks; the actual boot proceeds in the background. By
+# the time this loop ends every VM is mid-boot in parallel, and
+# wait_for_boot_all.yml awaits vmtools+IP across the fleet in a single
+# batch (still parallel).
+#
+# Why fold power-on into this loop instead of a separate poweron_all
+# phase: VM N starts booting while we're still preparing VM N+1, so the
+# wall-clock for boot is overlapped with the prepare work that would
+# otherwise serialize ahead of it.
+#
+# Why serial-ack instead of async/poll-0 on the power-on call:
+#   * Deterministic order — operator sees N1 powered on before N2 in
+#     -v output; matches the mental model of "bring up node 1, then 2".
+#   * Avoids a vSphere thundering-herd when N VMs all power-on the same
+#     second and contend for the same datastore / network.
+#   * Wall-clock cost is small: each ack is sub-second; the long part
+#     (boot + cloud-init/ignition) is parallel via wait_for_boot_all.
 
 - name: "Configure hardware for {{ instance.name }}"
   ansible.builtin.include_tasks: create_vm/configure_hardware.yml
@@ -13,8 +28,8 @@
 # Floppy device removal MUST happen while the VM is powered off — VMware
 # doesn't support hot-remove for floppy ("operation cannot be performed
 # in the current state (Powered on)"). Runs after deploy_all (which
-# leaves the VM powered off) and before poweron_all. The script skips
-# gracefully if a VM is somehow already running, so re-runs are safe.
+# leaves the VM powered off) and before the power-on below. The script
+# skips gracefully if a VM is somehow already running, so re-runs are safe.
 - name: "Remove virtual floppy device from {{ instance.name }}"
   ansible.builtin.include_tasks: create_vm/detach_floppy.yml
   vars:
@@ -23,10 +38,30 @@
 # Computed role-name dispatch — `instance_init_type=cloud-init` → role
 # `instance_cloud_init`; `instance_init_type=ignition` → `instance_ignition`.
 # One task, no `when:` per branch, no "skipping" output for the wrong
-# init type. Same pattern is used in poweron_all.yml + configure_all.yml.
+# init type. Same pattern is used for poweron_mark below + configure_all.yml.
 - name: "Inject first-boot config for {{ instance.name }}"
   ansible.builtin.include_role:
     name: "instance_{{ instance_init_type | replace('-', '_') }}"
     tasks_from: inject.yml
   vars:
     item: "{{ instance }}"
+
+# Power-on is the SAME vSphere API call for cloud-init and ignition; only
+# the per-init-type status bookkeeping (cloud_init_status vs ignition_status)
+# differs — handled by the dispatched poweron_mark include below.
+- name: "Power on {{ instance.name }}"
+  community.vmware.vmware_guest:
+    hostname: "{{ vcenter_connect.hostname }}"
+    username: "{{ vcenter_connect.username }}"
+    password: "{{ vcenter_connect.password }}"
+    validate_certs: "{{ vcenter_connect.validate_certs }}"
+    datacenter: "{{ instance_datacenter }}"
+    folder: "{{ instance_folder_path }}"
+    name: "{{ instance.name }}"
+    state: poweredon
+  delegate_to: localhost
+
+- name: "Mark VM as powered on (init-type bookkeeping) — {{ instance.name }}"
+  ansible.builtin.include_role:
+    name: "instance_{{ instance_init_type | replace('-', '_') }}"
+    tasks_from: poweron_mark.yml

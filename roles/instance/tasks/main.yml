@@ -155,11 +155,12 @@
     - not (validation_only)
     - instances_to_create | length > 0
 
-# Phase 2a: Per-VM pre-boot setup — hardware reconfigure + first-boot config
-# inject. Sequential per VM, but each step is just a vSphere API call so it's
-# fast. MUST happen before power-on, otherwise cloud-init/ignition has no
-# config to consume on first boot.
-- name: Pre-boot setup (hardware + inject)
+# Phase 2a: Per-VM pre-boot setup + power-on. Sequential per VM:
+# hardware reconfig → floppy remove → first-boot config inject → power on
+# (ack only; actual boot proceeds in background). Folds power-on into
+# the prepare loop so VM N starts booting while VM N+1 is still being
+# prepared — overlapping boot wall-clock with prepare serialization.
+- name: Pre-boot setup + power-on (per VM)
   ansible.builtin.include_tasks: prepare_all.yml
   loop: "{{ instances_to_create }}"
   loop_control:
@@ -169,18 +170,7 @@
     - not (validation_only)
     - instances_to_create | length > 0
 
-# Phase 2b: Send power-on commands to each VM in sequence. The
-# vmware_guest call returns once vSphere acks, so by the time the loop
-# ends every VM is mid-boot in parallel; the next phase waits for them
-# as a batch. Serial-ack gives deterministic ordering in output and
-# avoids datastore / network thundering-herd at first-boot.
-- name: Power on each VM (serial)
-  ansible.builtin.include_tasks: poweron_all.yml
-  when:
-    - not (validation_only)
-    - instances_to_create | length > 0
-
-# Phase 2b.5: wait for vmtools+IP on all VMs in a single batch query.
+# Phase 2b: wait for vmtools+IP on all VMs in a single batch query.
 # Folds N × ~17 min serial waits (the previous per-VM pattern in verify.yml)
 # into one parallel wait dominated by the slowest VM. After this completes,
 # the per-VM verify.yml waits succeed on first attempt — they stay as
