@@ -6,7 +6,7 @@
 #   instance_init_type: cloud-init
 #   content_library_{name,template,type} = ubuntu-images / noble-server-cloudimg-amd64 / ovf
 #   instance_user_{name,password,sudo,shell,...}
-#   docker_install / docker_users / docker_daemon_options
+#   docker_enabled / docker_users / docker_daemon_options
 #
 # Override any of those per-inventory by re-declaring under `vars:` below.
 #

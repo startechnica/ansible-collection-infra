@@ -48,6 +48,17 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   port → verify new port reachable from controller → drop 22. On
   verify failure, sshd stays on both ports so the operator can SSH in
   on 22 to diagnose.
+- Renamed `docker_install` → `docker_enabled`. Aligns with
+  `podman_enabled` and `mongodb_enabled` / `patroni_enabled` naming —
+  the var is a host-level enable toggle, not just an install action.
+  Affects all consumers: instance defaults, validate_inventory,
+  build_host_groups (add_host propagation), instance/mongodb/patroni
+  main.yml dispatch gates, deploy.yml stage gates, deploy_mongodb.yml /
+  deploy_patroni.yml geerlingguy.docker `when:`, fcos.bu.j2 conditional
+  blocks. Inventory migration: rename the key in inventory + any
+  group_vars files. The task filename `preflight/docker_install_fcos.yml`
+  is unchanged (separate concept — "the task that installs Docker on
+  FCOS", not the variable).
 
 ### Added
 - `instance_ignition` Butane templates (`fcos.bu.j2`, `flatcar.bu.j2`,

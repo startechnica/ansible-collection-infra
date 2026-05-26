@@ -261,9 +261,9 @@ instance_init_type: ""
 ##                                         ignition / FCOS path; cloud-init
 ##                                         inventories must override to
 ##                                         `docker` (and flip
-##                                         docker_install: true /
+##                                         docker_enabled: true /
 ##                                         podman_enabled: false).
-##   docker_install    [default: false]   Install docker-ce.
+##   docker_enabled    [default: false]   Install docker-ce.
 ##   podman_enabled    [default: false]   Enable podman (Quadlet path).
 ##                                         Podman ships preinstalled on
 ##                                         FCOS, so this is enable-only
@@ -278,16 +278,16 @@ instance_init_type: ""
 ## Truth table (cluster role behavior given mongodb_enabled or
 ## patroni_enabled is true):
 ##
-##   docker_install | container_engine | podman_enabled | result
-##   ---------------|------------------|----------------|------------------
-##   true           | podman           | true           | run using podman
-##   true           | podman           | false          | skip all
-##   true           | docker           | true           | run using docker
-##   true           | docker           | false          | run using docker
-##   false          | docker           | false          | skip all
-##   false          | docker           | true           | skip all
-##   false          | podman           | true           | run using podman
-##   false          | podman           | false          | skip all
+##   container_engine | podman_enabled | docker_enabled | result
+##   -----------------|----------------|----------------|------------------
+##   docker           | true           | true           | run using docker
+##   docker           | false          | true           | run using docker
+##   docker           | true           | false          | skip all
+##   docker           | false          | false          | skip all
+##   podman           | true           | true           | run using podman
+##   podman           | true           | false          | run using podman
+##   podman           | false          | true           | skip all
+##   podman           | false          | false          | skip all
 ##
 ## In other words: the selected engine's toggle must be true. The
 ## non-selected engine's toggle is irrelevant to dispatch — it just
@@ -307,12 +307,12 @@ instance_init_type: ""
 ##                                         `_platform_map[instance_platform_preset].container_engine`
 ##                                         (Debian/Suse → docker, RedHat →
 ##                                         podman); final fallback is podman.
-## @param docker_install [default: false] Install docker-ce on the host.
+## @param docker_enabled [default: false] Install docker-ce on the host.
 ##                                         Required for `container_engine: docker`.
 ## @param podman_enabled [default: false] Enable podman + Quadlets.
 ## Only honored on ignition hosts.
 container_engine: ""
-docker_install: false
+docker_enabled: false
 podman_enabled: true
 
 ## @section Default User Parameters

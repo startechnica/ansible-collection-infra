@@ -34,7 +34,7 @@
   when: not (mongodb_enabled | bool)
 
 # ── Skip if the selected container engine isn't actually installed ──
-# `container_engine` is the authoritative selector; docker_install and
+# `container_engine` is the authoritative selector; docker_enabled and
 # podman_enabled are independent install/enable toggles. If the
 # selected engine's toggle is off, there's nothing to dispatch against
 # — bail gracefully instead of trying to start containers on a runtime
@@ -50,18 +50,18 @@
   ansible.builtin.debug:
     msg: >-
       container_engine={{ container_engine | default('docker') }} but
-      {{ 'docker_install' if container_engine | default('docker') == 'docker' else 'podman_enabled' }}=false
+      {{ 'docker_enabled' if container_engine | default('docker') == 'docker' else 'podman_enabled' }}=false
       on this host. Skipping mongodb role.
   when:
     - mongodb_action | default('provision') != 'uninstall'
-    - (container_engine | default('docker')) == 'docker' and not (docker_install | default(false) | bool) or (container_engine | default('docker')) == 'podman' and not
+    - (container_engine | default('docker')) == 'docker' and not (docker_enabled | default(false) | bool) or (container_engine | default('docker')) == 'podman' and not
       (podman_enabled | default(false) | bool)
 
 - name: End role if selected container engine is inactive
   ansible.builtin.meta: end_role
   when:
     - mongodb_action | default('provision') != 'uninstall'
-    - (container_engine | default('docker')) == 'docker' and not (docker_install | default(false) | bool) or (container_engine | default('docker')) == 'podman' and not
+    - (container_engine | default('docker')) == 'docker' and not (docker_enabled | default(false) | bool) or (container_engine | default('docker')) == 'podman' and not
       (podman_enabled | default(false) | bool)
 
 # ── Derived variables (always available) ──

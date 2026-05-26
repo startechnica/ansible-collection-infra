@@ -53,7 +53,7 @@
 
 - name: Assert container runtime selection is valid
   vars:
-    _docker: "{{ docker_install | default(false) | bool }}"
+    _docker: "{{ docker_enabled | default(false) | bool }}"
     _podman: "{{ podman_enabled | default(false) | bool }}"
     _init: "{{ instance_init_type | default('ignition') }}"
     _ce: "{{ container_engine | default('docker') | trim }}"
@@ -73,7 +73,7 @@
     fail_msg: >-
       Invalid container runtime selection:
       container_engine='{{ _ce }}',
-      docker_install={{ _docker }},
+      docker_enabled={{ _docker }},
       podman_enabled={{ _podman }},
       instance_init_type='{{ _init }}'.
       Rules:
@@ -83,7 +83,7 @@
           mongodb / patroni to actually run; otherwise the role
           end_roles itself (skip all).
     success_msg: >-
-      Container runtime: {{ _ce }}{%- if _ce == 'podman' %} (systemd Quadlets){%- else %} (docker-compose){%- endif %} [docker_install={{ _docker }}, podman_enabled={{ _podman }}]{%-
+      Container runtime: {{ _ce }}{%- if _ce == 'podman' %} (systemd Quadlets){%- else %} (docker-compose){%- endif %} [docker_enabled={{ _docker }}, podman_enabled={{ _podman }}]{%-
       if _skip_all %} — selected engine's toggle is off, mongodb / patroni will skip{%- endif %}
   # Skip when the active tag set doesn't include a stage that uses a
   # container runtime. `--tags provision` (VM creation only) doesn't
@@ -99,12 +99,12 @@
   ansible.builtin.debug:
     msg: >-
       container_engine={{ container_engine | default('docker') }} but
-      {{ 'docker_install' if container_engine | default('docker') == 'docker' else 'podman_enabled' }}=false.
+      {{ 'docker_enabled' if container_engine | default('docker') == 'docker' else 'podman_enabled' }}=false.
       mongodb / patroni roles will end_role (skip all) on these hosts.
       Set the matching toggle to true, or flip container_engine to the
       one that's enabled.
   when:
-    - (container_engine | default('docker')) == 'docker' and not (docker_install | default(false) | bool) or (container_engine | default('docker')) == 'podman' and not
+    - (container_engine | default('docker')) == 'docker' and not (docker_enabled | default(false) | bool) or (container_engine | default('docker')) == 'podman' and not
       (podman_enabled | default(false) | bool)
     - (mongodb_enabled | default(true) | bool) or (patroni_enabled | default(true) | bool)
     # Same gate as the assert above — skip the warning on provision-only runs.
@@ -343,7 +343,7 @@
   vars:
     _ce: "{{ container_engine | default('docker') }}"
     _engine_active: >-
-      {{ (_ce == 'docker' and (docker_install | default(false) | bool))
+      {{ (_ce == 'docker' and (docker_enabled | default(false) | bool))
          or (_ce == 'podman' and (podman_enabled | default(false) | bool)) }}
     _init_mode: "{{ instance_init_type | default('ignition') }}"
     _init_flavour_note: "{{ ' (' ~ instance_platform_preset ~ ')' if (_init_mode == 'ignition' and instance_platform_preset | default('') | length > 0) else '' }}"
@@ -352,10 +352,10 @@
       - "Inventory: {{ inventory_file | basename }}"
       - "Init mode: {{ _init_mode }}{{ _init_flavour_note }}"
       - >-
-        Container engine: {{ _ce }}{%- if _ce == 'podman' %} (systemd Quadlets){%- else %} (docker-compose){%- endif %} [docker_install={{ docker_install | default(false) }}, podman_enabled={{
+        Container engine: {{ _ce }}{%- if _ce == 'podman' %} (systemd Quadlets){%- else %} (docker-compose){%- endif %} [docker_enabled={{ docker_enabled | default(false) }}, podman_enabled={{
         podman_enabled | default(false) }}]{%- if not _engine_active %} — selected engine inactive, mongodb / patroni will skip{%- endif %}
       - >-
-        Docker install:{%- if not (docker_install | default(false) | bool) %} disabled (docker_install=false){%- elif instance_init_type | default('ignition') == 'ignition' %} rpm-ostree
+        Docker install:{%- if not (docker_enabled | default(false) | bool) %} disabled (docker_enabled=false){%- elif instance_init_type | default('ignition') == 'ignition' %} rpm-ostree
         layer (Ignition fcos-bootstrap){%- else %} geerlingguy.docker (cloud-init){%- endif %}
       - "VMs declared: {{ instances | default([]) | length }}"
       - "NetBox enrichment: {{ 'on' if netbox_enabled | default(false) | bool else 'off' }}"

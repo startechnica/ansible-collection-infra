@@ -219,7 +219,7 @@ instance_tags:
 # for the full truth table). The selected `container_engine` must have its
 # install/enable toggle on, otherwise mongodb/patroni end_role themselves.
 container_engine: docker          # docker | podman
-docker_install: true              # install docker-ce on cloud-init hosts
+docker_enabled: true              # install docker-ce on cloud-init hosts
                                   # (FCOS hosts get it layered via Ignition)
 podman_enabled: false             # enable podman + Quadlets (ignition path only)
 

@@ -29,7 +29,7 @@ instance_extra_users: []
 # this and the rest below.
 instance_platform_preset: fedora-coreos
 container_engine: docker
-docker_install: true
+docker_enabled: true
 fcos_zincati_enabled: false
 chrony_servers: []
 nm_unmanaged_devices:

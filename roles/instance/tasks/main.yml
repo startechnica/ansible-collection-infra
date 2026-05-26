@@ -92,7 +92,7 @@
         label: "{{ item.name }}"
       when:
         - instance_init_type == 'ignition'
-        - docker_install | bool
+        - docker_enabled | bool
 
     - name: All VMs already exist, skipping provisioning
       ansible.builtin.debug:

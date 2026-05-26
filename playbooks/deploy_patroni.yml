@@ -81,7 +81,7 @@
         tasks_from: inherit_localhost_vars
   roles:
     - role: geerlingguy.docker
-      when: docker_install | default(false) | bool
+      when: docker_enabled | default(false) | bool
 
 # ── Stage 5: Deploy Patroni HA PostgreSQL Cluster ─────────────────────────────
 

@@ -443,7 +443,7 @@ systemd:
 
         [Install]
         WantedBy=multi-user.target
-{% if container_engine | default('docker') == 'docker' and (docker_install | default(false) | bool) %}
+{% if container_engine | default('docker') == 'docker' and (docker_enabled | default(false) | bool) %}
 
     # Replace FCOS's moby-engine with upstream Docker CE.
     # `override remove` modifies the base layer and cannot be --apply-live, so
@@ -497,7 +497,7 @@ systemd:
         [Unit]
         Description=Publish startechnica bootstrap-ready phase via vmtools
         After=multi-user.target rpm-ostree-install-open-vm-tools.service rpm-ostree-install-python3.service
-{% if container_engine | default('docker') == 'docker' and (docker_install | default(false) | bool) %}
+{% if container_engine | default('docker') == 'docker' and (docker_enabled | default(false) | bool) %}
         After=docker.service rpm-ostree-install-docker-ce.service
         Wants=docker.service
 {% endif %}
