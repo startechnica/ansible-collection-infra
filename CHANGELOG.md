@@ -28,6 +28,26 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   - `instance_init_type`: `ignition` → `""`
   - `container_engine`: `podman` → `""`
   - `content_library_name`, `content_library_template`: already `""`
+- Removed `Port` directive from `instance_ssh_configs` / per-VM
+  `instances[].ssh_config`. Introduced top-level `instance_ssh_port`
+  (and per-VM `instances[].ssh_port`) as the canonical SSH port knob.
+  The dict-of-directives approach silently failed on port changes
+  because (a) sshd's `Port` is additive across drop-ins so the main
+  config's `Port 22` kept 22 open, (b) systemd socket activation
+  (`ssh.socket` on Ubuntu 22.04+ / Debian 12) bypasses sshd_config
+  entirely, and (c) SELinux on RHEL/Suse blocks non-22 binds without
+  `semanage port -a`. The new `instance_ssh_port` task handles all
+  three. `ansible_port` derivation in `build_host_groups.yml` and the
+  vendored `playbooks/{mongodb,patroni}/_setup.yml` now read
+  `item.ssh_port | default(instance_ssh_port)` instead of digging
+  into `ssh_configs.Port`. Inventory migration: move
+  `instance_ssh_configs.Port: 2222` → `instance_ssh_port: 2222`; per-VM
+  `instances[].ssh_config.Port: N` → `instances[].ssh_port: N`. Other
+  sshd_config directives stay in `instance_ssh_configs` unchanged.
+  Port changes now run a two-phase migration: bind BOTH 22 and the new
+  port → verify new port reachable from controller → drop 22. On
+  verify failure, sshd stays on both ports so the operator can SSH in
+  on 22 to diagnose.
 
 ### Fixed
 - `playbooks/patroni/remove-node.yml`: uninstall dispatch was importing

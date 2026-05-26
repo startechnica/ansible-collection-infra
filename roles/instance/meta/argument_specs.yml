@@ -295,9 +295,18 @@ argument_specs:
           ignition:
             type: dict
             description: Per-VM ignition dict (`role`, `users`, `packages`, `runcmds`, `files`, `systemd_units`).
+          ssh_port:
+            type: int
+            description: >-
+              Per-VM sshd listen port override. Falls back to role-level
+              `instance_ssh_port` (default 22). Drives `ansible_port` so the
+              firewall role opens the right port automatically.
           ssh_config:
             type: dict
-            description: Per-VM sshd_config overrides; merged over role-level `instance_ssh_configs`.
+            description: >-
+              Per-VM sshd_config overrides; merged over role-level
+              `instance_ssh_configs`. Do NOT put `Port` here — use `ssh_port`
+              (or role-level `instance_ssh_port`) instead.
           tags:
             type: list
             elements: str
@@ -326,15 +335,28 @@ argument_specs:
             description: NetBox cluster override (resolution chain — see netbox_register/README).
 
       # ── SSH customisation (optional) ──
+      instance_ssh_port:
+        type: int
+        default: 22
+        description: >-
+          sshd listen port applied to every VM. Drives `ansible_port` for
+          downstream plays (firewall role then opens it via ansible_port).
+          When set to non-22, the ssh_config task migrates safely: binds both
+          22 and the new port, verifies the new port is reachable from the
+          controller, then drops 22. Handles SELinux port labels and
+          ssh.socket / sshd.socket on socket-activated distros. Per-VM
+          override: `instances[].ssh_port`.
       instance_ssh_configs:
         type: dict
         default: {}
         description: >-
-          sshd_config directives written to /etc/ssh/sshd_config.d/99-ansible.conf
-          on each VM via VMware Tools after cloud-init finishes. Keys map 1:1 to
-          sshd_config directive names (e.g. Port, PasswordAuthentication,
-          PermitRootLogin, ClientAliveInterval). Per-VM `instance_ssh_configs` in the instances
-          list merges with (and overrides) this role-level one.
+          Other sshd_config directives written to
+          /etc/ssh/sshd_config.d/99-ansible.conf on each VM via VMware Tools
+          after first boot. Keys map 1:1 to sshd_config directive names (e.g.
+          PasswordAuthentication, PermitRootLogin, ClientAliveInterval).
+          Per-VM `ssh_config` in the instances list merges with (and
+          overrides) this role-level one. Do NOT put `Port` here — use
+          `instance_ssh_port` above (Port removed from this dict in 1.0.1).
 
       # ── Permissions (optional) ──
       vcenter_principal_user:

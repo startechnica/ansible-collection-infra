@@ -85,6 +85,7 @@
   gather_facts: false
   connection: local
   vars_files:
+    - ../roles/common/vars/main.yml
     - ../roles/instance/defaults/main.yml
     - ../roles/instance/vars/main.yml
     - ../roles/instance_ignition/defaults/main.yml
@@ -135,7 +136,7 @@
       changed_when: false
       loop: >-
         {{
-          ['fcos', 'flatcar', 'rhcos', 'opensuse']
+          ['fedora-coreos', 'flatcar', 'rhel-coreos', 'opensuse-microos']
           | product(fixture_instances | map(attribute='hostname'))
           | map('join', '-')
           | map('regex_replace', '$', '.bu')

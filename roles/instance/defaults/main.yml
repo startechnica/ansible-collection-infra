@@ -350,18 +350,32 @@ instance_user_lock_passwd: true
 instance_user_password: ""
 
 ## @section SSH configuration
-## @description sshd_config directives applied after cloud-init via VMware Tools.
-## Keys are written verbatim as sshd directive names; values as the right-hand
-## side. Effective config = role-level instance_ssh_configs merged with item.ssh_config.
-## Empty = no changes made to sshd.
+## @description sshd port + sshd_config directives applied after first boot via
+## VMware Tools. Port is its own knob because it cuts across firewall rules,
+## SELinux port labels, systemd socket-activation, and `ansible_port` for
+## subsequent plays — none of which a generic dict-of-directives can express.
+##
+## @param instance_ssh_port [default: 22] sshd listen port. Drives `ansible_port`
+## for downstream plays (firewall role then opens it via ansible_port). When set
+## to non-22, the ssh_config task migrates the VM safely: first binds both 22
+## and the new port, verifies the new port is reachable from the controller,
+## then drops 22. Disables ssh.socket/sshd.socket on socket-activated distros
+## and runs `semanage port -a` on SELinux-enforcing RHEL/Suse.
+## Per-VM override: `instances[].ssh_port`.
+##
+## @param instance_ssh_configs [default: {}] Other sshd_config directives written
+## to /etc/ssh/sshd_config.d/99-ansible.conf on each VM. Keys map 1:1 to sshd
+## directive names; values are written verbatim. Do NOT put `Port` here — use
+## `instance_ssh_port` above (removed in 1.0.1, see CHANGELOG).
 ##
 ## Example:
+##   instance_ssh_port: 2222
 ##   instance_ssh_configs:
-##     Port: 2222
 ##     PasswordAuthentication: "no"
 ##     PermitRootLogin: "no"
 ##     ClientAliveInterval: 300
 ##
+instance_ssh_port: 22
 instance_ssh_configs: {}
 # # @section First-Boot Parameters
 # # @description Packages and commands to run on first boot. Used by both cloud-init and ignition.

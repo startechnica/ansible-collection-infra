@@ -40,5 +40,6 @@
 - name: Apply SSH configuration overrides
   ansible.builtin.include_tasks: ssh_config.yml
   when: >-
-    (instance_ssh_configs | length > 0)
+    ((item.ssh_port | default(instance_ssh_port | default(22))) | int != 22)
+    or (instance_ssh_configs | length > 0)
     or (item.ssh_config | default({}) | length > 0)
