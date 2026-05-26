@@ -1,25 +1,25 @@
 # instance_ignition
 
-Ignition phases for [instance](../instance/). Supports Fedora CoreOS
-(default), Flatcar Container Linux, Red Hat CoreOS (RHCOS), and openSUSE
-MicroOS — pick via `ignition_flavour` (see *Flavor support* below).
+Ignition phases for [instance](../instance/). Supports Fedora CoreOS,
+Flatcar Container Linux, Red Hat CoreOS (RHCOS), and openSUSE MicroOS —
+pick via `instance_platform_preset` (see *Preset support* below).
 
 Not a standalone role — sub-role invoked from `instance/tasks/main.yml`
 via `include_role: tasks_from:`.
 
-## Flavor support
+## Preset support
 
-`ignition_flavour` (parent-role var, default `fcos`) selects a per-distro
-defaults map at [defaults/main.yml](defaults/main.yml) (`ignition_flavour_map`).
-The map supplies every flavor-varying knob; callers rarely need to override
-individual `ignition.*` keys.
+`instance_platform_preset` (parent-role var) selects a row in
+`_platform_map` (`roles/common/vars/main.yml`). The row's `ignition:`
+sub-dict supplies every flavour-varying knob; callers rarely need to
+override individual `ignition_flavour_default.*` keys.
 
-| Flavor | Butane variant | Spec version | Template prefix | Default user | Default channel | Channels | Metadata URL |
+| Preset | Butane variant | Spec version | Template prefix | Default user | Default channel | Channels | Metadata URL |
 |---|---|---|---|---|---|---|---|
-| `fcos` | `fcos` | `1.5.0` | `fedora-coreos` | `core` | `stable` | `stable`, `testing`, `next` | `https://builds.coreos.fedoraproject.org/streams/{channel}.json` |
+| `fedora-coreos` | `fcos` | `1.5.0` | `fedora-coreos` | `core` | `stable` | `stable`, `testing`, `next` | `https://builds.coreos.fedoraproject.org/streams/{channel}.json` |
 | `flatcar` | `flatcar` | `1.1.0` | `flatcar-production-vmware` | `core` | `stable` | `stable`, `beta`, `alpha`, `lts` | `https://{channel}.release.flatcar-linux.net/amd64-usr/current/version.txt` |
-| `rhcos` | `openshift` | `4.16.0` | `rhcos` | `core` | `4.16` | (Red Hat portal) | — (manual OVA) |
-| `opensuse` | `opensuse` | `1.0.0` | `openSUSE-MicroOS` | `root` | `tumbleweed` | `tumbleweed` | — (manual OVA) |
+| `rhel-coreos` | `openshift` | `4.21.0` | `rhcos` | `core` | `4.16` | (Red Hat portal) | — (manual OVA) |
+| `opensuse-microos` | `opensuse` | `1.0.0` | `openSUSE-MicroOS` | `opensuse` | `tumbleweed` | `tumbleweed` | — (manual OVA) |
 
 All of those are available as `ignition_flavour_default.butane_variant`,
 `ignition_flavour_default.butane_spec_version`, `ignition_flavour_default.channel`, `ignition_flavour_default.metadata_url`,
@@ -27,7 +27,7 @@ All of those are available as `ignition_flavour_default.butane_variant`,
 metadata/OVA URLs is substituted from `ignition_flavour_default.channel`, so flipping
 channels (e.g. `ignition_flavour_default.channel: lts` for Flatcar) requires no URL edits.
 
-Auto-import currently parses only the FCOS stream schema. For other flavors,
+Auto-import currently parses only the FCOS stream schema. For other presets,
 pre-import the OVA into the content library manually (or via vCenter UI), set
 `content_library_template` to the imported name, and set
 `content_library_auto_import: false`.
@@ -51,7 +51,7 @@ Also bundled:
 - `instances_to_create` (render/prepare) — full list for once-per-run ops
 - `ignition` — config dict: `butane_template`, `butane_variant`, `butane_spec_version`, `butane_strict`, `tmp_dir`
 - `ignition_fcos_stream`, `ignition_fcos_arch`, `ignition_fcos_stream_metadata_url` — flat FCOS-specific scalars (see instance defaults)
-- `ignition_flavour` — `fcos` (default) / `flatcar` / `rhcos` / `opensuse`; supplies defaults for `butane_variant` + `butane_spec_version`
+- `instance_platform_preset` — `fedora-coreos` / `flatcar` / `rhel-coreos` / `opensuse-microos`; supplies defaults for `butane_variant` + `butane_spec_version`
 - `content_library` — `name`, `template`, `template_prefix`, `auto_import`, etc.
 - `vcenter`, `instance_datacenter`, `instance_folder` — standard vCenter connection vars
 

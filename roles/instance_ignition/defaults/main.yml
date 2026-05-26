@@ -1,9 +1,11 @@
 ---
 
 debug: false
-# Per-flavor static lookup table (`ignition_flavour_map`) lives in
-# vars/main.yml — it's vendor knowledge tied to each distro's release
-# process, not a deployment knob. See roles/instance_ignition/vars/main.yml.
+# Per-preset Butane / OVA metadata lives in
+# `_platform_map[instance_platform_preset].ignition`
+# (roles/common/vars/main.yml). Resolved into `ignition_flavour_default`
+# via roles/instance/vars/main.yml::_ignition_flavour_default. Vendor
+# knowledge tied to each distro's release process, not a deployment knob.
 
 # Zincati: FCOS auto-updater. Default false on cluster nodes — an
 # unattended Zincati reboot of a Patroni leader / Mongo primary mid-

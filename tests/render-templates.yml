@@ -103,18 +103,18 @@
       loop_control:
         loop_var: ig_state
 
-    # One render per (flavour × instance). Default loop_var (item) is the
-    # FLAVOUR; the inner loop var that the Butane template expects is named
-    # `instance` (matches production render_ignition.yml).
-    - name: "Ig :: render Butane templates for each flavour × fixture instance"
+    # One render per (preset × instance). Default loop_var (item) is the
+    # PLATFORM PRESET slug; the inner loop var that the Butane template
+    # expects is named `instance` (matches production render_ignition.yml).
+    - name: "Ig :: render Butane templates for each preset × fixture instance"
       ansible.builtin.template:
-        src: "../roles/instance_ignition/templates/{{ ignition_flavour_map[ignition_flavour].butane_template }}"
-        dest: "{{ _render_dir }}/{{ ignition_flavour }}-{{ instance.hostname }}.bu"
+        src: "../roles/instance_ignition/templates/{{ _platform_map[instance_platform_preset].ignition.butane_template }}"
+        dest: "{{ _render_dir }}/{{ instance_platform_preset }}-{{ instance.hostname }}.bu"
         mode: "0644"
       vars:
-        ignition_flavour: "{{ _pair.0 }}"
+        instance_platform_preset: "{{ _pair.0 }}"
         instance: "{{ _pair.1 }}"
-      loop: "{{ ['fcos', 'flatcar', 'rhcos', 'opensuse'] | product(fixture_instances) | list }}"
+      loop: "{{ ['fedora-coreos', 'flatcar', 'rhel-coreos', 'opensuse-microos'] | product(fixture_instances) | list }}"
       loop_control:
         loop_var: _pair
         label: "{{ _pair.0 }}/{{ _pair.1.hostname }}"

@@ -1,0 +1,36 @@
+---
+# Publish the slug-resolved fallback values as host facts on the current
+# host. Idempotent — re-running just overwrites with the same values.
+#
+# Invoke from any role that needs `instance_init_type`,
+# `instance_user_name`, `container_engine`, or `content_library_*`
+# resolved through `instance_platform_preset` against `_platform_map`.
+#
+# After this runs, consumers read the bare public-var names; the host
+# fact (precedence #18) wins over role defaults/inventory and carries
+# the resolved value. The `_resolved_*` derivations themselves respect
+# any inventory override (inventory non-empty > _platform_map lookup
+# > hardcoded final fallback) — see common/vars/main.yml.
+#
+# Usage (from another role's tasks/main.yml):
+#   - name: Resolve platform-preset fallbacks
+#     ansible.builtin.include_role:
+#       name: common
+#       tasks_from: resolve_platform_preset
+#
+# Or inside common itself (e.g. validate_inventory, build_host_groups):
+#   - ansible.builtin.include_tasks: resolve_platform_preset.yml
+
+- name: Publish platform-preset resolved values as host facts
+  ansible.builtin.set_fact:
+    instance_init_type: "{{ _resolved_instance_init_type }}"
+    instance_user_name: "{{ _resolved_instance_user_name }}"
+    container_engine: "{{ _resolved_container_engine }}"
+    content_library_name: "{{ _resolved_content_library_name }}"
+    content_library_template: "{{ _resolved_content_library_template }}"
+    # Also publish the raw `_platform_map` so downstream lazy-eval expressions
+    # that depend on it (notably `instance/vars/main.yml::_ignition_flavour_default`
+    # → `ignition_flavour_default.<field>` referenced by Butane templates) can
+    # resolve after `include_role: name=common` returns and common's role vars
+    # leave scope. Host facts (precedence #18) persist for the play.
+    _platform_map: "{{ _platform_map }}"

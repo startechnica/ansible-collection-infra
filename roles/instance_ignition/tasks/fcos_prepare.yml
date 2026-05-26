@@ -2,16 +2,16 @@
 # Fetch latest Fedora CoreOS OVA metadata, then import to content library.
 # Only runs when: instance_init_type == 'ignition' and content_library_auto_import == true
 
-- name: Fail if auto_import is on for a non-FCOS flavor
+- name: Fail if auto_import is on for a non-FCOS preset
   ansible.builtin.fail:
     msg: >-
-      content_library_auto_import is true but ignition_flavour='{{ ignition_flavour }}'.
+      content_library_auto_import is true but instance_platform_preset='{{ instance_platform_preset }}'.
       Auto-import currently parses only the FCOS stream metadata schema. For
-      Flatcar / RHCOS / openSUSE MicroOS, pre-import the OVA into the content
-      library manually (or via vCenter UI), set
+      flatcar / rhel-coreos / opensuse-microos, pre-import the OVA into the
+      content library manually (or via vCenter UI), set
       content_library_template='<your-template-name>', and set
       content_library_auto_import=false.
-  when: (ignition_flavour | default('fcos')) != 'fcos'
+  when: instance_platform_preset != 'fedora-coreos'
 
 - name: Resolve FCOS stream metadata URL
   ansible.builtin.set_fact:

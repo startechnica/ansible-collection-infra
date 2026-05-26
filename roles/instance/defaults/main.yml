@@ -49,8 +49,8 @@ instance_domain_name: ""
 ## @param instance_dns_servers [default: [8.8.8.8, 1.1.1.1]] DNS servers configured in the guest OS.
 ##
 instance_dns_servers:
-  - 8.8.8.8
   - 1.1.1.1
+  - 8.8.8.8
 
 ## @param instance_timezone [default: ""] Timezone for the guest OS.
 ## e.g. "Asia/Jakarta", "UTC", "America/New_York"
@@ -103,11 +103,26 @@ instance_networks:
   # gateway4: ""           # set in inventory
   # gateway6: ""           # set in inventory if dual-stack
 
+## @section OS Identity
+## @description Pick an OS row from `_platform_map` (roles/common/vars/main.yml)
+## by its NetBox slug; that row supplies fallbacks for `content_library_name`,
+## `content_library_template`, `instance_user_name`, and
+## `instance_init_type` when those vars are not explicitly set in inventory.
+## Any inventory override on those four vars still wins.
+
+## @param instance_platform_preset [default: ""] NetBox platform slug used to look
+## up canonical per-OS defaults in `_platform_map`. Empty disables the
+## fallback (each var falls back to its own static default).
+## e.g. "ubuntu-24-04-lts", "fedora-coreos", "rhel-9"
+##
+instance_platform_preset: ""
+
 ## @section Content Library Parameters
 ## @description VM template source from vCenter Content Library.
 
 ## @param content_library_name [default: ""] Name of the vCenter Content Library.
-## e.g. "ubuntu-images", "Fedora-CoreOS"
+## e.g. "ubuntu-images", "Fedora-CoreOS". Falls back to
+## `_platform_map[instance_platform_preset].content_library_name` when unset.
 ##
 ## @param content_library_template [default: ""] Template name within the content library.
 ## e.g. "noble-server-cloudimg-amd64", "fedora-coreos-43.20260105.3.0-vmware.x86_64"
@@ -115,6 +130,8 @@ instance_networks:
 ## latest FCOS release from upstream stream metadata (ignition only).
 ## When SET, the auto-import step is skipped — the value is treated as a
 ## pin and the role expects the OVA to already exist in the content library.
+## Falls back to `_platform_map[instance_platform_preset].content_library_template`
+## when unset (and before the auto-import probe).
 ##
 ## @param content_library_type [default: ovf] Template type in the content library.
 ## Allowed values: ovf, vm-template
@@ -222,12 +239,15 @@ instance_boot_firmware: efi
 ## @section Initialization Type
 ## @description Choose between cloud-init and ignition (default — Fedora CoreOS / similar).
 
-## @param instance_init_type [default: ignition] Guest initialization method.
-## Allowed values: cloud-init, ignition
+## @param instance_init_type [default: ""] Guest initialization method.
+## Allowed values: cloud-init, ignition. Empty = resolved at role entry
+## by `common/tasks/resolve_platform_preset.yml` from
+## `_platform_map[instance_platform_preset].init_type`; final fallback is
+## `ignition`.
 ## - ignition: Butane → Ignition config injection via guestinfo (Fedora CoreOS, Flatcar, etc.)
 ## - cloud-init: Standard cloud-init userdata/metadata injection (Ubuntu, Debian, etc.)
 ##
-instance_init_type: ignition
+instance_init_type: ""
 
 ## ── Container runtime selection ──
 ##
@@ -280,22 +300,29 @@ instance_init_type: ignition
 ## path) because Quadlets are the modern, systemd-native way to run
 ## containers on FCOS.
 ##
-## @param container_engine [default: podman] Selected runtime. Default
-##                                         assumes ignition / FCOS; flip
-##                                         to `docker` on cloud-init.
+## @param container_engine [default: ""] Selected runtime. Empty =
+##                                         resolved at role entry by
+##                                         `common/tasks/resolve_platform_preset.yml`
+##                                         from
+##                                         `_platform_map[instance_platform_preset].container_engine`
+##                                         (Debian/Suse → docker, RedHat →
+##                                         podman); final fallback is podman.
 ## @param docker_install [default: false] Install docker-ce on the host.
 ##                                         Required for `container_engine: docker`.
 ## @param podman_enabled [default: false] Enable podman + Quadlets.
 ## Only honored on ignition hosts.
-container_engine: podman
+container_engine: ""
 docker_install: false
 podman_enabled: true
 
 ## @section Default User Parameters
 ## @description Default OS user created on all VMs. Used by both cloud-init and ignition.
 
-## @param instance_user_name [default: ubuntu] Default OS username.
-## For ignition/FCOS, this is typically "core".
+## @param instance_user_name [default: ""] Default OS username.
+## For ignition/FCOS, this is typically "core". Empty = resolved at role
+## entry by `common/tasks/resolve_platform_preset.yml` from
+## `_platform_map[instance_platform_preset].username`; final fallback is
+## `ubuntu`.
 ##
 ## @param instance_user_ssh_authorized_keys [default: []] SSH public keys for the default user.
 ## Used by both cloud-init and ignition init types.
@@ -315,7 +342,7 @@ podman_enabled: true
 ## When set, SSH password authentication is enabled and the account is unlocked.
 ## Leave empty to disable password login (SSH key only).
 ##
-instance_user_name: ubuntu
+instance_user_name: ""
 instance_user_ssh_authorized_keys: []
 instance_user_sudo: ""
 instance_user_shell: /bin/bash
@@ -438,25 +465,24 @@ vcenter_permission_propagate: false
 ## @description Configuration for Ignition-based guest initialization.
 ## These parameters are only used when instance_init_type is set to "ignition".
 ##
-## @param ignition_flavour [default: fcos] Ignition distro flavor. One of:
-##   fcos, flatcar, rhcos, opensuse. Picks sane defaults for Butane variant /
-##   spec version / content-library prefix. Override individual
-##   `ignition_flavour_default.*` keys below to customize further.
+## Distro is selected via `instance_platform_preset` (one of fedora-coreos,
+## flatcar, rhel-coreos, opensuse-microos). The matching `_platform_map`
+## row's `ignition:` sub-dict supplies sane defaults for Butane variant /
+## spec version / content-library prefix. Override individual
+## `ignition_flavour_default.*` keys below to customize further.
 ##
-## @param ignition_flavour_default.butane_template [default: fcos.bu.j2] Butane template file to render per-VM.
+## @param ignition_flavour_default.butane_template [preset-derived] Butane template file to render per-VM.
 ## @param ignition_flavour_default.butane_strict [default: false] Treat butane warnings as errors.
-## @param ignition_flavour_default.butane_variant [flavor-derived] Butane variant header (fcos, flatcar, openshift, opensuse).
-## @param ignition_flavour_default.butane_spec_version [flavor-derived] Butane spec version (e.g. 1.5.0 for FCOS, 1.1.0 for Flatcar).
-## @param ignition_flavour_default.channel [flavor-derived] Release channel (stable, testing, beta, ...).
-## @param ignition_flavour_default.metadata_url [flavor-derived] Stream / version metadata URL (with {channel} substituted).
-## @param ignition_flavour_default.instance_user_name [flavor-derived] Default OS user on that distro (core, root, etc).
+## @param ignition_flavour_default.butane_variant [preset-derived] Butane variant header (fcos, flatcar, openshift, opensuse).
+## @param ignition_flavour_default.butane_spec_version [preset-derived] Butane spec version (e.g. 1.5.0 for FCOS, 1.1.0 for Flatcar).
+## @param ignition_flavour_default.channel [preset-derived] Release channel (stable, testing, beta, ...).
+## @param ignition_flavour_default.metadata_url [preset-derived] Stream / version metadata URL (with {channel} substituted).
+## @param ignition_flavour_default.instance_user_name [preset-derived] Default OS user on that distro (core, root, etc).
 ##
-ignition_flavour: fcos
-
-# Resolved per-flavor dict — auto-derived from the sub-role's
-# `ignition_flavour_map` (logic in roles/instance/vars/main.yml ::
-# _ignition_flavour_default). Override the whole dict per-inventory to
-# pin a custom template path / channel.
+# Resolved per-flavour dict — auto-derived from
+# `_platform_map[instance_platform_preset].ignition` (logic in
+# roles/instance/vars/main.yml :: _ignition_flavour_default). Override
+# the whole dict per-inventory to pin a custom template path / channel.
 ignition_flavour_default: "{{ _ignition_flavour_default }}"
 
 # Flat ignition_* scalars — kept outside the `ignition:` dict so individual
@@ -467,7 +493,7 @@ ignition_flavour_default: "{{ _ignition_flavour_default }}"
 ignition_tmp_dir: /tmp
 
 # FCOS-specific knobs — same flatten rationale.
-# Consumed by fcos_prepare.yml when ignition_flavour=fcos.
+# Consumed by fcos_prepare.yml when instance_platform_preset=fedora-coreos.
 #
 ## @param ignition_fcos_stream [default: stable] FCOS stream: stable, testing, or next.
 ## @param ignition_fcos_arch [default: x86_64] Architecture for the FCOS OVA.

@@ -30,9 +30,10 @@ vsphere_hw_version_map:
   "esxi-6.5": 13
   "esxi-6.0": 11
 
-# Auto-resolved ignition flavour defaults — looked up from
-# `ignition_flavour_map` (in the instance_ignition sub-role's vars/) using
-# the user-selected `ignition_flavour` (default: fcos).
+# Auto-resolved ignition defaults — sourced from
+# `_platform_map[instance_platform_preset].ignition` (the canonical
+# per-flavour data in roles/common/vars/main.yml), with `instance_user_name`
+# taken from the row's top-level `username`.
 #
 # The public knob `ignition_flavour_default` in defaults/main.yml is just a
 # passthrough to this — that way an inventory CAN still override the whole
@@ -41,119 +42,17 @@ vsphere_hw_version_map:
 # Self-references go through the PUBLIC `ignition_flavour_default.channel`
 # so an inventory override of `channel` propagates into the {channel}
 # substitutions in metadata_url / ova_url. Lazy evaluation: nothing here
-# is resolved until the sub-role is in scope (include_role of
-# instance_ignition makes `ignition_flavour_map` available).
+# is resolved until `instance_platform_preset` is set to an ignition row.
 _ignition_flavour_default:
-  butane_template: "{{ ignition_flavour_map[ignition_flavour | default('fcos')].butane_template }}"
+  butane_template: "{{ _platform_map[instance_platform_preset].ignition.butane_template }}"
   butane_strict: false
-  butane_variant: "{{ ignition_flavour_map[ignition_flavour | default('fcos')].butane_variant }}"
-  butane_spec_version: "{{ ignition_flavour_map[ignition_flavour | default('fcos')].butane_spec_version }}"
-  channel: "{{ ignition_flavour_map[ignition_flavour | default('fcos')].default_channel }}"
+  butane_variant: "{{ _platform_map[instance_platform_preset].ignition.butane_variant }}"
+  butane_spec_version: "{{ _platform_map[instance_platform_preset].ignition.butane_spec_version }}"
+  channel: "{{ _platform_map[instance_platform_preset].ignition.default_channel }}"
   metadata_url: >-
-    {{ ignition_flavour_map[ignition_flavour | default('fcos')].metadata_url
-       | replace('{channel}', ignition_flavour_default.channel | default(ignition_flavour_map[ignition_flavour | default('fcos')].default_channel)) }}
+    {{ _platform_map[instance_platform_preset].ignition.metadata_url
+       | replace('{channel}', ignition_flavour_default.channel | default(_platform_map[instance_platform_preset].ignition.default_channel)) }}
   ova_url: >-
-    {{ ignition_flavour_map[ignition_flavour | default('fcos')].ova_url
-       | replace('{channel}', ignition_flavour_default.channel | default(ignition_flavour_map[ignition_flavour | default('fcos')].default_channel)) }}
-  instance_user_name: "{{ ignition_flavour_map[ignition_flavour | default('fcos')].instance_user_name }}"
-
-# OS identity reference table — single source of truth that links the four
-# ways this collection identifies a guest OS:
-#
-#   key                       NetBox platform slug (per-deployment string)
-#   .os_family                ansible_facts.os_family
-#   .distribution             ansible_facts.distribution
-#   .vsphere_guest_id         vSphere `guestId` from GuestInfo (vendor-fixed)
-#
-# Keyed by NetBox slug because that's the user-facing identifier; the rest
-# are vendor-fixed facts. Slugs vary per NetBox deployment — override via
-# `instance_netbox_platform_map` in inventory (consumer merges on top).
-#
-# vSphere guest_id reference:
-#   https://vdc-download.vmware.com/vmwb-repository/dcr-public/.../vim.vm.GuestOsDescriptor.html
-# NOTE on slug aliases: multiple NetBox slug conventions share one vSphere
-# guest_id (e.g. every Ubuntu LTS → ubuntu64Guest; debian-12 and
-# debian-gnulinux-12-64-bit → debian12_64Guest). All variants must resolve
-# forward to the same metadata, but the inverse map (guest_id → slug) needs
-# a single canonical answer. We rely on dict-insertion order: Jinja's
-# `dict(zip(guest_ids, slugs))` keeps the LAST insertion per guest_id, so
-# the canonical slug must be listed last in each group below.
-_platform_map:
-  # ── Debian family
-  # Ubuntu — all LTS variants share ubuntu64Guest; canonical (ubuntu-24-04-lts) last.
-  ubuntu-linux-64-bit: { os_family: Debian, distribution: Ubuntu, vsphere_guest_id: ubuntu64Guest }
-  ubuntu-16-04-lts: { os_family: Debian, distribution: Ubuntu, vsphere_guest_id: ubuntu64Guest }
-  ubuntu-20-04-lts: { os_family: Debian, distribution: Ubuntu, vsphere_guest_id: ubuntu64Guest }
-  ubuntu-22-04-lts: { os_family: Debian, distribution: Ubuntu, vsphere_guest_id: ubuntu64Guest }
-  ubuntu-24-04-lts: { os_family: Debian, distribution: Ubuntu, vsphere_guest_id: ubuntu64Guest }
-  # Debian — netbox-community alias `debian-gnulinux-N-64-bit` first, canonical `debian-N` last.
-  debian-gnulinux-8-64-bit: { os_family: Debian, distribution: Debian, vsphere_guest_id: debian8_64Guest }
-  debian-8: { os_family: Debian, distribution: Debian, vsphere_guest_id: debian8_64Guest }
-  debian-gnulinux-9-64-bit: { os_family: Debian, distribution: Debian, vsphere_guest_id: debian9_64Guest }
-  debian-9: { os_family: Debian, distribution: Debian, vsphere_guest_id: debian9_64Guest }
-  debian-gnulinux-10-64-bit: { os_family: Debian, distribution: Debian, vsphere_guest_id: debian10_64Guest }
-  debian-10: { os_family: Debian, distribution: Debian, vsphere_guest_id: debian10_64Guest }
-  debian-gnulinux-11-64-bit: { os_family: Debian, distribution: Debian, vsphere_guest_id: debian11_64Guest }
-  debian-11: { os_family: Debian, distribution: Debian, vsphere_guest_id: debian11_64Guest }
-  debian-gnulinux-12-64-bit: { os_family: Debian, distribution: Debian, vsphere_guest_id: debian12_64Guest }
-  debian-12: { os_family: Debian, distribution: Debian, vsphere_guest_id: debian12_64Guest }
-  debian-13: { os_family: Debian, distribution: Debian, vsphere_guest_id: debian13_64Guest }
-
-  # ── RedHat family (RHEL and clones — same os_family, different distribution)
-  rhel-9: { os_family: RedHat, distribution: RedHat, vsphere_guest_id: rhel9_64Guest }
-  rhel-8: { os_family: RedHat, distribution: RedHat, vsphere_guest_id: rhel8_64Guest }
-  rhel-7: { os_family: RedHat, distribution: RedHat, vsphere_guest_id: rhel7_64Guest }
-  rocky-linux-9: { os_family: RedHat, distribution: Rocky, vsphere_guest_id: rockyLinux_64Guest }
-  almalinux-9: { os_family: RedHat, distribution: AlmaLinux, vsphere_guest_id: almaLinux_64Guest }
-  oracle-linux-9: { os_family: RedHat, distribution: OracleLinux, vsphere_guest_id: oracleLinux9_64Guest }
-  oracle-linux-8: { os_family: RedHat, distribution: OracleLinux, vsphere_guest_id: oracleLinux8_64Guest }
-  oracle-linux-7-64-bit: { os_family: RedHat, distribution: OracleLinux, vsphere_guest_id: oracleLinux7_64Guest }
-  oracle-linux-7: { os_family: RedHat, distribution: OracleLinux, vsphere_guest_id: oracleLinux7_64Guest }
-  centos-9: { os_family: RedHat, distribution: CentOS, vsphere_guest_id: centos9_64Guest }
-  centos-8: { os_family: RedHat, distribution: CentOS, vsphere_guest_id: centos8_64Guest }
-  centos-7: { os_family: RedHat, distribution: CentOS, vsphere_guest_id: centos7_64Guest }
-  fedora: { os_family: RedHat, distribution: Fedora, vsphere_guest_id: fedora64Guest }
-  # Fedora CoreOS — coreos64Guest historically; newer FCOS OVAs may
-  # self-report fedora64Guest depending on the build.
-  fedora-coreos: { os_family: RedHat, distribution: Fedora, vsphere_guest_id: coreos64Guest }
-
-  # ── Suse family
-  opensuse-tumbleweed: { os_family: Suse, distribution: "openSUSE Tumbleweed", vsphere_guest_id: opensuse64Guest }
-  sles-15: { os_family: Suse, distribution: SLES, vsphere_guest_id: sles15_64Guest }
-  sles-12: { os_family: Suse, distribution: SLES, vsphere_guest_id: sles12_64Guest }
-
-  # ── Windows family (ansible_distribution varies by SKU; Windows is the
-  # closest stable label, override per-host if you need the full SKU string)
-  windows-server-2022: { os_family: Windows, distribution: Windows, vsphere_guest_id: windows2022srvNext_64Guest }
-  windows-server-2019: { os_family: Windows, distribution: Windows, vsphere_guest_id: windows2019srv_64Guest }
-  windows-server-2016: { os_family: Windows, distribution: Windows, vsphere_guest_id: windows2016srv_64Guest }
-  windows-11: { os_family: Windows, distribution: Windows, vsphere_guest_id: windows11_64Guest }
-  microsoft-windows-10-64-bit: { os_family: Windows, distribution: Windows, vsphere_guest_id: windows10_64Guest }
-  windows-10: { os_family: Windows, distribution: Windows, vsphere_guest_id: windows10_64Guest }
-
-  # ── FreeBSD family (pfSense, OPNsense, vanilla FreeBSD)
-  pfsense: { os_family: FreeBSD, distribution: FreeBSD, vsphere_guest_id: freebsd64Guest }
-
-  # ── RouterOS (MikroTik). Not detected by ansible setup module; values
-  # match what `community.routeros` users typically set manually.
-  # vSphere recommends "Linux Other 64-bit" (otherLinux64Guest) for RouterOS x86.
-  mikrotik-routeros: { os_family: RouterOS, distribution: RouterOS, vsphere_guest_id: otherLinux64Guest }
-
-# Inverse lookup: vSphere guestId → NetBox platform slug. Derived from
-# `_platform_map` so there's a single source of truth; the legacy name is
-# kept so the resolution chain documented for inventory consumers stays
-# stable.
-#
-# Resolution chain expected at the consumer:
-#   item.netbox_platform                           # explicit per-VM
-#   netbox_device_platform                         # role-level default
-#   instance_netbox_platform_map[guest_id]         # user-override map
-#   _vsphere_guest_id_platform_map[guest_id]       # canonical (this file)
-#   ''                                             # unmapped → caller decides
-_vsphere_guest_id_platform_map: >-
-  {{
-    dict(
-      _platform_map.values() | map(attribute='vsphere_guest_id')
-      | zip(_platform_map.keys())
-    )
-  }}
+    {{ _platform_map[instance_platform_preset].ignition.ova_url
+       | replace('{channel}', ignition_flavour_default.channel | default(_platform_map[instance_platform_preset].ignition.default_channel)) }}
+  instance_user_name: "{{ _platform_map[instance_platform_preset].username }}"

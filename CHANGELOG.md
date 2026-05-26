@@ -6,6 +6,29 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
 
 ## 1.0.1 (2026-05-25)
 
+### Breaking changes
+- Removed `ignition_flavour` knob (`fcos` / `flatcar` / `rhcos` /
+  `opensuse`). OS selection is now via `instance_platform_preset`
+  using the NetBox platform slug (`fedora-coreos` / `flatcar` /
+  `rhel-coreos` / `opensuse-microos`). The per-flavour
+  `ignition_flavour_map` is gone; the data lives in
+  `_platform_map[<slug>].ignition`. `roles/instance_ignition/vars/`
+  was deleted. `ignition_flavour_default.<field>` (used by Butane
+  templates and `render_ignition.yml`) is unchanged — still works,
+  now sourced from `_platform_map[<preset>].ignition`. Inventory
+  migration: replace `ignition_flavour: fcos` with
+  `instance_platform_preset: fedora-coreos`, and so on.
+- Default values changed from non-empty to empty strings for the
+  five vars that now feed the slug-fallback chain. Required for the
+  empty-check semantics — a non-empty default would short-circuit
+  the slug lookup. Anything reading these vars directly (without
+  going through `_resolved_*`) will see `""` until inventory sets
+  them or `instance_platform_preset` is configured.
+  - `instance_user_name`: `ubuntu` → `""`
+  - `instance_init_type`: `ignition` → `""`
+  - `container_engine`: `podman` → `""`
+  - `content_library_name`, `content_library_template`: already `""`
+
 ### Fixed
 - `playbooks/patroni/remove-node.yml`: uninstall dispatch was importing
   the patroni role with `tasks_from: uninstall.yml`, a file that doesn't
@@ -17,6 +40,12 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   ansible-playbook `--syntax-check` when the variable wasn't yet
   defined. Refactored with `| default('localhost')` fallbacks; same
   runtime behavior.
+- `roles/common/tasks/validate_inventory.yml`: `instance_user_name`
+  precondition now optional when init_type is ignition (the slug map
+  or `ignition_flavour_default.instance_user_name` supplies it). Auth
+  check now accepts `instance_user_ssh_authorized_keys` in addition to
+  `instance_user_password` / `instance_user_ssh_private_key`, matching
+  what Butane / cloud-init templates actually consume.
 
 ### Changed
 - `galaxy.yml`: dependency version floors aligned with the higher
@@ -43,18 +72,49 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   `mongodb` action group.
 - `.ansible-lint` `kinds:` entry classifying `playbooks/**/_*.yml`
   as task-file fragments (consumed via `include_tasks`).
-- `roles/instance/vars/main.yml`: canonical OS identity table
+- `roles/common/vars/main.yml`: canonical OS identity table
   `_platform_map`, keyed by NetBox platform slug and linking
   `ansible_facts.os_family`, `ansible_facts.distribution`, and the
   vSphere `guestId` for each supported guest. The existing
   `_vsphere_guest_id_platform_map` is now derived from it so there's a
-  single source of truth. Covers Debian/Ubuntu (incl. netbox-community
-  `debian-gnulinux-N-64-bit` and `ubuntu-linux-64-bit` slug aliases),
-  RHEL family (RHEL, Rocky, AlmaLinux, Oracle Linux, CentOS, Fedora,
-  Fedora CoreOS), Suse (SLES, openSUSE Tumbleweed), Windows desktop /
-  Server 2016–2022, FreeBSD (pfSense), and MikroTik RouterOS. Aliases
-  ordered before canonical slugs so the inverse map resolves to the
-  canonical entry per `guestId`.
+  single source of truth. Lives in `common` (not `instance`) so
+  `common.validate_inventory` and `common.build_host_groups` — which
+  run before `instance` loads its vars — can see slug-derived values.
+  Covers Debian/Ubuntu (incl. netbox-community `debian-gnulinux-N-64-bit`
+  and `ubuntu-linux-64-bit` slug aliases), RHEL family (RHEL, Rocky,
+  AlmaLinux, Oracle Linux, CentOS, Fedora, Fedora CoreOS, RHCOS), Suse
+  (SLES, openSUSE Tumbleweed + MicroOS), Flatcar Container Linux,
+  Windows desktop / Server 2016–2022, FreeBSD (pfSense), and MikroTik
+  RouterOS — 44 rows total. Aliases ordered before canonical slugs so
+  the inverse map resolves to the canonical entry per `guestId`.
+- Each `_platform_map` row carries extra fields beyond the original
+  three: `username` (default OS user), `init_type` (cloud-init /
+  ignition / none), `container_engine` (docker for Debian/Suse, podman
+  for RedHat, `""` for Windows / FreeBSD / RouterOS),
+  `content_library_name` (`<distribution>-images` by convention),
+  `content_library_template` (defaults to the slug). The 4 ignition
+  rows (`fedora-coreos`, `flatcar`, `rhel-coreos`, `opensuse-microos`)
+  additionally carry an `ignition:` sub-dict with butane_variant /
+  butane_spec_version / butane_template / template_prefix /
+  default_channel / channels / metadata_url / ova_url — the data that
+  used to live in `ignition_flavour_map`.
+- `instance_platform_preset` — new top-level knob that picks an OS row
+  from `_platform_map` to supply slug-based defaults for
+  `content_library_name`, `content_library_template`, `instance_user_name`,
+  `instance_init_type`, and `container_engine`. Explicit inventory
+  overrides on those five vars still win; unset (empty) falls back to
+  the slug-derived value, then to a hardcoded final fallback
+  (`ubuntu` / `ignition` / `podman` / `""`).
+- `_resolved_content_library_name`, `_resolved_content_library_template`,
+  `_resolved_instance_user_name`, `_resolved_instance_init_type`,
+  `_resolved_container_engine` — derived vars in
+  `roles/common/vars/main.yml` that implement the slug-fallback
+  precedence chain (inventory non-empty > `_platform_map[<preset>].<field>`
+  > hardcoded final fallback). Consumers across `common`, `instance`,
+  `instance_cloud_init`, `instance_ignition`, `mongodb`, `patroni`,
+  and `preflight` now read these `_resolved_*` names so the slug-based
+  preset reaches every dispatch site (ansible_user on dynamic hosts,
+  container runtime selection, Butane templates, etc.).
 
 ### Lint cleanup
 - ~60 missing task names added across mongodb / patroni entry-point
@@ -65,6 +125,15 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   rationale.
 - Long YAML loop tables (TLS cert specs, service maps) had
   column-alignment padding stripped to satisfy yamllint defaults.
+- FQCN module names (`ansible.builtin.uri`, `ansible.builtin.file`,
+  `ansible.builtin.async_status`, `ansible.builtin.command`,
+  `ansible.builtin.fail`, `ansible.builtin.import_tasks`,
+  `ansible.builtin.template`) added across netbox_lookup,
+  netbox_register, instance_ignition, patroni backup, and
+  `tests/render-templates.yml`. Resolves `fqcn[action-core]`.
+- Explicit `mode:` on `file` / `template` / `directory` tasks in
+  patroni backup, instance_ignition render, and template-render
+  tests. Resolves `risky-file-permissions`.
 
 ## 1.0.0 (2026-05-25)
 - Initial release

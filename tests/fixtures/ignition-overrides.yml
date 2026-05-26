@@ -25,9 +25,9 @@ instance_user_ssh_authorized_keys:
 instance_packages: []
 instance_runcmds: []
 instance_extra_users: []
-# Default state — the test playbook re-renders for each flavour by overriding
+# Default state — the test playbook re-renders for each preset by overriding
 # this and the rest below.
-ignition_flavour: fcos
+instance_platform_preset: fedora-coreos
 container_engine: docker
 docker_install: true
 fcos_zincati_enabled: false

@@ -3,15 +3,35 @@
 # Catches concrete foot-guns we've actually seen: S3 all-or-nothing,
 # patroni_scope unset, vip_manager without patroni_vip_address, malformed databases[], etc.
 
+# Publish slug-resolved values as host facts on localhost so the asserts
+# below read bare `instance_init_type` / `container_engine` / etc. and
+# see the value resolved through `instance_platform_preset`.
+- name: Resolve platform-preset fallbacks
+  ansible.builtin.include_tasks: resolve_platform_preset.yml
+
 - name: Assert common variables
+  vars:
+    # `instance_user_name` already prefers the inventory-set
+    # `instance_user_name`, then falls back to
+    # `_platform_map[instance_platform_preset].username` when the slug
+    # matches an ignition row (or any row). No further resolution needed.
+    _is_ignition: "{{ instance_init_type == 'ignition' }}"
+    _effective_user: "{{ instance_user_name }}"
   ansible.builtin.assert:
     that:
-      - instance_user_name | default('') | length > 0
-      - (instance_user_password | default('') | length > 0) or (instance_user_ssh_private_key | default('') | length > 0)
+      - _effective_user | length > 0
+      # Ignition VMs typically authenticate via ssh_authorized_keys baked
+      # into the Butane config; cloud-init accepts any of the three.
+      - (instance_user_password | default('') | length > 0)
+        or (instance_user_ssh_private_key | default('') | length > 0)
+        or (instance_user_ssh_authorized_keys | default([]) | length > 0)
     fail_msg: >-
-      instance_user_name must be set, plus one of instance_user_password
-      or instance_user_ssh_private_key.
-    success_msg: "default_user '{{ instance_user_name | default('') }}' resolved with auth material."
+      instance_user_name must be set, either directly or via
+      `instance_platform_preset` (which sources it from
+      `_platform_map[<slug>].username`). Plus one of instance_user_password,
+      instance_user_ssh_private_key, or instance_user_ssh_authorized_keys.
+    success_msg: >-
+      default_user '{{ _effective_user }}' resolved with auth material.
 
 - name: Assert instance definitions when declared
   ansible.builtin.assert:
@@ -96,6 +116,31 @@
 # gateway4 / gateway6 must be plain IP addresses (no CIDR) — NetworkManager
 # and netplan both reject CIDR-formatted gateways, leaving the host with no
 # default route. mtu must be a positive int.
+
+- name: Warn when instance_networks.gateway4 is not set
+  vars:
+    # Any NIC across any instance that declares a static IPv4 (not "dhcp"
+    # and not empty). If none, the missing top-level gateway4 doesn't
+    # matter — DHCP supplies the route, IPv6-only doesn't need it.
+    _has_static_ipv4: >-
+      {{ instances
+         | default([])
+         | selectattr('networks', 'defined')
+         | map(attribute='networks')
+         | sum(start=[])
+         | selectattr('ipv4', 'defined')
+         | rejectattr('ipv4', 'in', ['', 'dhcp'])
+         | list | length > 0 }}
+  ansible.builtin.debug:
+    msg: >-
+      instance_networks.gateway4 is not set, but at least one VM
+      declares a static IPv4 address. Those VMs won't get a default
+      IPv4 route — set instance_networks.gateway4 (e.g. "10.147.8.1")
+      in inventory, or override per-NIC via networks[i].gateway4.
+  when:
+    - (instance_networks.gateway4 | default('')) | length == 0
+    - _has_static_ipv4
+    - instances is defined
 
 - name: Assert instance_networks.gateway4 is a plain IPv4 (no CIDR)
   ansible.builtin.assert:
@@ -301,7 +346,7 @@
       {{ (_ce == 'docker' and (docker_install | default(false) | bool))
          or (_ce == 'podman' and (podman_enabled | default(false) | bool)) }}
     _init_mode: "{{ instance_init_type | default('ignition') }}"
-    _init_flavour_note: "{{ ' (' ~ (ignition_flavour | default('fcos')) ~ ')' if _init_mode == 'ignition' else '' }}"
+    _init_flavour_note: "{{ ' (' ~ instance_platform_preset ~ ')' if (_init_mode == 'ignition' and instance_platform_preset | default('') | length > 0) else '' }}"
   ansible.builtin.debug:
     msg:
       - "Inventory: {{ inventory_file | basename }}"

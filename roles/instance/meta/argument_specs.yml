@@ -109,29 +109,37 @@ argument_specs:
           (str), controller_number (int), unit_number (int), disk_mode (str).
 
       # ── Init type + content library ──
+      instance_platform_preset:
+        type: str
+        default: ""
+        description: >-
+          NetBox platform slug; when set and matched in `_platform_map`,
+          supplies fallbacks for content_library_name, content_library_template,
+          instance_user_name, and instance_init_type. Explicit inventory
+          overrides on those four vars still win.
       instance_init_type:
         type: str
-        default: ignition
-        choices: [cloud-init, ignition]
-      ignition_flavour:
-        type: str
-        default: fcos
-        choices: [fcos, flatcar, rhcos, opensuse]
+        default: ""
+        choices: ["", cloud-init, ignition]
         description: >-
-          Ignition distro flavor (only meaningful when instance_init_type=ignition).
-          Picks sane defaults for Butane variant / spec version / content-
-          library prefix. Override individual `ignition.*` keys to customize.
-          Auto-import currently supports `fcos` only; other flavors require a
-          pre-imported OVA in the content library.
+          Empty = resolved at role entry by `common/tasks/resolve_platform_preset.yml`
+          from `_platform_map[instance_platform_preset].init_type` (final fallback: ignition).
       # ── content_library_* (flat) — template source. See README for
       #    auto-import behavior (FCOS only). ──
       content_library_name:
         type: str
-        required: true
+        default: ""
+        description: >-
+          Empty = resolved at role entry by `common/tasks/resolve_platform_preset.yml`
+          from `_platform_map[instance_platform_preset].content_library_name`.
       content_library_template:
         type: str
-        required: true
-        description: Auto-populated when content_library_auto_import is true.
+        default: ""
+        description: >-
+          Auto-populated when content_library_auto_import is true. Empty
+          (and auto_import off) = resolved at role entry by
+          `common/tasks/resolve_platform_preset.yml` from
+          `_platform_map[instance_platform_preset].content_library_template`.
       content_library_type:
         type: str
         default: ovf
@@ -147,8 +155,11 @@ argument_specs:
       #    drop unspecified keys, so each field is a top-level variable) ──
       instance_user_name:
         type: str
-        default: ubuntu
-        description: Default OS username injected on every VM (cloud-init + ignition).
+        default: ""
+        description: >-
+          Default OS username injected on every VM (cloud-init + ignition).
+          Empty = resolved at role entry by `common/tasks/resolve_platform_preset.yml`
+          from `_platform_map[instance_platform_preset].username` (final fallback: ubuntu).
       instance_user_password:
         type: str
         no_log: true

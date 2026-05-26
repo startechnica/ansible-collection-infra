@@ -1,0 +1,565 @@
+---
+# Static reference data shared across roles. `vars/` precedence (~18) is
+# higher than any inventory layer, so users can't accidentally override
+# these — appropriate for vendor-fixed platform facts and derived
+# resolution helpers.
+#
+# Lives in `common` (not `instance`) because the OS slug fallback applies
+# to `common.build_host_groups` (ansible_user / instance_init_type on
+# dynamic hosts) and `common.validate_inventory` too — both run before
+# the `instance` role loads its own vars/.
+
+# OS identity reference table — single source of truth that links the
+# ways this collection identifies a guest OS:
+#
+#   key                       NetBox platform slug (per-deployment string)
+#   .os_family                ansible_facts.os_family
+#   .distribution             ansible_facts.distribution
+#   .vsphere_guest_id         vSphere `guestId` from GuestInfo (vendor-fixed)
+#   .username                 default OS user for the cloud image / OVA
+#   .init_type                guest init mechanism: cloud-init | ignition | none
+#   .container_engine         default container runtime for the family
+#                             (Debian/Suse → docker, RedHat → podman,
+#                             Windows/FreeBSD/RouterOS → "" / N/A)
+#   .content_library_name     vSphere content library; empty = site-specific,
+#                             override via instance_netbox_platform_map merge
+#   .content_library_template canonical template name (defaults to slug);
+#                             override per-site via the same merge
+#   .ignition                 per-flavour Butane / OVA metadata, only
+#                             populated for init_type=ignition rows
+#                             (fedora-coreos, flatcar, rhel-coreos,
+#                             opensuse-microos). Sub-keys:
+#                               butane_variant, butane_spec_version,
+#                               butane_template, template_prefix,
+#                               default_channel, channels, metadata_url,
+#                               ova_url
+#                             Selected by `instance_platform_preset`.
+#
+# Keyed by NetBox slug because that's the user-facing identifier; the rest
+# are vendor-fixed facts. Slugs vary per NetBox deployment — override via
+# `instance_netbox_platform_map` in inventory (consumer merges on top).
+#
+# vSphere guest_id reference:
+#   https://vdc-download.vmware.com/vmwb-repository/dcr-public/.../vim.vm.GuestOsDescriptor.html
+# NOTE on slug aliases: multiple NetBox slug conventions share one vSphere
+# guest_id (e.g. every Ubuntu LTS → ubuntu64Guest; debian-12 and
+# debian-gnulinux-12-64-bit → debian12_64Guest). All variants must resolve
+# forward to the same metadata, but the inverse map (guest_id → slug) needs
+# a single canonical answer. We rely on dict-insertion order: Jinja's
+# `dict(zip(guest_ids, slugs))` keeps the LAST insertion per guest_id, so
+# the canonical slug must be listed last in each group below.
+_platform_map:
+  # ── Debian family
+  # Ubuntu — all LTS variants share ubuntu64Guest; canonical (ubuntu-24-04-lts) last.
+  ubuntu-linux-64-bit:
+    os_family: Debian
+    distribution: Ubuntu
+    vsphere_guest_id: ubuntu64Guest
+    username: ubuntu
+    init_type: cloud-init
+    container_engine: docker
+    content_library_name: ubuntu-images
+    content_library_template: ubuntu-linux-64-bit
+  ubuntu-16-04-lts:
+    os_family: Debian
+    distribution: Ubuntu
+    vsphere_guest_id: ubuntu64Guest
+    username: ubuntu
+    init_type: cloud-init
+    container_engine: docker
+    content_library_name: ubuntu-images
+    content_library_template: ubuntu-16-04-lts
+  ubuntu-20-04-lts:
+    os_family: Debian
+    distribution: Ubuntu
+    vsphere_guest_id: ubuntu64Guest
+    username: ubuntu
+    init_type: cloud-init
+    container_engine: docker
+    content_library_name: ubuntu-images
+    content_library_template: ubuntu-20-04-lts
+  ubuntu-22-04-lts:
+    os_family: Debian
+    distribution: Ubuntu
+    vsphere_guest_id: ubuntu64Guest
+    username: ubuntu
+    init_type: cloud-init
+    container_engine: docker
+    content_library_name: ubuntu-images
+    content_library_template: ubuntu-22-04-lts
+  ubuntu-24-04-lts:
+    os_family: Debian
+    distribution: Ubuntu
+    vsphere_guest_id: ubuntu64Guest
+    username: ubuntu
+    init_type: cloud-init
+    container_engine: docker
+    content_library_name: ubuntu-images
+    content_library_template: ubuntu-24-04-lts
+  # Debian — netbox-community alias `debian-gnulinux-N-64-bit` first, canonical `debian-N` last.
+  debian-gnulinux-8-64-bit:
+    os_family: Debian
+    distribution: Debian
+    vsphere_guest_id: debian8_64Guest
+    username: debian
+    init_type: cloud-init
+    container_engine: docker
+    content_library_name: debian-images
+    content_library_template: debian-gnulinux-8-64-bit
+  debian-8:
+    os_family: Debian
+    distribution: Debian
+    vsphere_guest_id: debian8_64Guest
+    username: debian
+    init_type: cloud-init
+    container_engine: docker
+    content_library_name: debian-images
+    content_library_template: debian-8
+  debian-gnulinux-9-64-bit:
+    os_family: Debian
+    distribution: Debian
+    vsphere_guest_id: debian9_64Guest
+    username: debian
+    init_type: cloud-init
+    container_engine: docker
+    content_library_name: debian-images
+    content_library_template: debian-gnulinux-9-64-bit
+  debian-9:
+    os_family: Debian
+    distribution: Debian
+    vsphere_guest_id: debian9_64Guest
+    username: debian
+    init_type: cloud-init
+    container_engine: docker
+    content_library_name: debian-images
+    content_library_template: debian-9
+  debian-gnulinux-10-64-bit:
+    os_family: Debian
+    distribution: Debian
+    vsphere_guest_id: debian10_64Guest
+    username: debian
+    init_type: cloud-init
+    container_engine: docker
+    content_library_name: debian-images
+    content_library_template: debian-gnulinux-10-64-bit
+  debian-10:
+    os_family: Debian
+    distribution: Debian
+    vsphere_guest_id: debian10_64Guest
+    username: debian
+    init_type: cloud-init
+    container_engine: docker
+    content_library_name: debian-images
+    content_library_template: debian-10
+  debian-gnulinux-11-64-bit:
+    os_family: Debian
+    distribution: Debian
+    vsphere_guest_id: debian11_64Guest
+    username: debian
+    init_type: cloud-init
+    container_engine: docker
+    content_library_name: debian-images
+    content_library_template: debian-gnulinux-11-64-bit
+  debian-11:
+    os_family: Debian
+    distribution: Debian
+    vsphere_guest_id: debian11_64Guest
+    username: debian
+    init_type: cloud-init
+    container_engine: docker
+    content_library_name: debian-images
+    content_library_template: debian-11
+  debian-gnulinux-12-64-bit:
+    os_family: Debian
+    distribution: Debian
+    vsphere_guest_id: debian12_64Guest
+    username: debian
+    init_type: cloud-init
+    container_engine: docker
+    content_library_name: debian-images
+    content_library_template: debian-gnulinux-12-64-bit
+  debian-12:
+    os_family: Debian
+    distribution: Debian
+    vsphere_guest_id: debian12_64Guest
+    username: debian
+    init_type: cloud-init
+    container_engine: docker
+    content_library_name: debian-images
+    content_library_template: debian-12
+  debian-13:
+    os_family: Debian
+    distribution: Debian
+    vsphere_guest_id: debian13_64Guest
+    username: debian
+    init_type: cloud-init
+    container_engine: docker
+    content_library_name: debian-images
+    content_library_template: debian-13
+
+  # ── RedHat family (RHEL and clones — same os_family, different distribution)
+  rhel-9:
+    os_family: RedHat
+    distribution: RedHat
+    vsphere_guest_id: rhel9_64Guest
+    username: cloud-user
+    init_type: cloud-init
+    container_engine: podman
+    content_library_name: redhat-images
+    content_library_template: rhel-9
+  rhel-8:
+    os_family: RedHat
+    distribution: RedHat
+    vsphere_guest_id: rhel8_64Guest
+    username: cloud-user
+    init_type: cloud-init
+    container_engine: podman
+    content_library_name: redhat-images
+    content_library_template: rhel-8
+  rhel-7:
+    os_family: RedHat
+    distribution: RedHat
+    vsphere_guest_id: rhel7_64Guest
+    username: cloud-user
+    init_type: cloud-init
+    container_engine: podman
+    content_library_name: redhat-images
+    content_library_template: rhel-7
+  rocky-linux-9:
+    os_family: RedHat
+    distribution: Rocky
+    vsphere_guest_id: rockyLinux_64Guest
+    username: rocky
+    init_type: cloud-init
+    container_engine: podman
+    content_library_name: rocky-images
+    content_library_template: rocky-linux-9
+  almalinux-9:
+    os_family: RedHat
+    distribution: AlmaLinux
+    vsphere_guest_id: almaLinux_64Guest
+    username: almalinux
+    init_type: cloud-init
+    container_engine: podman
+    content_library_name: almalinux-images
+    content_library_template: almalinux-9
+  oracle-linux-9:
+    os_family: RedHat
+    distribution: OracleLinux
+    vsphere_guest_id: oracleLinux9_64Guest
+    username: cloud-user
+    init_type: cloud-init
+    container_engine: podman
+    content_library_name: oraclelinux-images
+    content_library_template: oracle-linux-9
+  oracle-linux-8:
+    os_family: RedHat
+    distribution: OracleLinux
+    vsphere_guest_id: oracleLinux8_64Guest
+    username: cloud-user
+    init_type: cloud-init
+    container_engine: podman
+    content_library_name: oraclelinux-images
+    content_library_template: oracle-linux-8
+  oracle-linux-7-64-bit:
+    os_family: RedHat
+    distribution: OracleLinux
+    vsphere_guest_id: oracleLinux7_64Guest
+    username: cloud-user
+    init_type: cloud-init
+    container_engine: podman
+    content_library_name: oraclelinux-images
+    content_library_template: oracle-linux-7-64-bit
+  oracle-linux-7:
+    os_family: RedHat
+    distribution: OracleLinux
+    vsphere_guest_id: oracleLinux7_64Guest
+    username: cloud-user
+    init_type: cloud-init
+    container_engine: podman
+    content_library_name: oraclelinux-images
+    content_library_template: oracle-linux-7
+  centos-9:
+    os_family: RedHat
+    distribution: CentOS
+    vsphere_guest_id: centos9_64Guest
+    username: cloud-user
+    init_type: cloud-init
+    container_engine: podman
+    content_library_name: centos-images
+    content_library_template: centos-9
+  centos-8:
+    os_family: RedHat
+    distribution: CentOS
+    vsphere_guest_id: centos8_64Guest
+    username: centos
+    init_type: cloud-init
+    container_engine: podman
+    content_library_name: centos-images
+    content_library_template: centos-8
+  centos-7:
+    os_family: RedHat
+    distribution: CentOS
+    vsphere_guest_id: centos7_64Guest
+    username: centos
+    init_type: cloud-init
+    container_engine: podman
+    content_library_name: centos-images
+    content_library_template: centos-7
+  fedora:
+    os_family: RedHat
+    distribution: Fedora
+    vsphere_guest_id: fedora64Guest
+    username: fedora
+    init_type: cloud-init
+    container_engine: podman
+    content_library_name: fedora-images
+    content_library_template: fedora
+  # ── CoreOS-family (Ignition-based; all share coreos64Guest)
+  # Listed before fedora-coreos so fedora-coreos wins the inverse
+  # `_vsphere_guest_id_platform_map` lookup as the canonical slug.
+  flatcar:
+    os_family: Flatcar
+    distribution: Flatcar
+    vsphere_guest_id: coreos64Guest
+    username: core
+    init_type: ignition
+    container_engine: docker
+    content_library_name: flatcar-images
+    content_library_template: flatcar
+    ignition:
+      butane_variant: flatcar
+      butane_spec_version: "1.1.0"
+      butane_template: flatcar.bu.j2
+      template_prefix: flatcar-production-vmware
+      default_channel: stable
+      channels: [stable, beta, alpha, lts]
+      metadata_url: "https://{channel}.release.flatcar-linux.net/amd64-usr/current/version.txt"
+      ova_url: "https://{channel}.release.flatcar-linux.net/amd64-usr/current/flatcar_production_vmware_ova.ova"
+  rhel-coreos:
+    os_family: RedHat
+    distribution: RHCOS
+    vsphere_guest_id: coreos64Guest
+    username: core
+    init_type: ignition
+    container_engine: podman
+    content_library_name: redhat-images
+    content_library_template: rhel-coreos
+    ignition:
+      butane_variant: openshift
+      butane_spec_version: "4.21.0"
+      butane_template: rhcos.bu.j2
+      template_prefix: rhcos
+      default_channel: "4.16"  # tracks OpenShift minor version
+      channels: []             # Red Hat customer portal; not a public list
+      metadata_url: ""         # gated — manual OVA download + import
+      ova_url: ""
+  # Fedora CoreOS — coreos64Guest historically; newer FCOS OVAs may
+  # self-report fedora64Guest depending on the build. Canonical CoreOS
+  # slug for the inverse map (listed last in the group).
+  fedora-coreos:
+    os_family: RedHat
+    distribution: Fedora
+    vsphere_guest_id: coreos64Guest
+    username: core
+    init_type: ignition
+    container_engine: podman
+    content_library_name: fedora-images
+    content_library_template: fedora-coreos
+    ignition:
+      butane_variant: fcos
+      butane_spec_version: "1.5.0"
+      butane_template: fcos.bu.j2
+      template_prefix: fedora-coreos
+      default_channel: stable
+      channels: [stable, testing, next]
+      metadata_url: "https://builds.coreos.fedoraproject.org/streams/{channel}.json"
+      ova_url: ""  # derived from stream metadata at runtime
+
+  # ── Suse family
+  # MicroOS — Ignition-based immutable variant. Listed before
+  # opensuse-tumbleweed so tumbleweed wins the inverse map for
+  # opensuse64Guest as the canonical (more common) slug.
+  opensuse-microos:
+    os_family: Suse
+    distribution: "openSUSE MicroOS"
+    vsphere_guest_id: opensuse64Guest
+    username: opensuse
+    init_type: ignition
+    container_engine: podman
+    content_library_name: opensuse-microos-images
+    content_library_template: opensuse-microos
+    ignition:
+      butane_variant: opensuse
+      butane_spec_version: "1.0.0"
+      butane_template: opensuse.bu.j2
+      template_prefix: "openSUSE-MicroOS"
+      default_channel: tumbleweed
+      channels: [tumbleweed]
+      metadata_url: ""  # no JSON stream API; manual import
+      ova_url: ""
+  opensuse-tumbleweed:
+    os_family: Suse
+    distribution: "openSUSE Tumbleweed"
+    vsphere_guest_id: opensuse64Guest
+    username: opensuse
+    init_type: cloud-init
+    container_engine: podman
+    content_library_name: opensuse-tumbleweed-images
+    content_library_template: opensuse-tumbleweed
+  sles-15:
+    os_family: Suse
+    distribution: SLES
+    vsphere_guest_id: sles15_64Guest
+    username: sles
+    init_type: cloud-init
+    container_engine: docker
+    content_library_name: sles-images
+    content_library_template: sles-15
+  sles-12:
+    os_family: Suse
+    distribution: SLES
+    vsphere_guest_id: sles12_64Guest
+    username: sles
+    init_type: cloud-init
+    container_engine: docker
+    content_library_name: sles-images
+    content_library_template: sles-12
+
+  # ── Windows family (ansible_distribution varies by SKU; Windows is the
+  # closest stable label, override per-host if you need the full SKU string)
+  windows-server-2022:
+    os_family: Windows
+    distribution: Windows
+    vsphere_guest_id: windows2022srvNext_64Guest
+    username: Administrator
+    init_type: none
+    container_engine: ""
+    content_library_name: windows-images
+    content_library_template: windows-server-2022
+  windows-server-2019:
+    os_family: Windows
+    distribution: Windows
+    vsphere_guest_id: windows2019srv_64Guest
+    username: Administrator
+    init_type: none
+    container_engine: ""
+    content_library_name: windows-images
+    content_library_template: windows-server-2019
+  windows-server-2016:
+    os_family: Windows
+    distribution: Windows
+    vsphere_guest_id: windows2016srv_64Guest
+    username: Administrator
+    init_type: none
+    container_engine: ""
+    content_library_name: windows-images
+    content_library_template: windows-server-2016
+  windows-11:
+    os_family: Windows
+    distribution: Windows
+    vsphere_guest_id: windows11_64Guest
+    username: Administrator
+    init_type: none
+    container_engine: ""
+    content_library_name: windows-images
+    content_library_template: windows-11
+  microsoft-windows-10-64-bit:
+    os_family: Windows
+    distribution: Windows
+    vsphere_guest_id: windows10_64Guest
+    username: Administrator
+    init_type: none
+    container_engine: ""
+    content_library_name: windows-images
+    content_library_template: microsoft-windows-10-64-bit
+  windows-10:
+    os_family: Windows
+    distribution: Windows
+    vsphere_guest_id: windows10_64Guest
+    username: Administrator
+    init_type: none
+    container_engine: ""
+    content_library_name: windows-images
+    content_library_template: windows-10
+
+  # ── FreeBSD family (pfSense, OPNsense, vanilla FreeBSD)
+  pfsense:
+    os_family: FreeBSD
+    distribution: FreeBSD
+    vsphere_guest_id: freebsd64Guest
+    username: admin
+    init_type: none
+    container_engine: ""
+    content_library_name: freebsd-images
+    content_library_template: pfsense
+
+  # ── RouterOS (MikroTik). Not detected by ansible setup module; values
+  # match what `community.routeros` users typically set manually.
+  # vSphere recommends "Linux Other 64-bit" (otherLinux64Guest) for RouterOS x86.
+  mikrotik-routeros:
+    os_family: RouterOS
+    distribution: RouterOS
+    vsphere_guest_id: otherLinux64Guest
+    username: admin
+    init_type: none
+    container_engine: ""
+    content_library_name: routeros-images
+    content_library_template: mikrotik-routeros
+
+# ─── OS slug fallback resolution ──────────────────────────────────────────
+# Resolves the five OS-derived knobs against `_platform_map` when an
+# inventory leaves them empty. Consumers should read the `_resolved_*`
+# names (not the bare `content_library_name` / `instance_user_name` /
+# etc.) to honor `instance_platform_preset` as a one-shot preset.
+#
+# Precedence per field (highest first):
+#   1. The public var explicitly set in inventory (non-empty)
+#   2. `_platform_map[instance_platform_preset].<field>` when slug matches a row
+#   3. Hardcoded final fallback (ubuntu / ignition / podman / "")
+#
+# Defaults for the five public vars are set to "" in
+# roles/instance/defaults/main.yml so the empty-check at (1) works —
+# non-empty defaults would short-circuit the slug lookup and the preset
+# would never kick in.
+_os_preset: >-
+  {{ _platform_map[instance_platform_preset]
+     if (instance_platform_preset | default('') | length > 0
+         and instance_platform_preset in _platform_map)
+     else {} }}
+_resolved_content_library_name: >-
+  {{ content_library_name
+     if (content_library_name | default('') | length > 0)
+     else (_os_preset.content_library_name | default('')) }}
+_resolved_content_library_template: >-
+  {{ content_library_template
+     if (content_library_template | default('') | length > 0)
+     else (_os_preset.content_library_template | default('')) }}
+_resolved_instance_user_name: >-
+  {{ instance_user_name
+     if (instance_user_name | default('') | length > 0)
+     else (_os_preset.username | default('ubuntu')) }}
+_resolved_instance_init_type: >-
+  {{ instance_init_type
+     if (instance_init_type | default('') | length > 0)
+     else (_os_preset.init_type | default('ignition')) }}
+_resolved_container_engine: >-
+  {{ container_engine
+     if (container_engine | default('') | length > 0)
+     else (_os_preset.container_engine | default('podman')) }}
+
+# Inverse lookup: vSphere guestId → NetBox platform slug. Derived from
+# `_platform_map` so there's a single source of truth. Resolution chain
+# at the consumer:
+#   item.netbox_platform                           # explicit per-VM
+#   netbox_device_platform                         # role-level default
+#   instance_netbox_platform_map[guest_id]         # user-override map
+#   _vsphere_guest_id_platform_map[guest_id]       # canonical (this file)
+#   ''                                             # unmapped → caller decides
+_vsphere_guest_id_platform_map: >-
+  {{
+    dict(
+      _platform_map.values() | map(attribute='vsphere_guest_id')
+      | zip(_platform_map.keys())
+    )
+  }}

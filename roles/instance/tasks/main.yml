@@ -1,4 +1,16 @@
 ---
+# Ask `common` to publish the slug-resolved fallback values
+# (`instance_init_type`, `instance_user_name`, `container_engine`,
+# `content_library_name`, `content_library_template`) as host facts on
+# localhost, so every subsequent task in this role and its sub-roles
+# (instance_cloud_init, instance_ignition) reads bare public names and
+# gets the value resolved via `instance_platform_preset` →
+# `_platform_map[<slug>]`. Idempotent.
+- name: Resolve platform-preset fallbacks
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: resolve_platform_preset
+
 # Promote role-scoped vars/defaults to localhost host facts, so later plays
 # (Stage 3.7 cleanup, anything calling instance_ignition/instance_cloud_init
 # outside this role's context) can read them without re-deriving the
