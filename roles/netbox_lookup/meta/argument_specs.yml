@@ -51,29 +51,28 @@ argument_specs:
         default: ens192
 
       # ── Query-mode filters ──
-      netbox_query_cluster:
+      netbox_lookup_cluster:
         type: str
         default: ""
-      netbox_query_site:
+      netbox_lookup_site:
         type: str
         default: ""
-      netbox_query_tenant:
+      netbox_lookup_tenant:
         type: str
         default: ""
-      netbox_query_role:
+      netbox_lookup_role:
         type: str
         default: ""
-      netbox_query_status:
+      netbox_lookup_status:
         type: str
         default: ""
-      netbox_query_tags:
+      netbox_lookup_tags:
         type: list
         elements: str
         default: []
-      netbox_query_custom_fields:
+      netbox_lookup_custom_fields:
         type: dict
         default: {}
-
       netbox_lookup_set_instances:
         type: bool
         default: true

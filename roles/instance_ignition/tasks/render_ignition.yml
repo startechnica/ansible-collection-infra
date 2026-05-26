@@ -41,9 +41,10 @@
   run_once: true
 
 - name: Render Butane config for each VM
-  template:
-    src: "{{ ignition_flavour_default.butane_template }}"
+  ansible.builtin.template:
+    src: "{{ _os_preset.ignition.butane_template }}"
     dest: "{{ ignition_tmp_dir }}/{{ instance.name }}.bu"
+    mode: "0600"
   loop: "{{ instances_to_create }}"
   loop_control:
     loop_var: instance
@@ -51,9 +52,9 @@
   delegate_to: localhost
 
 - name: Convert Butane to Ignition JSON
-  command: >
+  ansible.builtin.command: >
     butane
-    {{ '--strict' if (ignition_flavour_default.butane_strict | bool) else '' }}
+    {{ '--strict' if (ignition_butane_strict | bool) else '' }}
     {{ ignition_tmp_dir }}/{{ instance.name }}.bu
     --output {{ ignition_tmp_dir }}/{{ instance.name }}.ign
   loop: "{{ instances_to_create }}"

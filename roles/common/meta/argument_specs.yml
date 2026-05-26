@@ -9,8 +9,7 @@ argument_specs:
   wait_for_ssh:
     short_description: Controller-side SSH port probe for all hosts in a group.
     description:
-      - Runs ansible.builtin.wait_for (from localhost) against each host in
-        the named group, using hostvars[item].ansible_host / ansible_port.
+      - Runs ansible.builtin.wait_for (from localhost) against each host in the named group, using hostvars[item].ansible_host / ansible_port.
       - Only a port-level check — auth issues surface on the first real task.
     options:
       debug:
@@ -29,17 +28,14 @@ argument_specs:
   inherit_localhost_vars:
     short_description: Copy non-ansible vars from localhost to the current host.
     description:
-      - Exports hostvars['localhost'] (minus Ansible magic variables) to a
-        temp YAML file and loads it via include_vars on the target.
-      - Lets downstream service plays see vars that were built up in the
-        localhost pre-play (e.g. artifacts_dir, computed facts, vault-decoded values).
+      - Exports hostvars['localhost'] (minus Ansible magic variables) to a temp YAML file and loads it via include_vars on the target.
+      - Lets downstream service plays see vars that were built up in the localhost pre-play (e.g. artifacts_dir, computed facts, vault-decoded values).
 
   build_host_groups:
     short_description: Build dynamic host groups from the `instances` list via add_host.
     description:
       - Bridges VM provisioning output → Ansible inventory for subsequent plays.
-      - Connection params (user, key, port) are derived from default_user and
-        instance_ssh_configs, so a custom SSH port applied by instance is honored.
+      - Connection params (user, key, port) are derived from default_user and instance_ssh_configs, so a custom SSH port applied by instance is honored.
     options:
       target_groups:
         type: list
@@ -56,9 +52,6 @@ argument_specs:
   validate_inventory:
     short_description: Inventory preconditions validator — asserts before deploy.
     description:
-      - Read-only assertions catching concrete misconfigurations (S3 all-or-nothing,
-        patroni_scope unset, vip_manager without patroni_vip_address, malformed databases shape,
+      - Read-only assertions catching concrete misconfigurations (S3 all-or-nothing, patroni_scope unset, vip_manager without patroni_vip_address, malformed databases shape,
         unscoped NetBox enrichment, etc.).
-      - No side effects; safe to run any time. Invoked as Stage 0 of deploy.yml
-        (runs on every invocation via the `always` tag; `--tags validate`
-        runs only this stage).
+      - No side effects; safe to run any time. Invoked as Stage 0 of deploy.yml (runs on every invocation via the `always` tag; `--tags validate` runs only this stage).

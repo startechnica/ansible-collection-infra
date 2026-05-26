@@ -66,19 +66,19 @@
   ansible.builtin.debug:
     msg: >-
       container_engine={{ container_engine | default('docker') }} but
-      {{ 'docker_install' if container_engine | default('docker') == 'docker' else 'podman_enabled' }}=false
+      {{ 'docker_enabled' if container_engine | default('docker') == 'docker' else 'podman_enabled' }}=false
       on this host. Skipping patroni role.
   when:
     - patroni_action != 'uninstall'
-    - (container_engine | default('docker')) == 'docker' and not (docker_install | default(false) | bool)
-      or (container_engine | default('docker')) == 'podman' and not (podman_enabled | default(false) | bool)
+    - (container_engine | default('docker')) == 'docker' and not (docker_enabled | default(false) | bool) or (container_engine | default('docker')) == 'podman' and not
+      (podman_enabled | default(false) | bool)
 
 - name: End role if selected container engine is inactive
   ansible.builtin.meta: end_role
   when:
     - patroni_action != 'uninstall'
-    - (container_engine | default('docker')) == 'docker' and not (docker_install | default(false) | bool)
-      or (container_engine | default('docker')) == 'podman' and not (podman_enabled | default(false) | bool)
+    - (container_engine | default('docker')) == 'docker' and not (docker_enabled | default(false) | bool) or (container_engine | default('docker')) == 'podman' and not
+      (podman_enabled | default(false) | bool)
 
 # ── Shared computed facts (always run — needed by every action) ──────────────
 
@@ -99,10 +99,10 @@
 
 - name: Auto-calculate PostgreSQL memory settings
   ansible.builtin.set_fact:
-    pg_shared_buffers: "{{ pg_shared_buffers if pg_shared_buffers else '%dMB' | format((ansible_memtotal_mb / 4) | int) }}"
-    pg_effective_cache: "{{ pg_effective_cache if pg_effective_cache else '%dMB' | format((ansible_memtotal_mb * 3 / 4) | int) }}"
-    pg_work_mem: "{{ pg_work_mem if pg_work_mem else '%dMB' | format([ansible_memtotal_mb / 64, 4] | max | int) }}"
-    pg_maint_mem: "{{ pg_maint_mem if pg_maint_mem else '%dMB' | format([ansible_memtotal_mb / 8, 2048] | min | int) }}"
+    pg_shared_buffers: "{{ pg_shared_buffers if pg_shared_buffers else '%dMB' | format((ansible_facts['memtotal_mb'] / 4) | int) }}"
+    pg_effective_cache: "{{ pg_effective_cache if pg_effective_cache else '%dMB' | format((ansible_facts['memtotal_mb'] * 3 / 4) | int) }}"
+    pg_work_mem: "{{ pg_work_mem if pg_work_mem else '%dMB' | format([ansible_facts['memtotal_mb'] / 64, 4] | max | int) }}"
+    pg_maint_mem: "{{ pg_maint_mem if pg_maint_mem else '%dMB' | format([ansible_facts['memtotal_mb'] / 8, 2048] | min | int) }}"
   when: patroni_action == 'provision'
 
 - name: Detect VIP interface

@@ -191,8 +191,7 @@
     state: absent
   when:
     - mongodb_destroy_prune | bool
-    - (mongodb_skip_confirm | default(false) | bool)
-      or ((_prune_confirm | default({})).user_input | default('') == 'prune')
+    - (mongodb_skip_confirm | default(false) | bool) or ((_prune_confirm | default({})).user_input | default('') == 'prune')
 
 - name: Note prune was declined
   ansible.builtin.debug:

@@ -50,12 +50,8 @@
 - name: "CD-ROM count on {{ item.name }}"
   ansible.builtin.debug:
     msg: >-
-      Found {{ _cdrom_devices | length }} CD-ROM device(s) on {{ item.name }}
-      {%- if _cdrom_devices | length > 0 %} — keys=
-      [{{ _cdrom_devices | map(attribute='key') | list | join(',') }}]
-      controllerKeys=
-      [{{ _cdrom_devices | map(attribute='controllerKey') | list | join(',') }}]
-      {%- else %} — nothing to detach{%- endif %}
+      Found {{ _cdrom_devices | length }} CD-ROM device(s) on {{ item.name }}{%- if _cdrom_devices | length > 0 %} — keys= [{{ _cdrom_devices | map(attribute='key') | list | join(',')
+      }}] controllerKeys= [{{ _cdrom_devices | map(attribute='controllerKey') | list | join(',') }}]{%- else %} — nothing to detach{%- endif %}
 
 # Build a vmware_guest cdrom spec list — one entry per discovered
 # CD-ROM. Critically, derive controller_number AND unit_number per-device

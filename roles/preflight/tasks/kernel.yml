@@ -5,12 +5,12 @@
 - name: Assert kernel >= 5.4
   ansible.builtin.assert:
     that:
-      - ansible_kernel is version('5.4', '>=')
+      - ansible_facts['kernel'] is version('5.4', '>=')
     fail_msg: >-
-      Kernel {{ ansible_kernel }} is too old. MongoDB and Patroni containers
+      Kernel {{ ansible_facts['kernel'] }} is too old. MongoDB and Patroni containers
       require kernel >= 5.4 for stable cgroup v2 + overlay behavior.
       Upgrade the host OS.
-    success_msg: "Kernel {{ ansible_kernel }} meets the >= 5.4 requirement."
+    success_msg: "Kernel {{ ansible_facts['kernel'] }} meets the >= 5.4 requirement."
 
 - name: Check required kernel modules
   ansible.builtin.command: "lsmod"
@@ -57,7 +57,7 @@
     fail_msg: >-
       Kernel module(s) {{ _missing_modules | to_json }} not present in lsmod
       after `modprobe --persistent`. The module(s) may not exist in this
-      kernel image — check `modinfo <name>` and `find /lib/modules/{{ ansible_kernel }} -name '*.ko*'`.
+      kernel image — check `modinfo <name>` and `find /lib/modules/{{ ansible_facts['kernel'] }} -name '*.ko*'`.
       For FCOS, missing modules typically mean a layered kernel package is
       needed (rpm-ostree install kernel-modules-extra) and a reboot.
     success_msg: >-

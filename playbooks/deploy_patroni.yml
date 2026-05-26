@@ -38,9 +38,6 @@
   hosts: localhost
   gather_facts: true
   tags: [provision]
-  collections:
-    - community.vmware
-    - netbox.netbox
   roles:
     - role: instance
     - role: netbox_register
@@ -55,7 +52,8 @@
   gather_facts: false
   tags: [patroni]
   tasks:
-    - ansible.builtin.include_tasks: patroni/_setup.yml
+    - name: Build host group from instances
+      ansible.builtin.include_tasks: patroni/_setup.yml
 
 # ── Stage 4: Install Docker ──────────────────────────────────────────────────
 
@@ -83,7 +81,7 @@
         tasks_from: inherit_localhost_vars
   roles:
     - role: geerlingguy.docker
-      when: docker_install | default(false) | bool
+      when: docker_enabled | default(false) | bool
 
 # ── Stage 5: Deploy Patroni HA PostgreSQL Cluster ─────────────────────────────
 

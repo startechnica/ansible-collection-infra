@@ -112,15 +112,13 @@ netbox_vrf: ""
 ## e.g. ["production", "managed", "docker"]
 ##
 instance_tags: []
-
-## @param netbox_custom_fields [default: {}] Custom field key-value pairs to set on the VM.
-## Custom fields must be pre-defined in NetBox under Customization > Custom Fields.
-## e.g. { "environment": "production", "cost_center": "IT-001" }
-##
+# # @param netbox_custom_fields [default: {}] Custom field key-value pairs to set on the VM.
+# # Custom fields must be pre-defined in NetBox under Customization > Custom Fields.
+# # e.g. { "environment": "production", "cost_center": "IT-001" }
+# #
 netbox_custom_fields: {}
-
-## @param netbox_update_existing [default: true] Whether to update VMs that already exist in NetBox.
-## When true, existing VM records will be patched with current specs (CPU, memory, disk, etc.).
-## When false, existing VMs are skipped entirely.
-##
+# # @param netbox_update_existing [default: true] Whether to update VMs that already exist in NetBox.
+# # When true, existing VM records will be patched with current specs (CPU, memory, disk, etc.).
+# # When false, existing VMs are skipped entirely.
+# #
 netbox_update_existing: true

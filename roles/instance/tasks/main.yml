@@ -1,4 +1,16 @@
 ---
+# Ask `common` to publish the slug-resolved fallback values
+# (`instance_init_type`, `instance_user_name`, `container_engine`,
+# `content_library_name`, `content_library_item_name`) as host facts on
+# localhost, so every subsequent task in this role and its sub-roles
+# (instance_cloud_init, instance_ignition) reads bare public names and
+# gets the value resolved via `instance_platform_preset` →
+# `_platform_map[<slug>]`. Idempotent.
+- name: Resolve platform-preset fallbacks
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: resolve_platform_preset
+
 # Promote role-scoped vars/defaults to localhost host facts, so later plays
 # (Stage 3.7 cleanup, anything calling instance_ignition/instance_cloud_init
 # outside this role's context) can read them without re-deriving the
@@ -43,9 +55,7 @@
   loop: "{{ instances }}"
   loop_control:
     label: "{{ item.name }}"
-  when:
-    - not (validation_only)
-    - instances_to_create | length == 0
+  when: instances_to_create | length == 0
 
 # Powered-on != ready. On ignition / FCOS hosts, the bootstrap services
 # (open-vm-tools → python3 → docker-ce → reboot) can still be in flight
@@ -80,7 +90,7 @@
         label: "{{ item.name }}"
       when:
         - instance_init_type == 'ignition'
-        - docker_install | bool
+        - docker_enabled | bool
 
     - name: All VMs already exist, skipping provisioning
       ansible.builtin.debug:
@@ -89,16 +99,17 @@
           ensured{{ ', bootstrap=ready confirmed' if instance_init_type == 'ignition' else '' }},
           skipping create / inject / configure phases.
 
-    - meta: end_role
+    - name: End role early when all VMs already exist
+      ansible.builtin.meta: end_role
 
 # For ignition + auto-import flows, fcos_prepare must run BEFORE validate.yml:
-# it's what populates `content_library_template` (the OVA name to import) by
+# it's what populates `content_library_item_name` (the OVA name to import) by
 # fetching FCOS stream metadata. validate/template.yml then verifies the
 # imported item exists in the content library. Running validate first leaves
-# `content_library_template=''` and trips the pre-flight assert.
+# `content_library_item_name=''` and trips the pre-flight assert.
 #
 # Skip auto-import when the inventory has explicitly pinned
-# `content_library_template` — without this gate, fcos_prepare would
+# `content_library_item_name` — without this gate, fcos_prepare would
 # silently overwrite the user's pin with whatever the upstream FCOS
 # stream metadata reports as the latest release. Setting the var means
 # "use this exact version", and the user is responsible for ensuring
@@ -111,7 +122,7 @@
   when:
     - instance_init_type == 'ignition'
     - content_library_auto_import | bool
-    - (content_library_template | length) == 0
+    - (content_library_item_name | length) == 0
 
 - name: Validate infrastructure
   ansible.builtin.include_tasks: validate.yml
@@ -131,50 +142,34 @@
   ansible.builtin.include_role:
     name: instance_ignition
     tasks_from: render_ignition.yml
-  when:
-    - instance_init_type == 'ignition'
-    - not (validation_only)
+  when: instance_init_type == 'ignition'
 
 # Phase 1: Deploy all VMs in parallel (async)
 - name: Deploy all VMs from content library
   ansible.builtin.include_tasks: deploy_all.yml
-  when:
-    - not (validation_only)
-    - instances_to_create | length > 0
+  when: instances_to_create | length > 0
 
-# Phase 2a: Per-VM pre-boot setup — hardware reconfigure + first-boot config
-# inject. Sequential per VM, but each step is just a vSphere API call so it's
-# fast. MUST happen before power-on, otherwise cloud-init/ignition has no
-# config to consume on first boot.
-- name: Pre-boot setup (hardware + inject)
+# Phase 2a: Per-VM pre-boot setup + power-on. Sequential per VM:
+# hardware reconfig → floppy remove → first-boot config inject → power on
+# (ack only; actual boot proceeds in background). Folds power-on into
+# the prepare loop so VM N starts booting while VM N+1 is still being
+# prepared — overlapping boot wall-clock with prepare serialization.
+- name: Pre-boot setup + power-on (per VM)
   ansible.builtin.include_tasks: prepare_all.yml
   loop: "{{ instances_to_create }}"
   loop_control:
     loop_var: instance
     label: "{{ instance.name }}"
-  when:
-    - not (validation_only)
-    - instances_to_create | length > 0
+  when: instances_to_create | length > 0
 
-# Phase 2b: Fire power-on for ALL VMs at once (async). The OS boot now
-# happens in parallel across every VM instead of one-by-one — biggest wall-
-# clock saving in this role for clusters of 3+ nodes.
-- name: Power on all VMs in parallel
-  ansible.builtin.include_tasks: poweron_all.yml
-  when:
-    - not (validation_only)
-    - instances_to_create | length > 0
-
-# Phase 2b.5: wait for vmtools+IP on all VMs in a single batch query.
+# Phase 2b: wait for vmtools+IP on all VMs in a single batch query.
 # Folds N × ~17 min serial waits (the previous per-VM pattern in verify.yml)
 # into one parallel wait dominated by the slowest VM. After this completes,
 # the per-VM verify.yml waits succeed on first attempt — they stay as
 # defensive per-VM probes for the IP/hostname assertions.
 - name: Wait for boot completion on all VMs (parallel)
   ansible.builtin.include_tasks: wait_for_boot_all.yml
-  when:
-    - not (validation_only)
-    - instances_to_create | length > 0
+  when: instances_to_create | length > 0
 
 # Phase 2c: Per-VM post-boot work (verify, detach CD-ROM, post-provision,
 # instance_ssh_configs). Sequential per VM, but the slow part — waiting for
@@ -184,14 +179,11 @@
   loop: "{{ instances_to_create }}"
   loop_control:
     label: "{{ item.name }}"
-  when:
-    - not (validation_only)
-    - instances_to_create | length > 0
+  when: instances_to_create | length > 0
 
 - name: Assign permissions
   ansible.builtin.include_tasks: permission.yml
   when:
-    - not (validation_only)
     - vcenter_principal_user | length > 0
     - vcenter_permission_enabled
 
@@ -207,9 +199,7 @@
 - name: Initialize enriched instances accumulator
   ansible.builtin.set_fact:
     _enriched_instances: []
-  when:
-    - not (validation_only)
-    - _provisioned_vm_facts is defined
+  when: _provisioned_vm_facts is defined
 
 - name: Append each instance (with discovered IP merged into networks[0] when first NIC was DHCP/unset)
   ansible.builtin.set_fact:
@@ -229,16 +219,12 @@
   loop: "{{ instances }}"
   loop_control:
     label: "{{ item.name }}"
-  when:
-    - not (validation_only)
-    - _provisioned_vm_facts is defined
+  when: _provisioned_vm_facts is defined
 
 - name: Replace instances with the enriched list
   ansible.builtin.set_fact:
     instances: "{{ _enriched_instances }}"
-  when:
-    - not (validation_only)
-    - _provisioned_vm_facts is defined
+  when: _provisioned_vm_facts is defined
 
 # ── Publish role outputs for downstream consumers ────────────────────────────
 

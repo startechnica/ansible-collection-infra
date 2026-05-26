@@ -13,9 +13,9 @@
 #   etcd_uid, etcd_gid, patroni_uid, patroni_gid
 #   tls_cert_days       – certificate validity in days (e.g. 3650)
 
-###############################################################################
+# ##############################################################################
 # 0. Local directory structure (on the Ansible controller)
-###############################################################################
+# ##############################################################################
 - name: Create local certificate directories
   ansible.builtin.file:
     path: "{{ item }}"
@@ -54,9 +54,9 @@
     _san_dns: >-
       {%- set dns = ['localhost'] -%}
       {%- for host in groups['patroni_nodes'] -%}
-        {%- set _ = dns.append(hostvars[host].ansible_hostname) -%}
-        {%- if hostvars[host].ansible_fqdn != hostvars[host].ansible_hostname -%}
-          {%- set _ = dns.append(hostvars[host].ansible_fqdn) -%}
+        {%- set _ = dns.append(hostvars[host].ansible_facts['hostname']) -%}
+        {%- if hostvars[host].ansible_facts['fqdn'] != hostvars[host].ansible_facts['hostname'] -%}
+          {%- set _ = dns.append(hostvars[host].ansible_facts['fqdn']) -%}
         {%- endif -%}
       {%- endfor -%}
       {{ dns | unique }}
@@ -111,14 +111,14 @@
 - name: Define leaf certificate specs
   ansible.builtin.set_fact:
     _cert_specs:
-      - { name: etcd-server,      cn: etcd-server,      dir: etcd,        server: true,  client: true,  san: true  }
-      - { name: etcd-peer,        cn: etcd-peer,        dir: etcd,        server: true,  client: true,  san: true  }
-      - { name: etcd-healthcheck, cn: etcd-healthcheck,  dir: etcd,       server: false, client: true,  san: false }
-      - { name: patroni,          cn: patroni,          dir: patroni,     server: true,  client: true,  san: true  }
-      - { name: replicator,       cn: replicator,       dir: patroni,     server: false, client: true,  san: false }
-      - { name: haproxy,          cn: haproxy,          dir: haproxy,     server: false, client: true,  san: false }
-      - { name: pgbouncer,        cn: pgbouncer,        dir: pgbouncer,   server: true,  client: true,  san: true  }
-      - { name: vip-manager,      cn: vip-manager,      dir: vip-manager, server: false, client: true,  san: false }
+      - { name: etcd-server, cn: etcd-server, dir: etcd, server: true, client: true, san: true }
+      - { name: etcd-peer, cn: etcd-peer, dir: etcd, server: true, client: true, san: true }
+      - { name: etcd-healthcheck, cn: etcd-healthcheck, dir: etcd, server: false, client: true, san: false }
+      - { name: patroni, cn: patroni, dir: patroni, server: true, client: true, san: true }
+      - { name: replicator, cn: replicator, dir: patroni, server: false, client: true, san: false }
+      - { name: haproxy, cn: haproxy, dir: haproxy, server: false, client: true, san: false }
+      - { name: pgbouncer, cn: pgbouncer, dir: pgbouncer, server: true, client: true, san: true }
+      - { name: vip-manager, cn: vip-manager, dir: vip-manager, server: false, client: true, san: false }
   run_once: true
 
 ###############################################################################
@@ -217,15 +217,15 @@
 - name: Define per-service certificate map
   ansible.builtin.set_fact:
     _cert_services:
-      - { dir: "{{ etcd_certs_dir }}",        owner: "{{ etcd_uid }}",      group: "{{ etcd_gid }}",      leaves: [etcd-server, etcd-peer, etcd-healthcheck] }
-      - { dir: "{{ patroni_certs_dir }}",     owner: "{{ patroni_uid }}",   group: "{{ patroni_gid }}",   leaves: [patroni, replicator] }
-      - { dir: "{{ haproxy_certs_dir }}",     owner: "{{ haproxy_uid }}",   group: "{{ haproxy_gid }}",   leaves: [haproxy] }
-      - { dir: "{{ pgbouncer_certs_dir }}",   owner: "{{ pgbouncer_uid }}", group: "{{ pgbouncer_gid }}", leaves: [pgbouncer] }
-      - { dir: "{{ vip_manager_certs_dir }}", owner: root,                  group: root,                  leaves: [vip-manager] }
+      - { dir: "{{ etcd_certs_dir }}", owner: "{{ etcd_uid }}", group: "{{ etcd_gid }}", leaves: [etcd-server, etcd-peer, etcd-healthcheck] }
+      - { dir: "{{ patroni_certs_dir }}", owner: "{{ patroni_uid }}", group: "{{ patroni_gid }}", leaves: [patroni, replicator] }
+      - { dir: "{{ haproxy_certs_dir }}", owner: "{{ haproxy_uid }}", group: "{{ haproxy_gid }}", leaves: [haproxy] }
+      - { dir: "{{ pgbouncer_certs_dir }}", owner: "{{ pgbouncer_uid }}", group: "{{ pgbouncer_gid }}", leaves: [pgbouncer] }
+      - { dir: "{{ vip_manager_certs_dir }}", owner: root, group: root, leaves: [vip-manager] }
 
-###############################################################################
+# ##############################################################################
 # 6. Create remote certificate directories with correct per-service ownership
-###############################################################################
+# ##############################################################################
 - name: Create CA / parent certificate directories (root-owned)
   ansible.builtin.file:
     path: "{{ item }}"

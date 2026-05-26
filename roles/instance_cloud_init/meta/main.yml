@@ -12,7 +12,7 @@ galaxy_info:
         - jammy
   galaxy_tags:
     - vmware
-    - cloud_init
+    - cloudinit
     - provision
 
 dependencies: []

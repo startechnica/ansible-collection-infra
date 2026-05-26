@@ -1,5 +1,5 @@
-variant: {{ ignition_flavour_default.butane_variant }}
-version: {{ ignition_flavour_default.butane_spec_version }}
+variant: {{ _os_preset.ignition.butane_variant }}
+version: {{ _os_preset.ignition.butane_spec_version }}
 
 # Drop the FCOS-default serial console karg. Cloud images set
 # `console=ttyS0,115200n8` so kernel logs and a getty land on the
@@ -71,6 +71,24 @@ storage:
         inline: |
           PasswordAuthentication yes
           PermitRootLogin prohibit-password
+{% endif %}
+{% set _eff_ssh_port = (instance.ssh_port | default(instance_ssh_port | default(22))) | int %}
+{% if _eff_ssh_port != 22 %}
+
+    # sshd port fast-path: written at first boot so sshd binds {{ _eff_ssh_port }}
+    # directly — no transitional 22→{{ _eff_ssh_port }} dance, no second restart.
+    # Filename matches what roles/instance/tasks/ssh_config.yml writes (99-ansible.conf)
+    # so the post-boot probe sees an already-migrated state and skips Phase 1.
+    # SELinux port label (semanage) and ssh.socket disable still happen in the
+    # post-boot task's preflight — Butane can't run semanage in initramfs.
+    - path: /etc/ssh/sshd_config.d/99-ansible.conf
+      mode: 0644
+      contents:
+        inline: |
+          # Managed by startechnica.infra.instance_ignition (Butane fast-path)
+          # Post-boot ssh_config.yml will re-write this file if more directives
+          # are added via instance_ssh_configs.
+          Port {{ _eff_ssh_port }}
 {% endif %}
 {% if instance.ignition.role | default('') | length > 0 %}
 
@@ -376,6 +394,17 @@ systemd:
         # — it's a no-op until open-vm-tools is layered below).
         ExecStart=/usr/local/bin/publish-phase open-vm-tools-installing
         ExecStart=/usr/bin/rpm-ostree install --idempotent --apply-live --allow-inactive open-vm-tools
+        # rpm-ostree --apply-live skips the package's %post scriptlet that
+        # copies factory /etc defaults from /usr/etc/vmware-tools/ into
+        # /etc/vmware-tools/. Without this, vgauth.conf + vgauth/schemas/*
+        # are missing and vgauthd.service fails to start (status=255). Copy
+        # the whole tree with `cp -an` (no-clobber) so any user file we
+        # already wrote (tools.conf, our own conf.startechnica) is preserved.
+        # restorecon resets SELinux labels — survives a future enforcing flip.
+        # systemctl reset-failed clears vgauthd's failed-start counter so
+        # the restart actually proceeds (systemd refuses to start units
+        # past their StartLimitBurst until reset).
+        ExecStart=/bin/sh -c 'cp -anr /usr/etc/vmware-tools/. /etc/vmware-tools/ 2>/dev/null || true; restorecon -RF /etc/vmware-tools/ 2>/dev/null || true; systemctl reset-failed vgauthd.service 2>/dev/null || true; systemctl restart vgauthd.service 2>/dev/null || true'
         # Append our [guestinfo] block to /etc/vmware-tools/tools.conf
         # AFTER install (so the rpm-created file exists + we don't clobber
         # any defaults). Idempotent via grep-guard: no-op if our marker
@@ -425,7 +454,7 @@ systemd:
 
         [Install]
         WantedBy=multi-user.target
-{% if container_engine | default('docker') == 'docker' and (docker_install | default(false) | bool) %}
+{% if container_engine | default('docker') == 'docker' and (docker_enabled | default(false) | bool) %}
 
     # Replace FCOS's moby-engine with upstream Docker CE.
     # `override remove` modifies the base layer and cannot be --apply-live, so
@@ -479,7 +508,7 @@ systemd:
         [Unit]
         Description=Publish startechnica bootstrap-ready phase via vmtools
         After=multi-user.target rpm-ostree-install-open-vm-tools.service rpm-ostree-install-python3.service
-{% if container_engine | default('docker') == 'docker' and (docker_install | default(false) | bool) %}
+{% if container_engine | default('docker') == 'docker' and (docker_enabled | default(false) | bool) %}
         After=docker.service rpm-ostree-install-docker-ce.service
         Wants=docker.service
 {% endif %}

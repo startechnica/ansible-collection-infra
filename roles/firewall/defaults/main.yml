@@ -22,11 +22,9 @@ firewall_default_outgoing: allow
 #   source:   CIDR (optional); omit = from any
 #   comment:  optional label
 firewall_rules: []
-
 # Extra trusted sources allowed blanket access (CIDRs).
 # Useful for a jump-host subnet or monitoring network.
 firewall_trusted_sources: []
-
 # Auto-add the Ansible controller's IP (as seen from the target via the
 # active SSH session) to the effective trusted-sources list before
 # applying rules. Prevents the controller from being locked out for

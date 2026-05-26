@@ -3,9 +3,7 @@ argument_specs:
   main:
     short_description: Sync vCenter clusters + ESXi hosts to NetBox
     description:
-      - Discovers vCenter clusters and ESXi hosts via the vSphere API and
-        produces two facts (`vcenter_clusters`, `vcenter_hosts`) for downstream
-        NetBox registration.
+      - Discovers vCenter clusters and ESXi hosts via the vSphere API and produces two facts (`vcenter_clusters`, `vcenter_hosts`) for downstream NetBox registration.
     options:
       debug:
         type: bool
@@ -19,7 +17,6 @@ argument_specs:
           username: { type: str, required: true }
           password: { type: str, required: true, no_log: true }
           validate_certs: { type: bool, default: false }
-
       instance_datacenter:
         type: str
         required: true

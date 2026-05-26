@@ -4,7 +4,7 @@
 # play is a thin smoke-test that re-runs the happy-path validation
 # end-to-end as a final sanity check.
 
-- name: "molecule :: verify happy-path normalization is idempotent"
+- name: "Molecule :: verify happy-path normalization is idempotent"
   hosts: localhost
   connection: local
   gather_facts: false

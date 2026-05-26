@@ -1,50 +1,68 @@
 ---
-# Apply custom sshd configuration (port, auth, keepalive, etc.) on the target VM
-# via VMware Tools — no SSH to the guest required. Runs once per VM from the
+# Apply sshd port + custom sshd_config directives on the target VM via VMware
+# Tools — no SSH to the guest required. Runs once per VM from the
 # configure_all.yml loop.
 #
-# Inputs (merged per VM, with item-level overriding role-level):
-#   instance_ssh_configs:                  (dict) role-wide defaults
-#     Port: 2222
+# Inputs (resolved per VM):
+#   instance_ssh_port:                     (int) role-level default — 22
+#   instance_ssh_configs:                  (dict) role-level sshd directives
 #     PasswordAuthentication: "no"
 #     PermitRootLogin: "no"
 #     ClientAliveInterval: 300
 #   instances:
 #     - name: vm1
-#       instance_ssh_configs:              (dict) per-VM override
-#         Port: 2223
+#       ssh_port: 2223                     (int) per-VM port override
+#       ssh_config:                        (dict) per-VM directives override
+#         ClientAliveInterval: 600
 #
-# Keys map 1:1 to sshd_config directive names. Values are written verbatim.
-# The rendered file lands at /etc/ssh/sshd_config.d/99-ansible.conf on the VM.
+# Effective port = item.ssh_port | default(instance_ssh_port)
+# Effective directives = instance_ssh_configs combined with item.ssh_config
+# Rendered file lands at /etc/ssh/sshd_config.d/99-ansible.conf on the VM.
 #
-# No-op when the effective instance_ssh_configs dict is empty.
+# PORT MIGRATION SAFETY:
+#   When effective_port != 22, the task runs a two-phase migration:
+#     Phase 1: write drop-in binding BOTH 22 and the new port → restart sshd
+#     Phase 2: from controller, wait_for the new port to become reachable
+#     Phase 3: rewrite drop-in with new port ONLY → restart sshd
+#   If Phase 2 fails (firewall / SELinux / socket activation blocked the bind),
+#   we stop hard with sshd still listening on 22 so the operator can SSH in and
+#   diagnose. We never auto-rollback because that would mask the real cause.
+#
+#   On idempotent re-runs: Phase 0 probes the existing drop-in. If it already
+#   has the new port only (and 22 is absent), the migration phases are skipped
+#   and we go straight to Phase 3 (which is then a no-op write).
+#
+# No-op when effective_port == 22 AND effective directives dict is empty.
 
-- name: "Compute effective instance_ssh_configs for {{ item.name }}"
+- name: "Compute effective sshd inputs for {{ item.name }}"
   ansible.builtin.set_fact:
-    _ssh_config: "{{ instance_ssh_configs | combine(item.ssh_config | default({})) }}"
+    _ssh_port: "{{ (item.ssh_port | default(instance_ssh_port | default(22))) | int }}"
+    _ssh_directives: "{{ instance_ssh_configs | combine(item.ssh_config | default({})) }}"
 
-- name: "Skip SSH config step (empty instance_ssh_configs) for {{ item.name }}"
+- name: "Skip SSH config (port=22, no directives) for {{ item.name }}"
   ansible.builtin.debug:
-    msg: "No instance_ssh_configs overrides for {{ item.name }} — skipping."
-  when: _ssh_config | length == 0
+    msg: "No SSH overrides for {{ item.name }} — skipping."
+  when:
+    - _ssh_port | int == 22
+    - _ssh_directives | length == 0
 
 - name: "Apply SSH config to {{ item.name }}"
-  when: _ssh_config | length > 0
+  when: _ssh_port | int != 22 or _ssh_directives | length > 0
+  vars:
+    _vm_ip: >-
+      {{ (item.networks | default([{}]))[0].ipv4 | default('')
+         | split('/') | first }}
+    _drop_in_path: /etc/ssh/sshd_config.d/99-ansible.conf
+    _local_tmp: "/tmp/sshd_override_{{ item.name }}.conf"
+    _remote_tmp: /tmp/sshd_override.conf
   block:
-    - name: "Render sshd override locally for {{ item.name }}"
-      ansible.builtin.copy:
-        dest: "/tmp/sshd_override_{{ item.name }}.conf"
-        mode: "0644"
-        content: |
-          # Managed by startechnica.infra.instance instance_ssh_configs task
-          # Any manual edits will be overwritten on re-provisioning.
-          {% for key, value in _ssh_config.items() %}
-          {{ key }} {{ value }}
-          {% endfor %}
-      delegate_to: localhost
-      become: false
-
-    - name: "Upload sshd override to {{ item.name }}"
+    # ── Phase 0: detect existing state on the VM ─────────────────────────
+    # Fetch the drop-in directly via vmware_guest_file_operation — the file
+    # is mode 0644, no sudo needed. failed_when: false treats "file missing"
+    # as "not migrated yet" (which is the safe default — full migration
+    # runs). No-log intentionally OFF here so guest API errors surface
+    # cleanly for debugging.
+    - name: "Phase 0 — fetch existing sshd drop-in from {{ item.name }}"
       community.vmware.vmware_guest_file_operation:
         hostname: "{{ vcenter_connect.hostname }}"
         username: "{{ vcenter_connect.username }}"
@@ -55,14 +73,51 @@
         vm_id: "{{ item.name }}"
         vm_username: "{{ instance_user_name }}"
         vm_password: "{{ instance_user_password }}"
-        copy:
-          src: "/tmp/sshd_override_{{ item.name }}.conf"
-          dest: "/tmp/sshd_override.conf"
-          overwrite: true
+        fetch:
+          src: "{{ _drop_in_path }}"
+          dest: "/tmp/_ssh_dropin_{{ item.name }}.conf"
       delegate_to: localhost
-      no_log: true
+      register: _dropin_fetch
+      failed_when: false
 
-    - name: "Install + activate sshd override on {{ item.name }}"
+    - name: "Phase 0 — read local drop-in copy for {{ item.name }}"
+      ansible.builtin.slurp:
+        src: "/tmp/_ssh_dropin_{{ item.name }}.conf"
+      register: _dropin_slurp
+      delegate_to: localhost
+      failed_when: false
+      when: _dropin_fetch is succeeded
+
+    - name: "Phase 0 — interpret drop-in for {{ item.name }}"
+      # Regex is Python re (Jinja's regex_search), so use \s — NOT POSIX
+      # [[:space:]]. Multiline flag (?m) anchors ^/$ at each line. Already
+      # migrated iff: file exists AND has `Port <newport>` AND no `Port 22`.
+      ansible.builtin.set_fact:
+        _already_migrated: >-
+          {{ _dropin_fetch is succeeded
+             and (_dropin_text | regex_search('(?m)^\\s*Port\\s+' ~ (_ssh_port | string) ~ '\\s*$') is not none)
+             and (_dropin_text | regex_search('(?m)^\\s*Port\\s+22\\s*$') is none) }}
+      vars:
+        _dropin_text: >-
+          {{ (_dropin_slurp.content | b64decode)
+             if (_dropin_slurp is defined and _dropin_slurp is succeeded and _dropin_slurp.content is defined)
+             else '' }}
+
+    # ── SELinux + socket-activation preflight (always, before any restart) ─
+    # Three independent best-effort blocks, each terminated with `|| true`
+    # so any failure is silently ignored (semanage missing on FCOS,
+    # ssh.socket absent on non-Debian, etc.). Final `exit 0` guarantees
+    # the overall shell exit is 0 regardless of internal sub-failures.
+    # Intentionally NO `set -e` and NO `no_log` — these were the source
+    # of opaque "Module failed" errors before.
+    #
+    # YAML INDENTATION WARNING: every line below must be at the SAME
+    # indentation level as `-c "`. Folded scalar (`>-`) preserves newlines
+    # when a line is MORE indented than the first content line, and bash
+    # treats `||` at the start of a new line as a syntax error (exit 2).
+    # Keep this block at one indent.
+    - name: "Preflight — SELinux + socket activation on {{ item.name }}"
+      when: _ssh_port | int != 22
       community.vmware.vmware_vm_shell:
         hostname: "{{ vcenter_connect.hostname }}"
         username: "{{ vcenter_connect.username }}"
@@ -75,29 +130,278 @@
         vm_password: "{{ instance_user_password }}"
         vm_shell: /bin/bash
         vm_shell_args: >-
-          -c "sudo install -o root -g root -m 0644
-          /tmp/sshd_override.conf
-          /etc/ssh/sshd_config.d/99-ansible.conf
-          && sudo sshd -t
-          && (sudo systemctl reload ssh 2>/dev/null || sudo systemctl reload sshd)
-          && rm -f /tmp/sshd_override.conf"
+          -c "if command -v semanage >/dev/null 2>&1; then
+          sudo semanage port -a -t ssh_port_t -p tcp {{ _ssh_port }} 2>&1
+          || sudo semanage port -m -t ssh_port_t -p tcp {{ _ssh_port }} 2>&1
+          || true;
+          fi;
+          for sock in ssh.socket sshd.socket; do
+          systemctl is-enabled \"$sock\" >/dev/null 2>&1
+          && sudo systemctl disable --now \"$sock\" 2>&1
+          || true;
+          done;
+          sudo systemctl enable ssh.service 2>&1
+          || sudo systemctl enable sshd.service 2>&1
+          || true;
+          exit 0"
+        wait_for_process: true
       delegate_to: localhost
-      no_log: true
 
-    - name: "Remove local temp file for {{ item.name }}"
-      ansible.builtin.file:
-        path: "/tmp/sshd_override_{{ item.name }}.conf"
-        state: absent
+    # ── Phase 1: transitional state (BOTH 22 and new port) ────────────────
+    # Skip if port unchanged OR already migrated.
+    - name: "Phase 1 — render transitional sshd drop-in for {{ item.name }}"
+      when:
+        - _ssh_port | int != 22
+        - not _already_migrated
+      ansible.builtin.copy:
+        dest: "{{ _local_tmp }}"
+        mode: "0644"
+        content: |
+          # Managed by startechnica.infra.instance ssh_config task
+          # PHASE 1 (transitional): bind both 22 and {{ _ssh_port }}.
+          # Phase 3 will rewrite this file with {{ _ssh_port }} only after
+          # the controller verifies the new port is reachable.
+          Port 22
+          Port {{ _ssh_port }}
+          {% for key, value in _ssh_directives.items() %}
+          {{ key }} {{ value }}
+          {% endfor %}
       delegate_to: localhost
       become: false
 
-    - name: "Record instance_ssh_configs status for {{ item.name }}"
+    - name: "Phase 1 — upload transitional drop-in to {{ item.name }}"
+      when:
+        - _ssh_port | int != 22
+        - not _already_migrated
+      community.vmware.vmware_guest_file_operation:
+        hostname: "{{ vcenter_connect.hostname }}"
+        username: "{{ vcenter_connect.username }}"
+        password: "{{ vcenter_connect.password }}"
+        validate_certs: "{{ vcenter_connect.validate_certs }}"
+        datacenter: "{{ instance_datacenter }}"
+        folder: "{{ instance_folder_path }}"
+        vm_id: "{{ item.name }}"
+        vm_username: "{{ instance_user_name }}"
+        vm_password: "{{ instance_user_password }}"
+        copy:
+          src: "{{ _local_tmp }}"
+          dest: "{{ _remote_tmp }}"
+          overwrite: true
+      delegate_to: localhost
+      no_log: true
+
+    # vmware_vm_shell does NOT capture stdout/stderr — VMware Tools'
+    # StartProgramInGuest API only returns exit_code. So we redirect the
+    # whole chain to a guest log file, and the rescue fetches+displays it
+    # on failure. Without this, all you get is "exit_code: 255" with no
+    # indication of which step (install / sed / sshd -t / restart) blew up.
+    - name: "Phase 1 — install transitional drop-in + restart sshd on {{ item.name }}"
+      when:
+        - _ssh_port | int != 22
+        - not _already_migrated
+      block:
+        - name: "Phase 1 — install + restart sshd on {{ item.name }}"
+          community.vmware.vmware_vm_shell:
+            hostname: "{{ vcenter_connect.hostname }}"
+            username: "{{ vcenter_connect.username }}"
+            password: "{{ vcenter_connect.password }}"
+            validate_certs: "{{ vcenter_connect.validate_certs }}"
+            datacenter: "{{ instance_datacenter }}"
+            folder: "{{ instance_folder_path }}"
+            vm_id: "{{ item.name }}"
+            vm_username: "{{ instance_user_name }}"
+            vm_password: "{{ instance_user_password }}"
+            vm_shell: /bin/bash
+            # YAML indent: every line same as `-c "` so `>-` folds to single line.
+            # Outer `( ... ) >log 2>&1` makes per-step 2>&1 redundant; subshell
+            # exit code = the &&-chain's failing step (or rm -f on success).
+            # `install -d /run/sshd` first: on fresh Ubuntu cloud images
+            # systemd-tmpfiles sometimes hasn't materialised /run/sshd, and
+            # `sshd -t` then fails with "Missing privilege separation
+            # directory". `install -d` is idempotent — no-op if it exists.
+            vm_shell_args: >-
+              -c "( sudo install -d -o root -g root -m 0755 /run/sshd
+              && sudo install -o root -g root -m 0644 {{ _remote_tmp }} {{ _drop_in_path }}
+              && sudo sed -i -E 's/^[[:space:]]*Port[[:space:]]/#&/' /etc/ssh/sshd_config
+              && sudo sshd -t
+              && { sudo systemctl restart ssh || sudo systemctl restart sshd; }
+              && rm -f {{ _remote_tmp }}
+              ) > /tmp/ssh_phase1.log 2>&1"
+            wait_for_process: true
+          delegate_to: localhost
+      rescue:
+        - name: "Phase 1 — fetch failure log from {{ item.name }}"
+          community.vmware.vmware_guest_file_operation:
+            hostname: "{{ vcenter_connect.hostname }}"
+            username: "{{ vcenter_connect.username }}"
+            password: "{{ vcenter_connect.password }}"
+            validate_certs: "{{ vcenter_connect.validate_certs }}"
+            datacenter: "{{ instance_datacenter }}"
+            folder: "{{ instance_folder_path }}"
+            vm_id: "{{ item.name }}"
+            vm_username: "{{ instance_user_name }}"
+            vm_password: "{{ instance_user_password }}"
+            fetch:
+              src: /tmp/ssh_phase1.log
+              dest: "/tmp/_ssh_phase1_{{ item.name }}.log"
+          delegate_to: localhost
+          register: _phase1_fetch
+          failed_when: false
+
+        - name: "Phase 1 — read failure log for {{ item.name }}"
+          ansible.builtin.slurp:
+            src: "/tmp/_ssh_phase1_{{ item.name }}.log"
+          register: _phase1_log
+          delegate_to: localhost
+          failed_when: false
+          when: _phase1_fetch is succeeded
+
+        - name: "Phase 1 — fail with captured output for {{ item.name }}"
+          ansible.builtin.fail:
+            msg: |
+              Phase 1 install/restart FAILED on {{ item.name }}.
+              Guest log /tmp/ssh_phase1.log:
+              {{ (_phase1_log.content | b64decode)
+                 if (_phase1_log is defined and _phase1_log is succeeded and _phase1_log.content is defined)
+                 else '<log unavailable — guest API may have been unreachable>' }}
+
+    # ── Phase 2: verify the new port is reachable from controller ─────────
+    # Stops the play hard if not — sshd is still on 22 so operator can SSH
+    # in to diagnose. wait_for is TCP-only; a successful connect proves
+    # sshd is bound AND nothing in between (OS firewall, network ACL) is
+    # blocking. The firewall role hasn't run yet at this stage so any
+    # blockage here is OS-default / external.
+    - name: "Phase 2 — verify new SSH port reachable on {{ item.name }}"
+      when:
+        - _ssh_port | int != 22
+        - not _already_migrated
+      ansible.builtin.wait_for:
+        host: "{{ _vm_ip }}"
+        port: "{{ _ssh_port | int }}"
+        state: started
+        timeout: 60
+      delegate_to: localhost
+
+    # ── Phase 3: final drop-in (new port ONLY, drop 22) ───────────────────
+    # When port==22 we also land here (write the directives, no port shift).
+    # When already migrated we also land here (re-write is idempotent).
+    - name: "Phase 3 — render final sshd drop-in for {{ item.name }}"
+      ansible.builtin.copy:
+        dest: "{{ _local_tmp }}"
+        mode: "0644"
+        content: |
+          # Managed by startechnica.infra.instance ssh_config task
+          # Any manual edits will be overwritten on re-provisioning.
+          {% if _ssh_port | int != 22 %}
+          Port {{ _ssh_port }}
+          {% endif %}
+          {% for key, value in _ssh_directives.items() %}
+          {{ key }} {{ value }}
+          {% endfor %}
+      delegate_to: localhost
+      become: false
+
+    - name: "Phase 3 — upload final drop-in to {{ item.name }}"
+      community.vmware.vmware_guest_file_operation:
+        hostname: "{{ vcenter_connect.hostname }}"
+        username: "{{ vcenter_connect.username }}"
+        password: "{{ vcenter_connect.password }}"
+        validate_certs: "{{ vcenter_connect.validate_certs }}"
+        datacenter: "{{ instance_datacenter }}"
+        folder: "{{ instance_folder_path }}"
+        vm_id: "{{ item.name }}"
+        vm_username: "{{ instance_user_name }}"
+        vm_password: "{{ instance_user_password }}"
+        copy:
+          src: "{{ _local_tmp }}"
+          dest: "{{ _remote_tmp }}"
+          overwrite: true
+      delegate_to: localhost
+      no_log: true
+
+    # Same log-to-file + rescue pattern as Phase 1 install above; see the
+    # comment block there for the rationale.
+    - name: "Phase 3 — install final drop-in + reload sshd on {{ item.name }}"
+      block:
+        - name: "Phase 3 — install + restart sshd on {{ item.name }}"
+          community.vmware.vmware_vm_shell:
+            hostname: "{{ vcenter_connect.hostname }}"
+            username: "{{ vcenter_connect.username }}"
+            password: "{{ vcenter_connect.password }}"
+            validate_certs: "{{ vcenter_connect.validate_certs }}"
+            datacenter: "{{ instance_datacenter }}"
+            folder: "{{ instance_folder_path }}"
+            vm_id: "{{ item.name }}"
+            vm_username: "{{ instance_user_name }}"
+            vm_password: "{{ instance_user_password }}"
+            vm_shell: /bin/bash
+            # See Phase 1 install for why /run/sshd is created here.
+            vm_shell_args: >-
+              -c "( sudo install -d -o root -g root -m 0755 /run/sshd
+              && sudo install -o root -g root -m 0644 {{ _remote_tmp }} {{ _drop_in_path }}
+              && sudo sshd -t
+              && { sudo systemctl restart ssh || sudo systemctl restart sshd; }
+              && rm -f {{ _remote_tmp }}
+              ) > /tmp/ssh_phase3.log 2>&1"
+            wait_for_process: true
+          delegate_to: localhost
+      rescue:
+        - name: "Phase 3 — fetch failure log from {{ item.name }}"
+          community.vmware.vmware_guest_file_operation:
+            hostname: "{{ vcenter_connect.hostname }}"
+            username: "{{ vcenter_connect.username }}"
+            password: "{{ vcenter_connect.password }}"
+            validate_certs: "{{ vcenter_connect.validate_certs }}"
+            datacenter: "{{ instance_datacenter }}"
+            folder: "{{ instance_folder_path }}"
+            vm_id: "{{ item.name }}"
+            vm_username: "{{ instance_user_name }}"
+            vm_password: "{{ instance_user_password }}"
+            fetch:
+              src: /tmp/ssh_phase3.log
+              dest: "/tmp/_ssh_phase3_{{ item.name }}.log"
+          delegate_to: localhost
+          register: _phase3_fetch
+          failed_when: false
+
+        - name: "Phase 3 — read failure log for {{ item.name }}"
+          ansible.builtin.slurp:
+            src: "/tmp/_ssh_phase3_{{ item.name }}.log"
+          register: _phase3_log
+          delegate_to: localhost
+          failed_when: false
+          when: _phase3_fetch is succeeded
+
+        - name: "Phase 3 — fail with captured output for {{ item.name }}"
+          ansible.builtin.fail:
+            msg: |
+              Phase 3 install/restart FAILED on {{ item.name }}.
+              Guest log /tmp/ssh_phase3.log:
+              {{ (_phase3_log.content | b64decode)
+                 if (_phase3_log is defined and _phase3_log is succeeded and _phase3_log.content is defined)
+                 else '<log unavailable — guest API may have been unreachable>' }}
+
+    # ── Local cleanup ─────────────────────────────────────────────────────
+    - name: "Remove local temp files for {{ item.name }}"
+      ansible.builtin.file:
+        path: "{{ path }}"
+        state: absent
+      loop:
+        - "{{ _local_tmp }}"
+        - "/tmp/_ssh_dropin_{{ item.name }}.conf"
+      loop_control:
+        loop_var: path
+      delegate_to: localhost
+      become: false
+
+    - name: "Record SSH config status for {{ item.name }}"
       ansible.builtin.set_fact:
         vm_ssh_config_status: >-
           {{ vm_ssh_config_status | default({}) | combine({
             item.name: {
               'applied': true,
-              'directives': _ssh_config | dict2items | map(attribute='key') | list,
-              'port': _ssh_config.Port | default(22) | int
+              'port': _ssh_port | int,
+              'directives': _ssh_directives | dict2items | map(attribute='key') | list,
+              'migrated_from_22': (_ssh_port | int != 22) and (not _already_migrated)
             }
           }) }}

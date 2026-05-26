@@ -1,7 +1,7 @@
 ---
 namespace: startechnica
 name: infra
-version: 1.0.0
+version: 1.0.1
 readme: README.md
 authors:
   - firmansyahn (firmansyah@nainggolan.id)
@@ -10,38 +10,44 @@ description: >-
   NetBox IPAM integration, MongoDB sharded cluster, and Patroni HA PostgreSQL deployment.
 license:
   - MIT
-repository: https://gitlab.com/skydata/ansible-collection-infra
-documentation: https://gitlab.com/skydata/ansible-collection-infra/-/blob/main/README.md
-issues: https://gitlab.com/skydata/ansible-collection-infra/-/issues
+repository: https://github.com/startechnica/ansible-collection-infra
+documentation: https://github.com/startechnica/ansible-collection-infra/blob/main/README.md
+issues: https://github.com/startechnica/ansible-collection-infra/issues
 tags:
+  - infrastructure
   - vmware
   - vcenter
   - netbox
   - mongodb
   - patroni
   - postgresql
-  - cloud_init
+  - cloudinit
   - ignition
 dependencies:
   ansible.posix: ">=1.5.0"
-  community.crypto: ">=2.22.0"
-  community.docker: ">=3.13.0"
-  community.general: ">=9.0.0"
-  community.mongodb: ">=1.7.0"
-  community.postgresql: ">=3.4.0"
+  ansible.utils: ">=5.1.0"
+  community.crypto: ">=3.2.0"
+  community.docker: ">=5.2.0"
+  community.general: ">=12.6.0"
+  community.mongodb: ">=1.7.12"
+  community.postgresql: ">=3.14.3"
   community.routeros: ">=3.0.0"
-  community.vmware: ">=5.2.0"
+  community.vmware: ">=6.2.0"
   containers.podman: ">=1.19.2"
-  netbox.netbox: ">=4.1.0"
-  vmware.vmware: ">=1.6.0"
+  netbox.netbox: ">=3.22.0"
+  vmware.vmware: ">=2.8.0"
 build_ignore:
   - .git
   - .gitignore
   - .claude
+  - .github
+  - .vscode
+  - .yamllint
   - ansible.cfg
   - requirements.yml
   - inventories
   - group_vars
   - artifacts
   - playbooks/artifacts
+  - roles/geerlingguy.docker
   - "*.tar.gz"

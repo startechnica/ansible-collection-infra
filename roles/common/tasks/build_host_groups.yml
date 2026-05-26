@@ -14,8 +14,14 @@
 #   - User:     instance_user_name
 #   - Password: instance_user_password (if set)
 #   - SSH key:  instance_user_ssh_private_key (if set)
-#   - Port:     item.ssh_config.Port, else instance_ssh_configs.Port, else 22
-#               (honors a custom SSH port applied by instance instance_ssh_configs)
+#   - Port:     item.ssh_port, else instance_ssh_port (default 22)
+#               (honors the canonical sshd port knob set by the instance role)
+
+# Publish slug-resolved values as host facts on localhost so the
+# add_host calls below propagate the resolved `instance_user_name` /
+# `instance_init_type` / `container_engine` to dynamic hosts.
+- name: Resolve platform-preset fallbacks
+  ansible.builtin.include_tasks: resolve_platform_preset.yml
 
 - name: Add VMs to host groups
   vars:
@@ -27,7 +33,7 @@
     ansible_user: "{{ instance_user_name | default('ubuntu') }}"
     ansible_password: "{{ instance_user_password | default(omit) }}"
     ansible_ssh_private_key_file: "{{ instance_user_ssh_private_key | default(omit) }}"
-    ansible_port: "{{ item.ssh_config.Port | default(instance_ssh_configs.Port | default(22)) | int }}"
+    ansible_port: "{{ item.ssh_port | default(instance_ssh_port | default(22)) | int }}"
     ansible_become: true
     ansible_become_method: sudo
     node_ip: "{{ (_first_nic.ipv4 if (_first_nic.ipv4 | default('') and _first_nic.ipv4 != 'dhcp') else '') | split('/') | first }}"
@@ -38,18 +44,18 @@
     # localhost (which is in the inventory's `ignition`/`cloud_init` group).
     instance_init_type: "{{ instance_init_type | default('ignition') }}"
     # Container runtime: container_engine is the authoritative selector,
-    # docker_install / podman_enabled are independent install toggles.
+    # docker_enabled / podman_enabled are independent install toggles.
     # Both propagated as-is so dispatch (mongodb, patroni) sees what the
     # inventory actually said. See roles/instance/defaults/main.yml for
     # the truth table.
     podman_enabled: "{{ podman_enabled | default(false) }}"
     container_engine: "{{ container_engine | default('docker') }}"
-    # Propagate docker_install too — dynamic hosts join `cluster_nodes` /
+    # Propagate docker_enabled too — dynamic hosts join `cluster_nodes` /
     # `mongodb_nodes` / `patroni_nodes` (no group_vars files for those) and
-    # `all` (where group_vars/all/docker.yaml sets docker_install: false).
+    # `all` (where group_vars/all/docker.yaml sets docker_enabled: false).
     # Without this, Stage 4's `Skip Docker install on this host` end_host
     # gate fires unconditionally on dynamic hosts and docker never installs.
-    docker_install: "{{ docker_install | default(false) }}"
+    docker_enabled: "{{ docker_enabled | default(false) }}"
     # Propagate docker_daemon_options for the same reason — it's defined in
     # group_vars/{ignition,cloud_init}.yml, which only applies to localhost.
     # Without this, preflight/docker_daemon_config.yml on FCOS hosts and
@@ -73,7 +79,7 @@
     ansible_user: "{{ instance_user_name | default('ubuntu') }}"
     ansible_password: "{{ instance_user_password | default(omit) }}"
     ansible_ssh_private_key_file: "{{ instance_user_ssh_private_key | default(omit) }}"
-    ansible_port: "{{ item.ssh_config.Port | default(instance_ssh_configs.Port | default(22)) | int }}"
+    ansible_port: "{{ item.ssh_port | default(instance_ssh_port | default(22)) | int }}"
     ansible_become: true
     ansible_become_method: sudo
     node_ip: "{{ (_first_nic.ipv4 if (_first_nic.ipv4 | default('') and _first_nic.ipv4 != 'dhcp') else '') | split('/') | first }}"
@@ -81,14 +87,14 @@
     instance_init_type: "{{ instance_init_type | default('ignition') }}"
     container_engine: "{{ container_engine | default('docker') }}"
     # See the non-tag branch above for why container_engine /
-    # podman_enabled / docker_install all need to ride along.
+    # podman_enabled / docker_enabled all need to ride along.
     podman_enabled: "{{ podman_enabled | default(false) }}"
-    # Propagate docker_install too — dynamic hosts join `cluster_nodes` /
+    # Propagate docker_enabled too — dynamic hosts join `cluster_nodes` /
     # `mongodb_nodes` / `patroni_nodes` (no group_vars files for those) and
-    # `all` (where group_vars/all/docker.yaml sets docker_install: false).
+    # `all` (where group_vars/all/docker.yaml sets docker_enabled: false).
     # Without this, Stage 4's `Skip Docker install on this host` end_host
     # gate fires unconditionally on dynamic hosts and docker never installs.
-    docker_install: "{{ docker_install | default(false) }}"
+    docker_enabled: "{{ docker_enabled | default(false) }}"
     # See the non-tag branch above for why docker_daemon_options has to
     # ride along on add_host instead of being inherited via group_vars.
     docker_daemon_options: "{{ docker_daemon_options | default(omit) }}"

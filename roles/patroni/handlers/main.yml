@@ -8,7 +8,7 @@
 
 # ── restart stack (whole patroni deploy) ────────────────────────────
 
-- name: restart stack (docker)
+- name: Restart stack (docker)
   listen: restart stack
   community.docker.docker_compose_v2:
     project_src: "{{ patroni_dir }}"
@@ -16,7 +16,7 @@
     remove_orphans: true
   when: container_engine | default('docker') == 'docker'
 
-- name: restart stack (podman, systemd-managed)
+- name: Restart stack (podman, systemd-managed)
   listen: restart stack
   ansible.builtin.systemd:
     name: "{{ item }}"
@@ -37,7 +37,7 @@
 
 # ── restart etcd ────────────────────────────────────────────────────
 
-- name: restart etcd (docker)
+- name: Restart etcd (docker)
   listen: restart etcd
   community.docker.docker_compose_v2:
     project_src: "{{ patroni_dir }}"
@@ -45,7 +45,7 @@
     services: [etcd]
   when: container_engine | default('docker') == 'docker'
 
-- name: restart etcd (podman)
+- name: Restart etcd (podman)
   listen: restart etcd
   ansible.builtin.systemd:
     name: etcd.service
@@ -54,7 +54,7 @@
 
 # ── restart patroni ─────────────────────────────────────────────────
 
-- name: restart patroni (docker)
+- name: Restart patroni (docker)
   listen: restart patroni
   community.docker.docker_compose_v2:
     project_src: "{{ patroni_dir }}"
@@ -62,7 +62,7 @@
     services: [patroni]
   when: container_engine | default('docker') == 'docker'
 
-- name: restart patroni (podman)
+- name: Restart patroni (podman)
   listen: restart patroni
   ansible.builtin.systemd:
     name: patroni.service
@@ -71,7 +71,7 @@
 
 # ── restart haproxy ─────────────────────────────────────────────────
 
-- name: restart haproxy (docker)
+- name: Restart haproxy (docker)
   listen: restart haproxy
   community.docker.docker_compose_v2:
     project_src: "{{ patroni_dir }}"
@@ -79,7 +79,7 @@
     services: [haproxy]
   when: container_engine | default('docker') == 'docker'
 
-- name: restart haproxy (podman)
+- name: Restart haproxy (podman)
   listen: restart haproxy
   ansible.builtin.systemd:
     name: haproxy.service
@@ -88,7 +88,7 @@
 
 # ── restart pgbouncer ───────────────────────────────────────────────
 
-- name: restart pgbouncer (docker)
+- name: Restart pgbouncer (docker)
   listen: restart pgbouncer
   community.docker.docker_compose_v2:
     project_src: "{{ patroni_dir }}"
@@ -96,7 +96,7 @@
     services: [pgbouncer]
   when: container_engine | default('docker') == 'docker'
 
-- name: restart pgbouncer (podman)
+- name: Restart pgbouncer (podman)
   listen: restart pgbouncer
   ansible.builtin.systemd:
     name: pgbouncer.service
@@ -111,7 +111,7 @@
 # env on the next timer fire automatically. So this handler restarts
 # patroni only.
 
-- name: restart walg (docker)
+- name: Restart walg (docker)
   listen: restart walg
   community.docker.docker_compose_v2:
     project_src: "{{ patroni_dir }}"
@@ -119,7 +119,7 @@
     services: [patroni]
   when: container_engine | default('docker') == 'docker'
 
-- name: restart walg (podman)
+- name: Restart walg (podman)
   listen: restart walg
   ansible.builtin.systemd:
     name: patroni.service
@@ -129,7 +129,7 @@
 
 # ── restart vip-manager (only when patroni_vip_enabled + use_vip_manager) ──
 
-- name: restart vip-manager (docker)
+- name: Restart vip-manager (docker)
   listen: restart vip-manager
   community.docker.docker_compose_v2:
     project_src: "{{ patroni_dir }}"
@@ -140,7 +140,7 @@
     - patroni_vip_enabled
     - use_vip_manager
 
-- name: restart vip-manager (podman)
+- name: Restart vip-manager (podman)
   listen: restart vip-manager
   ansible.builtin.systemd:
     name: vip-manager.service
@@ -152,7 +152,7 @@
 
 # ── restart keepalived (only when patroni_vip_enabled + !use_vip_manager) ──
 
-- name: restart keepalived (docker)
+- name: Restart keepalived (docker)
   listen: restart keepalived
   community.docker.docker_compose_v2:
     project_src: "{{ patroni_dir }}"
@@ -163,7 +163,7 @@
     - patroni_vip_enabled
     - not use_vip_manager
 
-- name: restart keepalived (podman)
+- name: Restart keepalived (podman)
   listen: restart keepalived
   ansible.builtin.systemd:
     name: keepalived.service
@@ -175,12 +175,12 @@
 
 # ── shared host-level handlers (engine-agnostic) ────────────────────
 
-- name: reload systemd
+- name: Reload systemd
   ansible.builtin.systemd:
     daemon_reload: true
 
-- name: reload sysctl
+- name: Reload sysctl
   ansible.builtin.command: sysctl --system
 
-- name: reload udev
+- name: Reload udev
   ansible.builtin.shell: udevadm control --reload-rules && udevadm trigger

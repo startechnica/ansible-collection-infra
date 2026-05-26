@@ -4,5 +4,316 @@ All notable changes to this collection are documented in this file. The format
 is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this collection adheres to [Semantic Versioning](https://semver.org/).
 
+## 1.0.1 (2026-05-25)
+
+### Breaking changes
+- Removed `ignition_flavour` knob (`fcos` / `flatcar` / `rhcos` /
+  `opensuse`). OS selection is now via `instance_platform_preset`
+  using the NetBox platform slug (`fedora-coreos` / `flatcar` /
+  `rhel-coreos` / `opensuse-microos`). The per-flavour
+  `ignition_flavour_map` is gone; the data lives in
+  `_platform_map[<slug>].ignition`. `roles/instance_ignition/vars/`
+  was deleted. `ignition_flavour_default.<field>` (used by Butane
+  templates and `render_ignition.yml`) is unchanged — still works,
+  now sourced from `_platform_map[<preset>].ignition`. Inventory
+  migration: replace `ignition_flavour: fcos` with
+  `instance_platform_preset: fedora-coreos`, and so on.
+- Default values changed from non-empty to empty strings for the
+  five vars that now feed the slug-fallback chain. Required for the
+  empty-check semantics — a non-empty default would short-circuit
+  the slug lookup. Anything reading these vars directly (without
+  going through `_resolved_*`) will see `""` until inventory sets
+  them or `instance_platform_preset` is configured.
+  - `instance_user_name`: `ubuntu` → `""`
+  - `instance_init_type`: `ignition` → `""`
+  - `container_engine`: `podman` → `""`
+  - `content_library_name`, `content_library_template`: already `""`
+- Removed `Port` directive from `instance_ssh_configs` / per-VM
+  `instances[].ssh_config`. Introduced top-level `instance_ssh_port`
+  (and per-VM `instances[].ssh_port`) as the canonical SSH port knob.
+  The dict-of-directives approach silently failed on port changes
+  because (a) sshd's `Port` is additive across drop-ins so the main
+  config's `Port 22` kept 22 open, (b) systemd socket activation
+  (`ssh.socket` on Ubuntu 22.04+ / Debian 12) bypasses sshd_config
+  entirely, and (c) SELinux on RHEL/Suse blocks non-22 binds without
+  `semanage port -a`. The new `instance_ssh_port` task handles all
+  three. `ansible_port` derivation in `build_host_groups.yml` and the
+  vendored `playbooks/{mongodb,patroni}/_setup.yml` now read
+  `item.ssh_port | default(instance_ssh_port)` instead of digging
+  into `ssh_configs.Port`. Inventory migration: move
+  `instance_ssh_configs.Port: 2222` → `instance_ssh_port: 2222`; per-VM
+  `instances[].ssh_config.Port: N` → `instances[].ssh_port: N`. Other
+  sshd_config directives stay in `instance_ssh_configs` unchanged.
+  Port changes now run a two-phase migration: bind BOTH 22 and the new
+  port → verify new port reachable from controller → drop 22. On
+  verify failure, sshd stays on both ports so the operator can SSH in
+  on 22 to diagnose.
+- Renamed `netbox_query_*` → `netbox_lookup_*` (7 vars: `cluster`,
+  `site`, `tenant`, `role`, `status`, `tags`, `custom_fields`). The role
+  is named `netbox_lookup`, so the user-facing knob prefix should match
+  (consistent with `netbox_lookup_enabled`, `netbox_lookup_interface`,
+  `netbox_lookup_set_instances`). Affects `roles/netbox_lookup/`:
+  `defaults/main.yml`, `meta/argument_specs.yml`, `tasks/query_vms.yml`,
+  `vars/main.yml`, `README.md`. Inventory migration: rename the keys in
+  inventory or group_vars (old keys are silently ignored).
+- Renamed `content_library_template` → `content_library_item_name`.
+  vSphere content libraries hold "items" (which may be OVAs, VM
+  templates, ISOs, etc.) — the field is the *item name*, not
+  specifically a "template". The new name matches what
+  `vmware.vmware.content_library_item_info` returns as `library_item_name`
+  and removes ambiguity with `content_library_template_prefix` (an
+  unrelated auto-import naming knob that stays unchanged). Affects:
+  roles/instance/defaults/main.yml, roles/instance/meta/argument_specs.yml,
+  roles/instance/tasks/main.yml + validate/template.yml,
+  roles/instance_ignition/tasks/{content_library_import,fcos_prepare}.yml,
+  roles/common/vars/main.yml (`_platform_map` field rename across all 44
+  OS rows + `_resolved_content_library_item_name`),
+  roles/common/tasks/resolve_platform_preset.yml (host-fact publish),
+  examples/inventory.{full,minimal}.yml + molecule fixture + READMEs +
+  mongodb/preflight comment. Inventory migration: rename the key
+  `content_library_template:` → `content_library_item_name:` in your
+  inventory or group_vars. The ansible-galaxy module name
+  `vmware.vmware.deploy_content_library_template` is unchanged — that's
+  the upstream module's identifier, not our variable.
+- Removed `validation_only` knob and all `- not (validation_only)`
+  gates. The flag was an under-used pre-flight short-circuit (skip VM
+  creation, only run validators) — equivalent dry-running is better
+  served by `ansible-playbook --check` or `--syntax-check`, and the
+  validator tasks (validate/vcenter, validate/input, validate/vms,
+  validate/template, validate/role, etc.) still run unconditionally
+  on every play so any inventory error is caught regardless. Removed
+  from: roles/instance/defaults/main.yml (declaration + docstring),
+  roles/instance/meta/argument_specs.yml, roles/instance/tasks/main.yml
+  (9 `when:` blocks), playbooks/deploy.yml (1 block), plus stale doc
+  references in roles/instance/README.md, molecule/default/README.md,
+  examples/cloud-init.yml. Inventory migration: drop any
+  `validation_only:` lines or `-e validation_only=true` invocations
+  — they're silently ignored now.
+- Renamed `docker_install` → `docker_enabled`. Aligns with
+  `podman_enabled` and `mongodb_enabled` / `patroni_enabled` naming —
+  the var is a host-level enable toggle, not just an install action.
+  Affects all consumers: instance defaults, validate_inventory,
+  build_host_groups (add_host propagation), instance/mongodb/patroni
+  main.yml dispatch gates, deploy.yml stage gates, deploy_mongodb.yml /
+  deploy_patroni.yml geerlingguy.docker `when:`, fcos.bu.j2 conditional
+  blocks. Inventory migration: rename the key in inventory + any
+  group_vars files. The task filename `preflight/docker_install_fcos.yml`
+  is unchanged (separate concept — "the task that installs Docker on
+  FCOS", not the variable).
+
+### Added
+- `instance_ignition` Butane templates (`fcos.bu.j2`, `flatcar.bu.j2`,
+  `opensuse.bu.j2`, `rhcos.bu.j2`) now render a `Port` directive into
+  `/etc/ssh/sshd_config.d/99-ansible.conf` at first boot when
+  `instance_ssh_port` (or per-VM `instances[].ssh_port`) is non-22. sshd
+  binds the new port directly on first boot — no transitional 22→newport
+  migration, no second restart. The post-boot `ssh_config.yml` task still
+  runs but its Phase 0 probe detects the already-migrated state and skips
+  the transition (only re-writes the drop-in if `instance_ssh_configs`
+  adds more directives). Filename intentionally matches what the post-boot
+  task writes so both code paths converge on a single sshd_config drop-in.
+  SELinux port label (FCOS/RHCOS) and `ssh.socket` disable are still
+  handled by the post-boot task's preflight — Butane can't run semanage
+  in initramfs.
+- `roles/instance_ignition/templates/fcos.bu.j2` —
+  `rpm-ostree-install-open-vm-tools.service` now copies the
+  `/usr/etc/vmware-tools/` factory payload into `/etc/vmware-tools/`
+  at first boot, then runs `systemctl reset-failed + restart` on
+  `vgauthd.service`. `rpm-ostree --apply-live` skips the rpm's `%post`
+  scriptlet that normally seeds `/etc`, leaving `vgauth.conf` and the
+  SAML XSD schemas absent — vgauthd then fails to start (`status=255`)
+  on every boot. Each step is `|| true`-guarded so a failure (no
+  `/usr/etc/vmware-tools`, vgauthd not present) doesn't poison the
+  bootstrap chain. Runs once per VM at first boot, before vmtoolsd is
+  started, so vgauthd never enters its failed state.
+- `roles/netbox_lookup/vars/main.yml` and
+  `roles/netbox_register/vars/main.yml` — wiring-table documentation
+  (`_lookup_input_map`, `_register_input_map`, `_*_per_vm_input_map`,
+  `_lookup_netbox_query_map`, `_register_netbox_write_map`,
+  `_*_output_map`, `_register_side_effect_map`) mapping every external
+  var these roles consume to the NetBox API resources they read/write
+  and the facts they export. Loaded as role vars so they're
+  runtime-inspectable via `debug: var=_lookup_input_map`, but tasks
+  don't reference them — they're the single source of truth for
+  "edit-FIRST-when-adding-a-field" discipline. Includes shared
+  `_netbox_api_headers` (Authorization + Content-Type + Accept) reused
+  by every `ansible.builtin.uri` call in both roles.
+- `roles/instance/meta/argument_specs.yml`: `content_library_type`
+  now has a `description:` documenting why `iso` is intentionally NOT
+  in `choices` (ISOs are boot media; no vSphere "deploy VM from ISO"
+  API). Surfaces in `ansible-doc -t role` output and in the rejection
+  message when an inventory typo specifies `iso`.
+- `ansible.utils >=5.1.0` declared as a runtime dependency
+  (`common` and `instance` roles use `ansible.utils.ipv4` /
+  `ansible.utils.ipv6` filters).
+- `meta/runtime.yml` with `requires_ansible: ">=2.15.0"` and the
+  `mongodb` action group.
+- `.ansible-lint` `kinds:` entry classifying `playbooks/**/_*.yml`
+  as task-file fragments (consumed via `include_tasks`).
+- `roles/common/vars/main.yml`: canonical OS identity table
+  `_platform_map`, keyed by NetBox platform slug and linking
+  `ansible_facts.os_family`, `ansible_facts.distribution`, and the
+  vSphere `guestId` for each supported guest. The existing
+  `_vsphere_guest_id_platform_map` is now derived from it so there's a
+  single source of truth. Lives in `common` (not `instance`) so
+  `common.validate_inventory` and `common.build_host_groups` — which
+  run before `instance` loads its vars — can see slug-derived values.
+  Covers Debian/Ubuntu (incl. netbox-community `debian-gnulinux-N-64-bit`
+  and `ubuntu-linux-64-bit` slug aliases), RHEL family (RHEL, Rocky,
+  AlmaLinux, Oracle Linux, CentOS, Fedora, Fedora CoreOS, RHCOS), Suse
+  (SLES, openSUSE Tumbleweed + MicroOS), Flatcar Container Linux,
+  Windows desktop / Server 2016–2022, FreeBSD (pfSense), and MikroTik
+  RouterOS — 44 rows total. Aliases ordered before canonical slugs so
+  the inverse map resolves to the canonical entry per `guestId`.
+- Each `_platform_map` row carries extra fields beyond the original
+  three: `username` (default OS user), `init_type` (cloud-init /
+  ignition / none), `container_engine` (docker for Debian/Suse, podman
+  for RedHat, `""` for Windows / FreeBSD / RouterOS),
+  `content_library_name` (`<distribution>-images` by convention),
+  `content_library_item_name` (defaults to the slug). The 4 ignition
+  rows (`fedora-coreos`, `flatcar`, `rhel-coreos`, `opensuse-microos`)
+  additionally carry an `ignition:` sub-dict with butane_variant /
+  butane_spec_version / butane_template / template_prefix /
+  default_channel / channels / metadata_url / ova_url — the data that
+  used to live in `ignition_flavour_map`.
+- `instance_platform_preset` — new top-level knob that picks an OS row
+  from `_platform_map` to supply slug-based defaults for
+  `content_library_name`, `content_library_item_name`, `instance_user_name`,
+  `instance_init_type`, and `container_engine`. Explicit inventory
+  overrides on those five vars still win; unset (empty) falls back to
+  the slug-derived value, then to a hardcoded final fallback
+  (`ubuntu` / `ignition` / `podman` / `""`).
+- `_resolved_content_library_name`, `_resolved_content_library_item_name`,
+  `_resolved_instance_user_name`, `_resolved_instance_init_type`,
+  `_resolved_container_engine` — derived vars in
+  `roles/common/vars/main.yml` that implement the slug-fallback
+  precedence chain (inventory non-empty > `_platform_map[<preset>].<field>`
+  > hardcoded final fallback). Consumers across `common`, `instance`,
+  `instance_cloud_init`, `instance_ignition`, `mongodb`, `patroni`,
+  and `preflight` now read these `_resolved_*` names so the slug-based
+  preset reaches every dispatch site (ansible_user on dynamic hosts,
+  container runtime selection, Butane templates, etc.).
+
+### Fixed
+- `roles/instance/tasks/ssh_config.yml` Phase 0 probe regex used POSIX
+  `[[:space:]]` which Python's `re.match` doesn't support — silently
+  mismatched, causing `_already_migrated` to be `False` even when the
+  drop-in was correctly written. Rewritten using `regex_search` with
+  `\s` (Python-compatible) to parse port numbers out of each `Port` line.
+- `playbooks/patroni/remove-node.yml`: uninstall dispatch was importing
+  the patroni role with `tasks_from: uninstall.yml`, a file that doesn't
+  exist — would have failed at runtime. Now dispatches via
+  `patroni_action: uninstall` through the role's `main.yml`, matching
+  the working `playbooks/mongodb/remove-node.yml` pattern.
+- Several `hosts:` templates in add-node / remove-node playbooks
+  (`groups['mongodb_nodes'][0]`, `{{ target_node }}`) crashed
+  ansible-playbook `--syntax-check` when the variable wasn't yet
+  defined. Refactored with `| default('localhost')` fallbacks; same
+  runtime behavior.
+- `roles/common/tasks/validate_inventory.yml`: `instance_user_name`
+  precondition now optional when init_type is ignition (the slug map
+  or `ignition_flavour_default.instance_user_name` supplies it). Auth
+  check now accepts `instance_user_ssh_authorized_keys` in addition to
+  `instance_user_password` / `instance_user_ssh_private_key`, matching
+  what Butane / cloud-init templates actually consume.
+- `roles/instance/tasks/ssh_config.yml` Phase 0 probe rewritten from
+  `vmware_vm_shell` + sudo + redirected grep + file fetch to a single
+  `vmware_guest_file_operation: fetch` of the 0644 drop-in (no sudo)
+  + local `slurp` + regex_search interpret. The old shell-based probe
+  failed with opaque `"Failed to execute command"` on some
+  `community.vmware` versions and required `wait_for_process: true`.
+  Also removed `no_log: true` from all probe steps so guest API errors
+  surface cleanly. `failed_when: false` on the fetch treats "file
+  missing" as "not migrated yet" (safe default — full migration runs).
+- `roles/instance/tasks/ssh_config.yml` Preflight task hardening:
+  dropped `set -e` (its interaction with `||` chains and command
+  substitution caused exit code 2), simplified semanage availability
+  check to `command -v semanage` (drops OS_FAMILY case statement),
+  changed `2>/dev/null` → `2>&1` so stderr is captured, removed
+  `no_log: true`, added explicit `exit 0`. Then fixed YAML folded-
+  scalar indentation that was preserving newlines and causing `||` at
+  start of line (bash exit 2). Documented the YAML-indentation gotcha
+  in a warning comment.
+- `roles/instance/tasks/ssh_config.yml` Phase 1 + Phase 3 install
+  tasks: removed `no_log: true` and added `2>&1` to each shell step so
+  stderr surfaces in the failure result (was hiding sudo-TTY /
+  sshd -t / ssh.socket conflicts). Replaced `(... 2>/dev/null || ...)`
+  subshell with `{ ... 2>&1 || ... 2>&1; }` group so exit code
+  propagates correctly.
+- `roles/instance_ignition/tasks/post_boot_extras.yml`: previous
+  implementation used `ansible.builtin.stat` / `command` modules
+  which run on the Ansible CONTROLLER, not the VM — meaning the
+  `/usr/etc/vmware-tools` → `/etc/vmware-tools` recovery never
+  executed against any actual VM (the stat always returned False on
+  the controller). Rewritten to use `vmware_vm_shell` so the cp +
+  vgauthd reset actually runs on the target. Dropped
+  `wait_for_process: true` because restarting vgauthd briefly takes
+  the guest-auth daemon offline and trips controller-side
+  `ListProcessesInGuest` polls with `"None (unexpected)"`; the action
+  is idempotent + fast and nothing downstream depends on synchronous
+  completion. Gated to skip when the schemas file is already present
+  (true for any VM provisioned with the Butane fix from this release).
+
+### Changed
+- `galaxy.yml`: dependency version floors aligned with the higher
+  bounds already in `requirements.yml` (community.crypto >=3.2.0,
+  community.docker >=5.2.0, community.general >=12.6.0,
+  community.mongodb >=1.7.12, community.postgresql >=3.14.3,
+  community.vmware >=6.2.0, vmware.vmware >=2.8.0). `netbox.netbox`
+  lowered from `>=4.1.0` to `>=3.22.0` — no 4.x exists on Galaxy.
+- `.yamllint`: `line-length` max raised 180→200 to accommodate inline
+  Jinja `{%- if -%}` blocks in debug messages.
+- CI: lint + syntax-check now run on every branch push (not just
+  main). Molecule remains gated to main / PRs / manual dispatch.
+- CI actions bumped: `actions/checkout@v4`→`v6`,
+  `actions/setup-python@v5`→`v6` (Node 24 support).
+- `roles/geerlingguy.docker/` untracked from git — pinned in
+  `requirements.yml` and reinstalled fresh by CI, so the vendored copy
+  only drifted. Added to `.gitignore` and `galaxy.yml` `build_ignore`.
+- `roles/instance/tasks/main.yml` flow restructure: power-on folded
+  into the per-VM `prepare_all.yml` loop (Phase 2a), so VM N starts
+  booting while VM N+1 is still being prepared — overlapping boot
+  wall-clock with the prepare serialization that was previously paid
+  up-front. The separate `poweron_all.yml` Phase 2b is deleted; its
+  bookkeeping (per-init-type `poweron_mark.yml`) now operates on a
+  single `instance` loop_var instead of looping over the full list.
+  Serial-ack semantics preserved (deterministic order, no vSphere
+  thundering-herd). `wait_for_boot_all.yml` (parallel batch wait)
+  unchanged — still folds N×~17 min serial waits into one.
+- `roles/netbox_lookup/` + `roles/netbox_register/` task files: 14
+  inline `headers:` blocks across 5 task files replaced with
+  `headers: "{{ _netbox_api_headers }}"` so adding/removing an HTTP
+  header is a single-file edit. Added `Accept: application/json` while
+  consolidating — harmless on GET, correct for POST/PATCH.
+- `roles/netbox_lookup/` + `roles/netbox_register/` task files:
+  removed 20 redundant `| default(false)` filters on
+  `netbox_connect.validate_certs` across 9 task files. The value is
+  already defaulted to `false` in each role's `defaults/main.yml` —
+  the shadow default was misleading (suggesting the key might be unset,
+  which it can't be at role entry).
+- `roles/instance/tasks/validate/{template,input}.yml`: two
+  `success_msg:` strings converted from folded `>-` scalar to YAML
+  array form so multi-line output in `-v` runs renders cleanly per
+  line instead of as one wrapped string.
+
+### Lint cleanup
+- ~60 missing task names added across mongodb / patroni entry-point
+  playbooks and the `instance` role's molecule converge tests.
+- Handler / task name casing normalized.
+- 7× intentional shell probes (curl mTLS, `systemctl is-active`,
+  `rpm -q`) marked `# noqa: command-instead-of-module` with inline
+  rationale.
+- Long YAML loop tables (TLS cert specs, service maps) had
+  column-alignment padding stripped to satisfy yamllint defaults.
+- FQCN module names (`ansible.builtin.uri`, `ansible.builtin.file`,
+  `ansible.builtin.async_status`, `ansible.builtin.command`,
+  `ansible.builtin.fail`, `ansible.builtin.import_tasks`,
+  `ansible.builtin.template`) added across netbox_lookup,
+  netbox_register, instance_ignition, patroni backup, and
+  `tests/render-templates.yml`. Resolves `fqcn[action-core]`.
+- Explicit `mode:` on `file` / `template` / `directory` tasks in
+  patroni backup, instance_ignition render, and template-render
+  tests. Resolves `risky-file-permissions`.
+
 ## 1.0.0 (2026-05-25)
 - Initial release

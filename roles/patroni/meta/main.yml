@@ -3,7 +3,6 @@ galaxy_info:
   role_name: patroni
   author: firmansyahn (firmansyah@nainggolan.id)
   company: StarTechnica
-  website: https://firmansyah.nainggolan.id
   description: Deploy and manage Patroni HA PostgreSQL cluster with etcd, HAProxy, PgBouncer, and TLS
   license: MIT
   min_ansible_version: "2.15"

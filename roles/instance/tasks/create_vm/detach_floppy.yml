@@ -10,10 +10,10 @@
 #
 # Floppy hot-remove is NOT supported by VMware ("operation cannot be
 # performed in the current state (Powered on)"), so this task is invoked
-# from prepare_all.yml — between deploy_all (creates VM, leaves it
-# powered off) and poweron_all (parallel async power-on). The script
-# detects power state and skips gracefully if a VM is somehow already
-# running, so re-runs against existing-up VMs are safe (just no-op).
+# from prepare_all.yml — after deploy_all (creates VM, leaves it powered
+# off) and before the per-VM power-on at the end of prepare_all. The
+# script detects power state and skips gracefully if a VM is somehow
+# already running, so re-runs against existing-up VMs are safe (just no-op).
 #
 # Implementation: thin shim around remove_virtual_floppy.py — community.
 # vmware doesn't have a floppy-management module, but the role's hosts
@@ -38,7 +38,7 @@
   delegate_to: localhost
   register: _floppy_remove
   changed_when: "'removed' in (_floppy_remove.stdout | default(''))"
-  no_log: false  # stdout has VM names only — no secrets — keep visible
+  no_log: false # stdout has VM names only — no secrets — keep visible
 
 - name: "Floppy removal result for {{ item.name }}"
   ansible.builtin.debug:

@@ -3,8 +3,7 @@ argument_specs:
   main:
     short_description: Register VMs, interfaces, IPs, and services in NetBox
     description:
-      - Writes each VM in the `instances` list into NetBox (create or update),
-        along with its primary interface, IP, and optional services.
+      - Writes each VM in the `instances` list into NetBox (create or update), along with its primary interface, IP, and optional services.
       - Backward-write counterpart to netbox_lookup.
     options:
       debug:

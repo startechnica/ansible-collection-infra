@@ -18,8 +18,8 @@
  # openshift docs for the spec version that matches your cluster's OCP
  # minor (4.16+ typically uses openshift 4.16.0 spec).
  # ─────────────────────────────────────────────────────────────────────── #}
-variant: {{ ignition_flavour_default.butane_variant }}
-version: {{ ignition_flavour_default.butane_spec_version }}
+variant: {{ _os_preset.ignition.butane_variant }}
+version: {{ _os_preset.ignition.butane_spec_version }}
 
 passwd:
   users:
@@ -40,6 +40,22 @@ storage:
       mode: 0644
       contents:
         inline: {{ instance.hostname }}{{ '.' ~ instance_domain_name if instance_domain_name | default('') | length > 0 else '' }}
+{% set _eff_ssh_port = (instance.ssh_port | default(instance_ssh_port | default(22))) | int %}
+{% if _eff_ssh_port != 22 %}
+
+    # sshd port fast-path: written at first boot so sshd binds {{ _eff_ssh_port }}
+    # directly. Filename matches post-boot ssh_config.yml so its probe skips
+    # the migration phase. See roles/instance/tasks/ssh_config.yml.
+    # SELinux port label is set by the post-boot task's preflight (semanage
+    # isn't available in initramfs; first sshd start may emit SELinux warnings
+    # on the new port until preflight runs — harmless, sshd still binds).
+    - path: /etc/ssh/sshd_config.d/99-ansible.conf
+      mode: 0644
+      contents:
+        inline: |
+          # Managed by startechnica.infra.instance_ignition (Butane fast-path)
+          Port {{ _eff_ssh_port }}
+{% endif %}
 
     # NetworkManager keyfiles, one per NIC. RHCOS uses NetworkManager.
     # Keyfiles MUST be mode 0600 or NM refuses to load. Default route +

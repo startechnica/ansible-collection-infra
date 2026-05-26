@@ -1,20 +1,15 @@
 ---
-## @section Debug and Validation Parameters
-## @description Control debug output and validation-only mode.
+# # @section Debug and Validation Parameters
+# # @description Control debug output and validation-only mode.
 
-## @param debug [default: false] Enable verbose debug output for all tasks.
-##
+# # @param debug [default: false] Enable verbose debug output for all tasks.
+# #
 debug: false
 
 ## @param debug_validation [default: false] Enable debug output specifically for validation steps.
 ## Shows available networks, required networks, folder paths, template info, etc.
 ##
 debug_validation: false
-
-## @param validation_only [default: false] Run only validation tasks without creating any VMs.
-## Useful for dry-run checks before actual provisioning.
-##
-validation_only: false
 
 ## @section vCenter Connection
 ## @description vCenter credentials. Typically loaded via vars_files from a vault-encrypted file.
@@ -49,8 +44,8 @@ instance_domain_name: ""
 ## @param instance_dns_servers [default: [8.8.8.8, 1.1.1.1]] DNS servers configured in the guest OS.
 ##
 instance_dns_servers:
+  - 8.8.4.4
   - 8.8.8.8
-  - 1.1.1.1
 
 ## @param instance_timezone [default: ""] Timezone for the guest OS.
 ## e.g. "Asia/Jakarta", "UTC", "America/New_York"
@@ -103,25 +98,42 @@ instance_networks:
   # gateway4: ""           # set in inventory
   # gateway6: ""           # set in inventory if dual-stack
 
+## @section OS Identity
+## @description Pick an OS row from `_platform_map` (roles/common/vars/main.yml)
+## by its NetBox slug; that row supplies fallbacks for `content_library_name`,
+## `content_library_item_name`, `instance_user_name`, and
+## `instance_init_type` when those vars are not explicitly set in inventory.
+## Any inventory override on those four vars still wins.
+
+## @param instance_platform_preset [default: ""] NetBox platform slug used to look
+## up canonical per-OS defaults in `_platform_map`. Empty disables the
+## fallback (each var falls back to its own static default).
+## e.g. "ubuntu-24-04-lts", "fedora-coreos", "rhel-9"
+##
+instance_platform_preset: fedora-coreos
+
 ## @section Content Library Parameters
 ## @description VM template source from vCenter Content Library.
 
 ## @param content_library_name [default: ""] Name of the vCenter Content Library.
-## e.g. "ubuntu-images", "Fedora-CoreOS"
+## e.g. "ubuntu-images", "Fedora-CoreOS". Falls back to
+## `_platform_map[instance_platform_preset].content_library_name` when unset.
 ##
-## @param content_library_template [default: ""] Template name within the content library.
+## @param content_library_item_name [default: ""] Item name within the content library.
 ## e.g. "noble-server-cloudimg-amd64", "fedora-coreos-43.20260105.3.0-vmware.x86_64"
 ## When EMPTY and auto_import is true, populated automatically with the
 ## latest FCOS release from upstream stream metadata (ignition only).
 ## When SET, the auto-import step is skipped — the value is treated as a
 ## pin and the role expects the OVA to already exist in the content library.
+## Falls back to `_platform_map[instance_platform_preset].content_library_item_name`
+## when unset (and before the auto-import probe).
 ##
 ## @param content_library_type [default: ovf] Template type in the content library.
 ## Allowed values: ovf, vm-template
 ##
 ## @param content_library_auto_import [default: false] Automatically fetch and import
 ## the latest FCOS OVA into this content library (ignition only).
-## Only fires when `content_library_template` is empty — setting that var
+## Only fires when `content_library_item_name` is empty — setting that var
 ## explicitly opts out of auto-import and pins to a specific OVA name.
 ##
 ## @param content_library_template_prefix [default: fedora-coreos] Prefix for auto-imported
@@ -129,7 +141,7 @@ instance_networks:
 ## Only used when auto_import is true.
 ##
 content_library_name: ""
-content_library_template: ""
+content_library_item_name: ""
 content_library_type: "ovf"
 content_library_auto_import: true
 content_library_template_prefix: "fedora-coreos"
@@ -222,22 +234,31 @@ instance_boot_firmware: efi
 ## @section Initialization Type
 ## @description Choose between cloud-init and ignition (default — Fedora CoreOS / similar).
 
-## @param instance_init_type [default: ignition] Guest initialization method.
-## Allowed values: cloud-init, ignition
+## @param instance_init_type [default: ""] Guest initialization method.
+## Allowed values: cloud-init, ignition. Empty = resolved at role entry
+## by `common/tasks/resolve_platform_preset.yml` from
+## `_platform_map[instance_platform_preset].init_type`; final fallback is
+## `ignition`.
 ## - ignition: Butane → Ignition config injection via guestinfo (Fedora CoreOS, Flatcar, etc.)
 ## - cloud-init: Standard cloud-init userdata/metadata injection (Ubuntu, Debian, etc.)
 ##
-instance_init_type: ignition
+instance_init_type: ""
 
 ## ── Container runtime selection ──
 ##
 ## Three independent inventory knobs:
 ##
-##   container_engine  [default: docker]  The selected runtime that
+##   container_engine  [default: podman]  The selected runtime that
 ##                                         mongodb / patroni dispatch
 ##                                         against. Allowed: docker,
-##                                         podman.
-##   docker_install    [default: false]   Install docker-ce.
+##                                         podman. NB: the default is
+##                                         tuned for the
+##                                         ignition / FCOS path; cloud-init
+##                                         inventories must override to
+##                                         `docker` (and flip
+##                                         docker_enabled: true /
+##                                         podman_enabled: false).
+##   docker_enabled    [default: false]   Install docker-ce.
 ##   podman_enabled    [default: false]   Enable podman (Quadlet path).
 ##                                         Podman ships preinstalled on
 ##                                         FCOS, so this is enable-only
@@ -252,16 +273,16 @@ instance_init_type: ignition
 ## Truth table (cluster role behavior given mongodb_enabled or
 ## patroni_enabled is true):
 ##
-##   docker_install | container_engine | podman_enabled | result
-##   ---------------|------------------|----------------|------------------
-##   true           | podman           | true           | run using podman
-##   true           | podman           | false          | skip all
-##   true           | docker           | true           | run using docker
-##   true           | docker           | false          | run using docker
-##   false          | docker           | false          | skip all
-##   false          | docker           | true           | skip all
-##   false          | podman           | true           | run using podman
-##   false          | podman           | false          | skip all
+##   container_engine | podman_enabled | docker_enabled | result
+##   -----------------|----------------|----------------|------------------
+##   docker           | true           | true           | run using docker
+##   docker           | false          | true           | run using docker
+##   docker           | true           | false          | skip all
+##   docker           | false          | false          | skip all
+##   podman           | true           | true           | run using podman
+##   podman           | true           | false          | run using podman
+##   podman           | false          | true           | skip all
+##   podman           | false          | false          | skip all
 ##
 ## In other words: the selected engine's toggle must be true. The
 ## non-selected engine's toggle is irrelevant to dispatch — it just
@@ -274,20 +295,29 @@ instance_init_type: ignition
 ## path) because Quadlets are the modern, systemd-native way to run
 ## containers on FCOS.
 ##
-## @param container_engine [default: docker] Selected runtime.
-## @param docker_install [default: false] Install docker-ce on the host.
+## @param container_engine [default: ""] Selected runtime. Empty =
+##                                         resolved at role entry by
+##                                         `common/tasks/resolve_platform_preset.yml`
+##                                         from
+##                                         `_platform_map[instance_platform_preset].container_engine`
+##                                         (Debian/Suse → docker, RedHat →
+##                                         podman); final fallback is podman.
+## @param docker_enabled [default: false] Install docker-ce on the host.
 ##                                         Required for `container_engine: docker`.
 ## @param podman_enabled [default: false] Enable podman + Quadlets.
 ## Only honored on ignition hosts.
-container_engine: podman
-docker_install: false
+container_engine: ""
+docker_enabled: false
 podman_enabled: true
 
 ## @section Default User Parameters
 ## @description Default OS user created on all VMs. Used by both cloud-init and ignition.
 
-## @param instance_user_name [default: ubuntu] Default OS username.
-## For ignition/FCOS, this is typically "core".
+## @param instance_user_name [default: ""] Default OS username.
+## For ignition/FCOS, this is typically "core". Empty = resolved at role
+## entry by `common/tasks/resolve_platform_preset.yml` from
+## `_platform_map[instance_platform_preset].username`; final fallback is
+## `ubuntu`.
 ##
 ## @param instance_user_ssh_authorized_keys [default: []] SSH public keys for the default user.
 ## Used by both cloud-init and ignition init types.
@@ -307,7 +337,7 @@ podman_enabled: true
 ## When set, SSH password authentication is enabled and the account is unlocked.
 ## Leave empty to disable password login (SSH key only).
 ##
-instance_user_name: ubuntu
+instance_user_name: ""
 instance_user_ssh_authorized_keys: []
 instance_user_sudo: ""
 instance_user_shell: /bin/bash
@@ -315,46 +345,57 @@ instance_user_lock_passwd: true
 instance_user_password: ""
 
 ## @section SSH configuration
-## @description sshd_config directives applied after cloud-init via VMware Tools.
-## Keys are written verbatim as sshd directive names; values as the right-hand
-## side. Effective config = role-level instance_ssh_configs merged with item.ssh_config.
-## Empty = no changes made to sshd.
+## @description sshd port + sshd_config directives applied after first boot via
+## VMware Tools. Port is its own knob because it cuts across firewall rules,
+## SELinux port labels, systemd socket-activation, and `ansible_port` for
+## subsequent plays — none of which a generic dict-of-directives can express.
+##
+## @param instance_ssh_port [default: 22] sshd listen port. Drives `ansible_port`
+## for downstream plays (firewall role then opens it via ansible_port). When set
+## to non-22, the ssh_config task migrates the VM safely: first binds both 22
+## and the new port, verifies the new port is reachable from the controller,
+## then drops 22. Disables ssh.socket/sshd.socket on socket-activated distros
+## and runs `semanage port -a` on SELinux-enforcing RHEL/Suse.
+## Per-VM override: `instances[].ssh_port`.
+##
+## @param instance_ssh_configs [default: {}] Other sshd_config directives written
+## to /etc/ssh/sshd_config.d/99-ansible.conf on each VM. Keys map 1:1 to sshd
+## directive names; values are written verbatim. Do NOT put `Port` here — use
+## `instance_ssh_port` above (removed in 1.0.1, see CHANGELOG).
 ##
 ## Example:
+##   instance_ssh_port: 2222
 ##   instance_ssh_configs:
-##     Port: 2222
 ##     PasswordAuthentication: "no"
 ##     PermitRootLogin: "no"
 ##     ClientAliveInterval: 300
 ##
+instance_ssh_port: 22
 instance_ssh_configs: {}
+# # @section First-Boot Parameters
+# # @description Packages and commands to run on first boot. Used by both cloud-init and ignition.
+# # For cloud-init: packages are installed via apt/dnf, instance_runcmds run as shell commands.
+# # For ignition/FCOS: packages are installed via rpm-ostree, instance_runcmds run as a oneshot systemd unit.
 
-## @section First-Boot Parameters
-## @description Packages and commands to run on first boot. Used by both cloud-init and ignition.
-## For cloud-init: packages are installed via apt/dnf, instance_runcmds run as shell commands.
-## For ignition/FCOS: packages are installed via rpm-ostree, instance_runcmds run as a oneshot systemd unit.
-
-## @param instance_packages [default: []] Packages installed on all VMs on first boot.
-## Merged with per-VM packages (cloud_init.packages or ignition.packages).
-## e.g. [curl, git, htop]
-##
+# # @param instance_packages [default: []] Packages installed on all VMs on first boot.
+# # Merged with per-VM packages (cloud_init.packages or ignition.packages).
+# # e.g. [curl, git, htop]
+# #
 instance_packages: []
-
-## @param instance_runcmds [default: []] Shell commands run on first boot on all VMs.
-## Merged with per-VM instance_runcmds (cloud_init.runcmd or ignition.instance_runcmds).
-## e.g. ["systemctl enable docker", "echo ready > /etc/motd"]
-##
+# # @param instance_runcmds [default: []] Shell commands run on first boot on all VMs.
+# # Merged with per-VM instance_runcmds (cloud_init.runcmd or ignition.instance_runcmds).
+# # e.g. ["systemctl enable docker", "echo ready > /etc/motd"]
+# #
 instance_runcmds: []
-
-## @section Cloud-init Parameters
-## @description Cloud-init specific settings. Only used when instance_init_type is "cloud-init".
-## NOTE: per-VM `cloud_init:` dict (under each entry of `instances`) is a DIFFERENT
-## namespace — it holds per-VM users / packages / runcmd overrides and stays
-## nested. These flat `cloud_init_*` keys are the role-level defaults.
-##
-## @param cloud_init_package_update [default: true] Run apt-get update on first boot.
-## @param cloud_init_package_upgrade [default: true] Run apt-get upgrade on first boot.
-##
+# # @section Cloud-init Parameters
+# # @description Cloud-init specific settings. Only used when instance_init_type is "cloud-init".
+# # NOTE: per-VM `cloud_init:` dict (under each entry of `instances`) is a DIFFERENT
+# # namespace — it holds per-VM users / packages / runcmd overrides and stays
+# # nested. These flat `cloud_init_*` keys are the role-level defaults.
+# #
+# # @param cloud_init_package_update [default: true] Run apt-get update on first boot.
+# # @param cloud_init_package_upgrade [default: true] Run apt-get upgrade on first boot.
+# #
 cloud_init_package_update: true
 cloud_init_package_upgrade: true
 
@@ -373,25 +414,23 @@ cloud_init_package_upgrade: true
 ##         - "ssh-ed25519 AAAAC3... deploy@ci"
 ##
 instance_extra_users: []
+# # @section Post-Provision Parameters
+# # @description Shell commands executed on the VM after successful deployment.
 
-## @section Post-Provision Parameters
-## @description Shell commands executed on the VM after successful deployment.
-
-## @param instance_post_commands [default: []] List of shell commands to run after the VM is provisioned.
-## Commands are executed via VMware Tools (vmware_vm_shell) as the default_user.
-## No SSH connection required. Per-VM override: set `instance_post_commands` on the VM entry.
-## e.g. ["apt-get update", "systemctl enable docker"]
-##
+# # @param instance_post_commands [default: []] List of shell commands to run after the VM is provisioned.
+# # Commands are executed via VMware Tools (vmware_vm_shell) as the default_user.
+# # No SSH connection required. Per-VM override: set `instance_post_commands` on the VM entry.
+# # e.g. ["apt-get update", "systemctl enable docker"]
+# #
 instance_post_commands: []
+# # @section Destroy Parameters
+# # @description Safety knobs for `tasks/destroy.yml`. Both default false.
+# # Pass via `-e` for unattended/CI runs.
 
-## @section Destroy Parameters
-## @description Safety knobs for `tasks/destroy.yml`. Both default false.
-## Pass via `-e` for unattended/CI runs.
-
-## @param instance_destroy_skip_confirm [default: false] Skip the interactive
-## "type 'destroy' to continue" confirmation prompt. CI / scripted teardowns
-## should set this to true.
-##
+# # @param instance_destroy_skip_confirm [default: false] Skip the interactive
+# # "type 'destroy' to continue" confirmation prompt. CI / scripted teardowns
+# # should set this to true.
+# #
 instance_destroy_skip_confirm: false
 
 ## @param instance_destroy_prune [default: false] Also delete VM data disks
@@ -431,51 +470,43 @@ vcenter_permission_enabled: false
 vcenter_permission_role: ""
 vcenter_permission_propagate: false
 
-
 ## @section Ignition Parameters (when instance_init_type: ignition)
 ## @description Configuration for Ignition-based guest initialization.
 ## These parameters are only used when instance_init_type is set to "ignition".
 ##
-## @param ignition_flavour [default: fcos] Ignition distro flavor. One of:
-##   fcos, flatcar, rhcos, opensuse. Picks sane defaults for Butane variant /
-##   spec version / content-library prefix. Override individual
-##   `ignition_flavour_default.*` keys below to customize further.
+## Distro is selected via `instance_platform_preset` (one of fedora-coreos,
+## flatcar, rhel-coreos, opensuse-microos). Consumers read the matching
+## row's `ignition:` sub-dict directly via
+## `_os_preset.ignition.<field>` (published as a host fact by
+## `common/tasks/resolve_platform_preset.yml`). To pin a custom Butane
+## template / variant / spec version, override the row in inventory via
+## `instance_netbox_platform_map` rather than threading new flat knobs.
 ##
-## @param ignition_flavour_default.butane_template [default: fcos.bu.j2] Butane template file to render per-VM.
-## @param ignition_flavour_default.butane_strict [default: false] Treat butane warnings as errors.
-## @param ignition_flavour_default.butane_variant [flavor-derived] Butane variant header (fcos, flatcar, openshift, opensuse).
-## @param ignition_flavour_default.butane_spec_version [flavor-derived] Butane spec version (e.g. 1.5.0 for FCOS, 1.1.0 for Flatcar).
-## @param ignition_flavour_default.channel [flavor-derived] Release channel (stable, testing, beta, ...).
-## @param ignition_flavour_default.metadata_url [flavor-derived] Stream / version metadata URL (with {channel} substituted).
-## @param ignition_flavour_default.instance_user_name [flavor-derived] Default OS user on that distro (core, root, etc).
-##
-ignition_flavour: fcos
-
-# Resolved per-flavor dict — auto-derived from the sub-role's
-# `ignition_flavour_map` (logic in roles/instance/vars/main.yml ::
-# _ignition_flavour_default). Override the whole dict per-inventory to
-# pin a custom template path / channel.
-ignition_flavour_default: "{{ _ignition_flavour_default }}"
-
-# Flat ignition_* scalars — kept outside the `ignition:` dict so individual
-# overrides don't trigger the shallow-dict-merge foot-gun (replacing a dict
-# silently drops every key you don't re-declare).
-#
+## @param ignition_butane_strict [default: false] Treat butane warnings as errors
+## (passes `--strict` to the `butane` CLI in render_ignition.yml).
 ## @param ignition_tmp_dir [default: /tmp] Directory for the role's temporary .bu / .ign files.
+ignition_butane_strict: false
 ignition_tmp_dir: /tmp
 
-# FCOS-specific knobs — same flatten rationale.
-# Consumed by fcos_prepare.yml when ignition_flavour=fcos.
+# Shared knobs for all ignition presets — same flatten rationale. Today
+# only fcos_prepare.yml consumes them (other presets require a manually
+# pre-imported OVA), but the names are intentionally generic so an
+# inventory targeting any ignition preset uses the same knob set.
 #
-## @param ignition_fcos_stream [default: stable] FCOS stream: stable, testing, or next.
-## @param ignition_fcos_arch [default: x86_64] Architecture for the FCOS OVA.
-## @param ignition_fcos_stream_metadata_url [default: auto-derived] Override
-##   the stream metadata endpoint (e.g. for an air-gapped mirror). Empty
-##   means auto-derive from `ignition_fcos_stream`.
+## @param ignition_channel [default: ""] Release channel / stream
+##   name. FCOS: stable/testing/next. Flatcar: stable/beta/alpha/lts.
+##   RHCOS: OpenShift minor version (e.g. "4.16"). MicroOS: tumbleweed.
+##   Empty = resolved at role entry by
+##   `common/tasks/resolve_platform_preset.yml` from
+##   `_platform_map[instance_platform_preset].ignition.default_channel`.
+## @param ignition_arch [default: x86_64] CPU architecture for the OVA.
+## @param ignition_metadata_url [default: auto-derived] Override the
+##   stream / version metadata endpoint (e.g. for an air-gapped mirror).
+##   Empty means auto-derive from the preset's metadata_url pattern.
 ##
-ignition_fcos_stream: stable
-ignition_fcos_arch: x86_64
-ignition_fcos_stream_metadata_url: ""  # auto-generated from ignition_fcos_stream if empty
+ignition_channel: ""
+ignition_arch: x86_64
+ignition_metadata_url: "" # auto-generated from preset + ignition_channel if empty
 
 ## @section VM Definitions
 ## @description List of VMs to provision. See README.md for per-VM override options.

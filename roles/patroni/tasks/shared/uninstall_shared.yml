@@ -45,8 +45,7 @@
     - "{{ etcd_dir }}"
   when:
     - patroni_destroy_prune | bool
-    - (patroni_skip_confirm | bool)
-      or ((_prune_confirm | default({})).user_input | default('') == 'prune')
+    - (patroni_skip_confirm | bool) or ((_prune_confirm | default({})).user_input | default('') == 'prune')
 
 - name: Note prune was declined
   ansible.builtin.debug:

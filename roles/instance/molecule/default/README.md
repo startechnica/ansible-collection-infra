@@ -22,7 +22,7 @@ What's NOT tested here (needs a live lab):
 For end-to-end against a live lab, override `vcenter_connect`,
 `instance_datacenter`, `instance_cluster_name`, `instance_disks.datastore`,
 `portgroup_name`, `content_library_*` in `molecule/default/group_vars/`
-or via `-e` and use `-e validation_only=true` to skip actual VM creation.
+or via `-e`.
 
 ## Run
 

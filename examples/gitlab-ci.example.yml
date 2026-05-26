@@ -1,3 +1,4 @@
+---
 # Reference .gitlab-ci.yml for a consumer repo that uses startechnica.infra.
 # Adapt paths, branch rules, and the schedule. The key pieces are:
 #   - vault password loaded from a masked CI variable VAULT_PASSWORD

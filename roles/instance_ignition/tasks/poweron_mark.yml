@@ -1,21 +1,19 @@
 ---
-# Bookkeeping-only — set ignition_status[<instance>].powered_on = true after
-# the parent role's parallel async power-on (instance/tasks/
-# poweron_all.yml) acks every VM. Distinct from poweron.yml, which is
-# the legacy per-VM "API call + bookkeeping" task left for ad-hoc use.
+# Bookkeeping-only — mark a single ignition VM as powered on in
+# `ignition_status`. Called per-VM from instance/tasks/prepare_all.yml
+# right after the vmware_guest power-on ack, so the loop fires power-on
+# AND marks status before moving to the next VM. vSphere acks power-on
+# in sub-seconds; the actual boot proceeds in the background and is
+# awaited by instance/tasks/wait_for_boot_all.yml as a parallel batch.
 #
-# Caller: instance/tasks/poweron_all.yml dispatches here via
+# Caller: instance/tasks/prepare_all.yml dispatches here via
 #   include_role: { name: instance_ignition, tasks_from: poweron_mark.yml }
-# `instances_to_create` is the parent role's per-run list of VMs.
+# `instance` is the current loop iter from the parent role.
 
-- name: Mark ignition VMs as powered on
+- name: "Mark ignition VM as powered on — {{ instance.name }}"
   ansible.builtin.set_fact:
     ignition_status: >-
       {{ ignition_status | default({}) | combine({
         instance.name: (ignition_status | default({}))[instance.name] | default({})
                  | combine({'powered_on': true})
       }) }}
-  loop: "{{ instances_to_create }}"
-  loop_control:
-    loop_var: instance
-    label: "{{ instance.name }}"

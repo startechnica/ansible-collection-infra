@@ -3,11 +3,11 @@
 #
 # Variables used:
 #   postgresql_dir              – PostgreSQL data directory (used for I/O scheduler detection)
-#   ansible_memtotal_mb – auto-gathered Ansible fact (total RAM in MiB)
+#   ansible_facts['memtotal_mb'] – auto-gathered Ansible fact (total RAM in MiB)
 
-###############################################################################
+# ##############################################################################
 # 1. Compute derived values
-###############################################################################
+# ##############################################################################
 - name: Gather page size
   ansible.builtin.command: getconf PAGE_SIZE
   register: _page_size_raw
@@ -16,7 +16,7 @@
 - name: Set sysctl calculation facts
   ansible.builtin.set_fact:
     _page_size: "{{ _page_size_raw.stdout | int }}"
-    _shmmax: "{{ ((ansible_memtotal_mb | int) * 1048576 * 0.75) | int }}"
+    _shmmax: "{{ ((ansible_facts['memtotal_mb'] | int) * 1048576 * 0.75) | int }}"
 
 - name: Derive shmall from shmmax and page size
   ansible.builtin.set_fact:
@@ -86,7 +86,7 @@
 # 4. Apply sysctl values (live) and deploy persistent conf file
 ###############################################################################
 - name: Apply sysctl parameters
-  ansible.builtin.sysctl:
+  ansible.posix.sysctl:
     name: "{{ item.key }}"
     value: "{{ item.value }}"
     sysctl_set: true

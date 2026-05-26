@@ -35,7 +35,8 @@
   gather_facts: false
   tags: [always, validate]
   tasks:
-    - ansible.builtin.include_role:
+    - name: Validate inventory preconditions
+      ansible.builtin.include_role:
         name: common
         tasks_from: validate_inventory
 
@@ -59,9 +60,6 @@
   hosts: localhost
   gather_facts: true
   tags: [provision]
-  collections:
-    - community.vmware
-    - netbox.netbox
   tasks:
     - name: Provision VMs
       ansible.builtin.include_role:
@@ -148,7 +146,7 @@
         vm_bootstrap_delay: 15
       when:
         - instance_init_type | default('ignition') == 'ignition'
-        - docker_install | default(false) | bool
+        - docker_enabled | default(false) | bool
 
 # ── Stage 3.5: Wait for SSH on every node ────────────────────────────────────
 
@@ -160,7 +158,8 @@
     ssh_wait_group: cluster_nodes
     ssh_wait_timeout: 300
   tasks:
-    - ansible.builtin.include_role:
+    - name: Wait for SSH on cluster nodes
+      ansible.builtin.include_role:
         name: common
         tasks_from: wait_for_ssh
 
@@ -232,9 +231,7 @@
       loop: "{{ instances }}"
       loop_control:
         label: "{{ item.hostname }}"
-      when:
-        - not (validation_only | default(false))
-        - instances | default([]) | length > 0
+      when: instances | default([]) | length > 0
 
 # ── Stage 4: Install Docker ──────────────────────────────────────────────────
 
@@ -251,12 +248,12 @@
     # build_host_groups via add_host, so they're available without
     # inherit_localhost_vars yet.
     # Skip cases:
-    #   1. docker_install: false                — operator opted out
+    #   1. docker_enabled: false                — operator opted out
     #   2. container_engine: podman             — Quadlets path, no Docker
     - name: Skip Docker install on this host
       ansible.builtin.meta: end_host
       when: >-
-        not (docker_install | default(false) | bool)
+        not (docker_enabled | default(false) | bool)
         or (container_engine | default('docker') == 'podman')
 
     - name: Gather facts

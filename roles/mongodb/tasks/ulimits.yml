@@ -6,6 +6,6 @@
     mode: "0644"
 
 - name: Set session ulimit
-  ansible.builtin.shell: ulimit -n {{ mongodb_ulimit_nofile }}
+  ansible.builtin.command: ulimit -n {{ mongodb_ulimit_nofile }}
   changed_when: false
   failed_when: false

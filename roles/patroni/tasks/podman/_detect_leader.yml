@@ -51,10 +51,8 @@
       - "If leader count > 1 you have split-brain — investigate etcd state"
       - "and member network reachability before re-running."
   when:
-    - _patroni_list.stdout is not defined
-      or _patroni_list.rc | default(1) != 0
-      or (_patroni_list.stdout | default('[]') | from_json
-          | selectattr('Role', 'equalto', 'Leader') | list | length) != 1
+    - _patroni_list.stdout is not defined or _patroni_list.rc | default(1) != 0 or (_patroni_list.stdout | default('[]') | from_json | selectattr('Role', 'equalto', 'Leader') |
+      list | length) != 1
   run_once: true
 
 - name: Identify Patroni leader (member name)

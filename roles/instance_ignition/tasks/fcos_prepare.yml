@@ -2,26 +2,26 @@
 # Fetch latest Fedora CoreOS OVA metadata, then import to content library.
 # Only runs when: instance_init_type == 'ignition' and content_library_auto_import == true
 
-- name: Fail if auto_import is on for a non-FCOS flavor
+- name: Fail if auto_import is on for a non-FCOS preset
   ansible.builtin.fail:
     msg: >-
-      content_library_auto_import is true but ignition_flavour='{{ ignition_flavour }}'.
+      content_library_auto_import is true but instance_platform_preset='{{ instance_platform_preset }}'.
       Auto-import currently parses only the FCOS stream metadata schema. For
-      Flatcar / RHCOS / openSUSE MicroOS, pre-import the OVA into the content
-      library manually (or via vCenter UI), set
-      content_library_template='<your-template-name>', and set
+      flatcar / rhel-coreos / opensuse-microos, pre-import the OVA into the
+      content library manually (or via vCenter UI), set
+      content_library_item_name='<your-item-name>', and set
       content_library_auto_import=false.
-  when: (ignition_flavour | default('fcos')) != 'fcos'
+  when: instance_platform_preset != 'fedora-coreos'
 
 - name: Resolve FCOS stream metadata URL
   ansible.builtin.set_fact:
     _fcos_metadata_url: >-
-      {{ ignition_fcos_stream_metadata_url
-         if (ignition_fcos_stream_metadata_url | default('') | length > 0)
-         else 'https://builds.coreos.fedoraproject.org/streams/' ~ ignition_fcos_stream ~ '.json' }}
+      {{ ignition_metadata_url
+         if (ignition_metadata_url | default('') | length > 0)
+         else 'https://builds.coreos.fedoraproject.org/streams/' ~ ignition_channel ~ '.json' }}
 
 - name: Fetch Fedora CoreOS stream metadata
-  uri:
+  ansible.builtin.uri:
     url: "{{ _fcos_metadata_url }}"
     method: GET
     return_content: true
@@ -35,25 +35,25 @@
         _fcos_stream_metadata.status == 200
         and _fcos_stream_metadata.json is defined
         and _fcos_stream_metadata.json.architectures is defined
-        and _fcos_stream_metadata.json.architectures[ignition_fcos_arch] is defined
-        and _fcos_stream_metadata.json.architectures[ignition_fcos_arch].artifacts is defined
-        and _fcos_stream_metadata.json.architectures[ignition_fcos_arch].artifacts.vmware is defined
-        and _fcos_stream_metadata.json.architectures[ignition_fcos_arch].artifacts.vmware.release is defined
+        and _fcos_stream_metadata.json.architectures[ignition_arch] is defined
+        and _fcos_stream_metadata.json.architectures[ignition_arch].artifacts is defined
+        and _fcos_stream_metadata.json.architectures[ignition_arch].artifacts.vmware is defined
+        and _fcos_stream_metadata.json.architectures[ignition_arch].artifacts.vmware.release is defined
       }}
 
 - name: Fail if FCOS metadata is invalid
-  fail:
+  ansible.builtin.fail:
     msg: >
-      Fedora CoreOS stream metadata does not contain a VMware artifact for architecture '{{ ignition_fcos_arch }}'.
+      Fedora CoreOS stream metadata does not contain a VMware artifact for architecture '{{ ignition_arch }}'.
       URL: {{ _fcos_metadata_url }}
   when: not _fcos_metadata_valid
 
 - name: Extract FCOS release version and OVA URL
   ansible.builtin.set_fact:
     _fcos_version: >-
-      {{ _fcos_stream_metadata.json.architectures[ignition_fcos_arch].artifacts.vmware.release }}
+      {{ _fcos_stream_metadata.json.architectures[ignition_arch].artifacts.vmware.release }}
     _fcos_ova_url: >-
-      {{ _fcos_stream_metadata.json.architectures[ignition_fcos_arch].artifacts.vmware.formats.ova.disk.location }}
+      {{ _fcos_stream_metadata.json.architectures[ignition_arch].artifacts.vmware.formats.ova.disk.location }}
 
 - name: Display FCOS OVA information
   ansible.builtin.debug:
@@ -69,13 +69,13 @@
   vars:
     _cl_item_name: "{{ content_library_template_prefix | default('fedora-coreos') }}-{{ _fcos_version }}"
     _cl_source_url: "{{ _fcos_ova_url }}"
-    _cl_description: "Fedora CoreOS {{ _fcos_version }} ({{ ignition_fcos_stream }}/{{ ignition_fcos_arch }})"
+    _cl_description: "Fedora CoreOS {{ _fcos_version }} ({{ ignition_channel }}/{{ ignition_arch }})"
 
 - name: Publish fcos_import_facts
   ansible.builtin.set_fact:
     fcos_import_facts:
-      stream: "{{ ignition_fcos_stream }}"
-      arch: "{{ ignition_fcos_arch }}"
+      stream: "{{ ignition_channel }}"
+      arch: "{{ ignition_arch }}"
       version: "{{ _fcos_version }}"
       ova_url: "{{ _fcos_ova_url }}"
       library_name: "{{ content_library_name }}"

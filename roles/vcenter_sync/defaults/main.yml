@@ -5,8 +5,8 @@
 # Syncs vCenter infrastructure (clusters, ESXi hosts, datastores)
 # to NetBox as devices, clusters, and related objects.
 
-## @param dry_run [default: false] Show what would be synced without making changes.
-##
+# # @param dry_run [default: false] Show what would be synced without making changes.
+# #
 dry_run: false
 
 ## @param debug [default: false] Enable debug output for troubleshooting.
@@ -48,9 +48,8 @@ netbox_connect:
 ##       tags: [vmware]
 ##
 vcenter_sync_devices: []
-
-## @param vcenter_sync_site [default: ""] Default site slug for all synced devices.
-##
+# # @param vcenter_sync_site [default: ""] Default site slug for all synced devices.
+# #
 vcenter_sync_site: ""
 
 ## @param vcenter_sync_role [default: hypervisor] Default device role slug for ESXi hosts.
@@ -80,14 +79,11 @@ vcenter_sync_tenant: ""
 ## @param vcenter_sync_tags [default: []] Default tags for synced devices.
 ##
 vcenter_sync_tags: []
-
-## @param vcenter_sync_auto_discover [default: false] Auto-discover all ESXi hosts and clusters
-## from vCenter instead of using vcenter_sync_devices list.
-##
+# # @param vcenter_sync_auto_discover [default: false] Auto-discover all ESXi hosts and clusters
+# # from vCenter instead of using vcenter_sync_devices list.
+# #
 vcenter_sync_auto_discover: true
 
 ## @param instance_datacenter [default: ""] vCenter instance_datacenter to query for auto-discovery.
 ##
 instance_datacenter: ""
-
-

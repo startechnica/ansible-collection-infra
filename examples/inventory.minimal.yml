@@ -1,3 +1,4 @@
+---
 # Minimal reference inventory — one cluster, MongoDB replica set, local backups.
 #
 # SECRETS HANDLING — DO NOT commit plaintext credentials:
@@ -22,7 +23,7 @@ all:
       hostname: vcenter.example.com
       username: administrator@vsphere.local
       password: "{{ vault_vcenter_password }}"
-      validate_certs: false    # default; set to true for production vCenters with a trusted CA chain
+      validate_certs: false # default; set to true for production vCenters with a trusted CA chain
 
     # ── Where new VMs get placed ────────────────────────────────────────────
     instance_datacenter: idc-central
@@ -45,7 +46,7 @@ all:
     # ── Template in the content library ─────────────────────────────────────
     instance_init_type: cloud-init
     content_library_name: templates
-    content_library_template: noble-server-cloudimg-amd64
+    content_library_item_name: noble-server-cloudimg-amd64
     content_library_type: ovf
 
     # ── VMs to provision ────────────────────────────────────────────────────

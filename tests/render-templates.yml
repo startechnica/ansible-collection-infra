@@ -20,7 +20,7 @@
 # Output: each rendered file at /tmp/render-test/<host>-<kind>.yml — kept
 # on success so a developer can inspect; cleaned on next run.
 
-- name: "render-test :: cloud-init"
+- name: "Render-test :: cloud-init"
   hosts: localhost
   gather_facts: false
   connection: local
@@ -32,31 +32,34 @@
     _render_dir: /tmp/render-test/cloud-init
 
   tasks:
-    - name: "ci :: clean and create render dir"
+    - name: "Ci :: clean and create render dir"
       ansible.builtin.file:
         path: "{{ _render_dir }}"
         state: "{{ ci_state }}"
+        mode: "0755"
       loop: [absent, directory]
       loop_control:
         loop_var: ci_state
 
-    - name: "ci :: render cloudinit-metadata.yml.j2 per fixture VM"
+    - name: "Ci :: render cloudinit-metadata.yml.j2 per fixture VM"
       ansible.builtin.template:
         src: ../roles/instance_cloud_init/templates/cloudinit-metadata.yml.j2
         dest: "{{ _render_dir }}/{{ item.hostname }}-metadata.yml"
+        mode: "0644"
       loop: "{{ fixture_instances }}"
       loop_control:
         label: "{{ item.hostname }}"
 
-    - name: "ci :: render cloudinit-user-data.yml.j2 per fixture VM"
+    - name: "Ci :: render cloudinit-user-data.yml.j2 per fixture VM"
       ansible.builtin.template:
         src: ../roles/instance_cloud_init/templates/cloudinit-user-data.yml.j2
         dest: "{{ _render_dir }}/{{ item.hostname }}-user-data.yml"
+        mode: "0644"
       loop: "{{ fixture_instances }}"
       loop_control:
         label: "{{ item.hostname }}"
 
-    - name: "ci :: assert every rendered file is parseable YAML"
+    - name: "Ci :: assert every rendered file is parseable YAML"
       ansible.builtin.command:
         argv:
           - python3
@@ -77,11 +80,12 @@
         }}
 
 # ── Ignition (Butane) — repeat per flavour to catch flavour-specific bugs.
-- name: "render-test :: ignition Butane (fcos)"
+- name: "Render-test :: ignition Butane (fcos)"
   hosts: localhost
   gather_facts: false
   connection: local
   vars_files:
+    - ../roles/common/vars/main.yml
     - ../roles/instance/defaults/main.yml
     - ../roles/instance/vars/main.yml
     - ../roles/instance_ignition/defaults/main.yml
@@ -91,30 +95,32 @@
     _render_dir: /tmp/render-test/ignition
 
   tasks:
-    - name: "ig :: clean and create render dir"
+    - name: "Ig :: clean and create render dir"
       ansible.builtin.file:
         path: "{{ _render_dir }}"
         state: "{{ ig_state }}"
+        mode: "0755"
       loop: [absent, directory]
       loop_control:
         loop_var: ig_state
 
-    # One render per (flavour × instance). Default loop_var (item) is the
-    # FLAVOUR; the inner loop var that the Butane template expects is named
-    # `instance` (matches production render_ignition.yml).
-    - name: "ig :: render Butane templates for each flavour × fixture instance"
+    # One render per (preset × instance). Default loop_var (item) is the
+    # PLATFORM PRESET slug; the inner loop var that the Butane template
+    # expects is named `instance` (matches production render_ignition.yml).
+    - name: "Ig :: render Butane templates for each preset × fixture instance"
       ansible.builtin.template:
-        src: "../roles/instance_ignition/templates/{{ ignition_flavour_map[ignition_flavour].butane_template }}"
-        dest: "{{ _render_dir }}/{{ ignition_flavour }}-{{ instance.hostname }}.bu"
+        src: "../roles/instance_ignition/templates/{{ _platform_map[instance_platform_preset].ignition.butane_template }}"
+        dest: "{{ _render_dir }}/{{ instance_platform_preset }}-{{ instance.hostname }}.bu"
+        mode: "0644"
       vars:
-        ignition_flavour: "{{ _pair.0 }}"
+        instance_platform_preset: "{{ _pair.0 }}"
         instance: "{{ _pair.1 }}"
-      loop: "{{ ['fcos', 'flatcar', 'rhcos', 'opensuse'] | product(fixture_instances) | list }}"
+      loop: "{{ ['fedora-coreos', 'flatcar', 'rhel-coreos', 'opensuse-microos'] | product(fixture_instances) | list }}"
       loop_control:
         loop_var: _pair
         label: "{{ _pair.0 }}/{{ _pair.1.hostname }}"
 
-    - name: "ig :: assert every rendered Butane file is parseable YAML"
+    - name: "Ig :: assert every rendered Butane file is parseable YAML"
       ansible.builtin.command:
         argv:
           - python3
@@ -130,7 +136,7 @@
       changed_when: false
       loop: >-
         {{
-          ['fcos', 'flatcar', 'rhcos', 'opensuse']
+          ['fedora-coreos', 'flatcar', 'rhel-coreos', 'opensuse-microos']
           | product(fixture_instances | map(attribute='hostname'))
           | map('join', '-')
           | map('regex_replace', '$', '.bu')

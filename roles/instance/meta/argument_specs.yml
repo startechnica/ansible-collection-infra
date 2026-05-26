@@ -18,10 +18,6 @@ argument_specs:
       debug_validation:
         type: bool
         default: false
-      validation_only:
-        type: bool
-        default: false
-        description: Run validation only; do not create any VMs.
 
       # ── vCenter connection ──
       vcenter_connect:
@@ -83,7 +79,7 @@ argument_specs:
       #    defaults docstring for the migration path to per-network keying. ──
       instance_networks:
         type: dict
-        default: {mtu: 1500}
+        default: { mtu: 1500 }
         description: >-
           Defaults merged into every NIC entry. Keys: gateway4 (str),
           gateway6 (str), mtu (int). gateway4 is required if any NIC
@@ -102,40 +98,58 @@ argument_specs:
       #    effectively gets `[instance_disks]` — one disk using these defaults. ──
       instance_disks:
         type: dict
-        default: {size_gb: 40, type: thin}
+        default: { size_gb: 40, type: thin }
         description: >-
           Defaults merged into every disk entry. Keys: size_gb (int),
           type (thin/thick/eagerzeroedthick), datastore (str), controller_type
           (str), controller_number (int), unit_number (int), disk_mode (str).
 
       # ── Init type + content library ──
+      instance_platform_preset:
+        type: str
+        default: ""
+        description: >-
+          NetBox platform slug; when set and matched in `_platform_map`,
+          supplies fallbacks for content_library_name, content_library_item_name,
+          instance_user_name, and instance_init_type. Explicit inventory
+          overrides on those four vars still win.
       instance_init_type:
         type: str
-        default: ignition
-        choices: [cloud-init, ignition]
-      ignition_flavour:
-        type: str
-        default: fcos
-        choices: [fcos, flatcar, rhcos, opensuse]
+        default: ""
+        choices: ["", cloud-init, ignition]
         description: >-
-          Ignition distro flavor (only meaningful when instance_init_type=ignition).
-          Picks sane defaults for Butane variant / spec version / content-
-          library prefix. Override individual `ignition.*` keys to customize.
-          Auto-import currently supports `fcos` only; other flavors require a
-          pre-imported OVA in the content library.
+          Empty = resolved at role entry by `common/tasks/resolve_platform_preset.yml`
+          from `_platform_map[instance_platform_preset].init_type` (final fallback: ignition).
       # ── content_library_* (flat) — template source. See README for
       #    auto-import behavior (FCOS only). ──
       content_library_name:
         type: str
-        required: true
-      content_library_template:
+        default: ""
+        description: >-
+          Empty = resolved at role entry by `common/tasks/resolve_platform_preset.yml`
+          from `_platform_map[instance_platform_preset].content_library_name`.
+      content_library_item_name:
         type: str
-        required: true
-        description: Auto-populated when content_library_auto_import is true.
+        default: ""
+        description: >-
+          Auto-populated when content_library_auto_import is true. Empty
+          (and auto_import off) = resolved at role entry by
+          `common/tasks/resolve_platform_preset.yml` from
+          `_platform_map[instance_platform_preset].content_library_item_name`.
       content_library_type:
         type: str
         default: ovf
         choices: [ovf, vm-template]
+        description: >-
+          Content library item type. `ovf` uses
+          `vmware.vmware.deploy_content_library_ovf` (OVA/OVF imports — the
+          most common case for cloud-init / ignition images). `vm-template`
+          uses `vmware.vmware.deploy_content_library_template` for the
+          older vSphere VM Template type. `iso` is intentionally NOT
+          supported: ISOs are boot media, not deployable images — there's
+          no vSphere "deploy VM from ISO" call. If you need an ISO-installed
+          OS, install once via vCenter UI / one-off playbook, capture as an
+          OVA or VM template, then deploy from that via this role.
       content_library_auto_import:
         type: bool
         default: false
@@ -147,8 +161,11 @@ argument_specs:
       #    drop unspecified keys, so each field is a top-level variable) ──
       instance_user_name:
         type: str
-        default: ubuntu
-        description: Default OS username injected on every VM (cloud-init + ignition).
+        default: ""
+        description: >-
+          Default OS username injected on every VM (cloud-init + ignition).
+          Empty = resolved at role entry by `common/tasks/resolve_platform_preset.yml`
+          from `_platform_map[instance_platform_preset].username` (final fallback: ubuntu).
       instance_user_password:
         type: str
         no_log: true
@@ -273,7 +290,6 @@ argument_specs:
               disk_mode:
                 type: str
                 choices: [persistent, independent_persistent, independent_nonpersistent]
-
           # ── First-boot / post-provision ──
           post_commands:
             type: list
@@ -285,9 +301,18 @@ argument_specs:
           ignition:
             type: dict
             description: Per-VM ignition dict (`role`, `users`, `packages`, `runcmds`, `files`, `systemd_units`).
+          ssh_port:
+            type: int
+            description: >-
+              Per-VM sshd listen port override. Falls back to role-level
+              `instance_ssh_port` (default 22). Drives `ansible_port` so the
+              firewall role opens the right port automatically.
           ssh_config:
             type: dict
-            description: Per-VM sshd_config overrides; merged over role-level `instance_ssh_configs`.
+            description: >-
+              Per-VM sshd_config overrides; merged over role-level
+              `instance_ssh_configs`. Do NOT put `Port` here — use `ssh_port`
+              (or role-level `instance_ssh_port`) instead.
           tags:
             type: list
             elements: str
@@ -316,15 +341,28 @@ argument_specs:
             description: NetBox cluster override (resolution chain — see netbox_register/README).
 
       # ── SSH customisation (optional) ──
+      instance_ssh_port:
+        type: int
+        default: 22
+        description: >-
+          sshd listen port applied to every VM. Drives `ansible_port` for
+          downstream plays (firewall role then opens it via ansible_port).
+          When set to non-22, the ssh_config task migrates safely: binds both
+          22 and the new port, verifies the new port is reachable from the
+          controller, then drops 22. Handles SELinux port labels and
+          ssh.socket / sshd.socket on socket-activated distros. Per-VM
+          override: `instances[].ssh_port`.
       instance_ssh_configs:
         type: dict
         default: {}
         description: >-
-          sshd_config directives written to /etc/ssh/sshd_config.d/99-ansible.conf
-          on each VM via VMware Tools after cloud-init finishes. Keys map 1:1 to
-          sshd_config directive names (e.g. Port, PasswordAuthentication,
-          PermitRootLogin, ClientAliveInterval). Per-VM `instance_ssh_configs` in the instances
-          list merges with (and overrides) this role-level one.
+          Other sshd_config directives written to
+          /etc/ssh/sshd_config.d/99-ansible.conf on each VM via VMware Tools
+          after first boot. Keys map 1:1 to sshd_config directive names (e.g.
+          PasswordAuthentication, PermitRootLogin, ClientAliveInterval).
+          Per-VM `ssh_config` in the instances list merges with (and
+          overrides) this role-level one. Do NOT put `Port` here — use
+          `instance_ssh_port` above (Port removed from this dict in 1.0.1).
 
       # ── Permissions (optional) ──
       vcenter_principal_user:

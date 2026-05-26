@@ -9,7 +9,9 @@
     etcd_cluster_state: "existing"
   when: etcd_local_data.stat.exists
 
-- name: Probe remote etcd nodes for running cluster
+- name: Probe remote etcd nodes for running cluster  # noqa: command-instead-of-module
+  # ansible.builtin.uri can't load mTLS client certs from a path with
+  # a key + cert pair the way curl does, so the probe stays curl-shaped.
   ansible.builtin.command: >-
     curl --silent --fail
     --cacert {{ patroni_ca_dir }}/ca.crt

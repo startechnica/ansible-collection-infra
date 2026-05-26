@@ -3,9 +3,7 @@ argument_specs:
   main:
     short_description: Shared preflight for Docker-based cluster roles
     description:
-      - Validates the Ansible controller has `cryptography` installed, the
-        target host is root/become, Docker is running, and `docker compose`
-        is available.
+      - Validates the Ansible controller has `cryptography` installed, the target host is root/become, Docker is running, and `docker compose` is available.
       - Included as a role dependency by `mongodb` and `patroni`.
     options:
       debug:
@@ -16,7 +14,7 @@ argument_specs:
         type: int
         description: >-
           Total RAM requested by containers on this host (MB). Used for a
-          sanity warning when ansible_memtotal_mb is below the request.
+          sanity warning when ansible_facts['memtotal_mb'] is below the request.
       service_venv_path:
         type: str
         default: /opt/ansible-venv

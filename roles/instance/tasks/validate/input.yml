@@ -176,9 +176,7 @@
 - name: Validate network input parameters
   ansible.builtin.assert:
     that:
-      - (instance_cluster_name is defined and instance_cluster_name | length > 0)
-        or
-        (vsphere_esxi_hostname is defined and vsphere_esxi_hostname | length > 0)
+      - (instance_cluster_name is defined and instance_cluster_name | length > 0) or (vsphere_esxi_hostname is defined and vsphere_esxi_hostname | length > 0)
       # `portgroup_name` is only required when at least one NIC omits its
       # `name:` (and therefore needs the role-level fallback).
       - >-
@@ -194,9 +192,10 @@
       vsphere_esxi_hostname='{{ vsphere_esxi_hostname }}'.
       Required: instance_cluster_name OR vsphere_esxi_hostname; portgroup_name is required
       only when at least one NIC entry omits `name:`.
-    success_msg: >-
-      Network input validation passed
-      (portgroup_fallback={{ portgroup_name }},
-      {{ 'cluster=' ~ instance_cluster_name if instance_cluster_name | length > 0
-         else 'vsphere_esxi_hostname=' ~ vsphere_esxi_hostname }}).
+    success_msg:
+      - "Network input validation passed"
+      - "  portgroup_fallback: {{ portgroup_name }}"
+      - "  {{ 'cluster:             ' ~ instance_cluster_name
+             if instance_cluster_name | length > 0
+             else 'vsphere_esxi_hostname: ' ~ vsphere_esxi_hostname }}"
   run_once: true

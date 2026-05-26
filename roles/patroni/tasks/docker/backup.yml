@@ -38,7 +38,7 @@
   block:
     - name: Set backup label
       ansible.builtin.set_fact:
-        backup_label: "backup-{{ ansible_date_time.iso8601_basic_short }}"
+        backup_label: "backup-{{ ansible_facts['date_time'].iso8601_basic_short }}"
 
     - name: Create backup directory
       ansible.builtin.file:
@@ -46,6 +46,7 @@
         state: directory
         owner: "{{ patroni_uid }}"
         group: "{{ patroni_gid }}"
+        mode: "0750"
 
     - name: Execute pg_basebackup
       community.docker.docker_container_exec:

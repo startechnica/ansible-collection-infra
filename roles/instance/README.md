@@ -67,9 +67,6 @@ ansible-playbook playbooks/deploy.yml -i inventories/<your-inventory>.yml --ask-
 # Provision VMs only:
 ansible-playbook playbooks/deploy.yml -i inventories/<your-inventory>.yml --ask-vault-pass --tags provision
 
-# Dry-run (validation only, no VM creation):
-ansible-playbook playbooks/deploy.yml -i inventories/<your-inventory>.yml --ask-vault-pass --tags provision -e validation_only=true
-
 # Or via FQCN when installed as a collection:
 ansible-playbook startechnica.infra.deploy -i inventories/<your-inventory>.yml --ask-vault-pass --tags provision
 ```
@@ -106,7 +103,7 @@ all:
       mtu: 1500
 
     content_library_name: ubuntu-images
-    content_library_template: noble-server-cloudimg-amd64
+    content_library_item_name: noble-server-cloudimg-amd64
     content_library_type: ovf
 
     instances:
@@ -162,7 +159,7 @@ The role executes the following steps:
 | Variable | Default | Description |
 |---|---|---|
 | `content_library_name` | `""` | Content library name |
-| `content_library_template` | `""` | Template name in content library |
+| `content_library_item_name` | `""` | Template name in content library |
 | `content_library_type` | `ovf` | Template type: `ovf` or `vm-template` |
 
 ### Network
@@ -239,7 +236,6 @@ Commands are executed via VMware Tools (`vmware_vm_shell`) as the `default_user`
 |---|---|---|
 | `debug` | `false` | Show detailed debug output |
 | `debug_validation` | `false` | Show validation step details |
-| `validation_only` | `false` | Run validations only, skip VM creation |
 
 ## Per-VM Overrides
 
@@ -303,7 +299,7 @@ instance_disks:
   datastore: vsanDatastore
 
 content_library_name: "ubuntu-images"
-content_library_template: "noble-server-cloudimg-amd64"
+content_library_item_name: "noble-server-cloudimg-amd64"
 content_library_type: "ovf"
 
 portgroup_name: v100
@@ -349,7 +345,7 @@ instance_disks:
   datastore: local-datastore
 
 content_library_name: "ubuntu-images"
-content_library_template: "noble-server-cloudimg-amd64"
+content_library_item_name: "noble-server-cloudimg-amd64"
 content_library_type: "ovf"
 
 portgroup_name: VM Network
@@ -365,14 +361,6 @@ instances:
   - hostname: test-vm-01
     networks:
       - ipv4: 192.168.1.50/24
-```
-
-### Validation Only (Dry Run)
-
-```bash
-ansible-playbook playbooks/deploy.yml \
-  -i inventories/myproject.yml \
-  --tags provision -e validation_only=true
 ```
 
 ### Override Variables at Runtime
@@ -451,37 +439,48 @@ vm_ssh_config_status:
   <vm_name>:
     applied: true
     port: 2222
-    directives: [Port, PasswordAuthentication, PermitRootLogin]
+    directives: [PasswordAuthentication, PermitRootLogin]
+    migrated_from_22: true
 ```
 
-Runs only when `instance_ssh_configs` (role-level or per-VM) has at least one key. Uses
-VMware Tools (no SSH to the guest required), so it works even before
-`ansible_user` can connect on the new port.
+Runs when `instance_ssh_port` ≠ 22 OR `instance_ssh_configs` (role-level or
+per-VM) has at least one key. Uses VMware Tools (no SSH to the guest required),
+so it works even before `ansible_user` can connect on the new port.
 
 **`ansible_port` is auto-propagated** — the `common` role's [build_host_groups.yml](../common/tasks/build_host_groups.yml)
 and the `_setup.yml` files in `playbooks/mongodb/` and `playbooks/patroni/` read
-`item.ssh_config.Port` (falling back to `instance_ssh_configs.Port`, then `22`) when
-calling `add_host`. Any SSH-based play that runs *after* instance — Docker
-install, mongodb/patroni provision, rolling restarts, etc. — will connect on
-the custom port automatically. [deploy.yml](../../playbooks/deploy.yml)'s
-stage 3.5 `wait_for` similarly uses `{{ ansible_port | default(22) }}`.
+`item.ssh_port` (falling back to `instance_ssh_port`, then `22`) when calling
+`add_host`. Any SSH-based play that runs *after* instance — Docker install,
+mongodb/patroni provision, rolling restarts, etc. — will connect on the custom
+port automatically. The firewall role opens the port via the same
+`ansible_port` derivation. [deploy.yml](../../playbooks/deploy.yml)'s stage 3.5
+`wait_for` similarly uses `{{ ansible_port | default(22) }}`.
+
+**Port migration safety** — when `instance_ssh_port` ≠ 22, the task runs a
+two-phase migration: bind BOTH 22 and the new port → verify the new port is
+reachable from the controller → drop 22. On verify failure, sshd stays on
+both ports so the operator can still SSH in on 22 to diagnose (most likely
+cause: OS-level firewall, SELinux not in permissive, or socket activation —
+the task handles all three but can't predict every environment). Subsequent
+runs detect the already-migrated state and skip the transitional phase.
 
 Configuration example:
 
 ```yaml
-# Role-level (applies to every VM)
+# Role-level — applies to every VM
+instance_ssh_port: 2222
 instance_ssh_configs:
-  Port: 2222
   PasswordAuthentication: "no"
   PermitRootLogin: "no"
   ClientAliveInterval: 300
 
-# Per-VM override (merged over the role-level dict)
+# Per-VM override
 instances:
   - name: bastion-01
     ipv4: 10.0.0.5
+    ssh_port: 2223
     ssh_config:
-      Port: 2223
+      ClientAliveInterval: 600
 ```
 
 ### `instance_summary` — roll-up for reporting

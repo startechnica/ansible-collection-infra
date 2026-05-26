@@ -135,7 +135,7 @@
   netbox.netbox.netbox_virtual_machine:
     netbox_url: "{{ netbox_connect.url }}"
     netbox_token: "{{ netbox_connect.token }}"
-    validate_certs: "{{ netbox_connect.validate_certs | default(false) }}"
+    validate_certs: "{{ netbox_connect.validate_certs }}"
     state: present
     data: "{{ _nb_vm_data }}"
   delegate_to: localhost
@@ -146,7 +146,7 @@
   netbox.netbox.netbox_vm_interface:
     netbox_url: "{{ netbox_connect.url }}"
     netbox_token: "{{ netbox_connect.token }}"
-    validate_certs: "{{ netbox_connect.validate_certs | default(false) }}"
+    validate_certs: "{{ netbox_connect.validate_certs }}"
     state: present
     data:
       virtual_machine: "{{ item.name }}"
@@ -161,12 +161,11 @@
     _nb_vrf: "{{ item.vrf | default(netbox_vrf) }}"
 
 - name: Resolve VRF ID
-  uri:
+  ansible.builtin.uri:
     url: "{{ netbox_connect.url }}/api/ipam/vrfs/?name={{ _nb_vrf | urlencode }}"
     method: GET
-    headers:
-      Authorization: "Token {{ netbox_connect.token }}"
-    validate_certs: "{{ netbox_connect.validate_certs | default(false) }}"
+    headers: "{{ _netbox_api_headers }}"
+    validate_certs: "{{ netbox_connect.validate_certs }}"
     status_code: [200]
   delegate_to: localhost
   register: _nb_vrf_lookup
@@ -196,7 +195,7 @@
   netbox.netbox.netbox_ip_address:
     netbox_url: "{{ netbox_connect.url }}"
     netbox_token: "{{ netbox_connect.token }}"
-    validate_certs: "{{ netbox_connect.validate_certs | default(false) }}"
+    validate_certs: "{{ netbox_connect.validate_certs }}"
     state: present
     data: >-
       {{ {
@@ -213,15 +212,14 @@
 
 # 7) Get the IP address ID we just created/found
 - name: Look up IP address ID
-  uri:
+  ansible.builtin.uri:
     url: >-
       {{ netbox_connect.url }}/api/ipam/ip-addresses/?address={{ _nb_ip_cidr | split('/') | first
       }}&virtual_machine={{ item.name
       }}{{ ('&vrf_id=' ~ _nb_vrf_id) if _nb_vrf_id | length > 0 else '' }}
     method: GET
-    headers:
-      Authorization: "Token {{ netbox_connect.token }}"
-    validate_certs: "{{ netbox_connect.validate_certs | default(false) }}"
+    headers: "{{ _netbox_api_headers }}"
+    validate_certs: "{{ netbox_connect.validate_certs }}"
     status_code: [200]
   delegate_to: localhost
   register: _nb_ip_lookup
@@ -302,7 +300,7 @@
   netbox.netbox.netbox_virtual_disk:
     netbox_url: "{{ netbox_connect.url }}"
     netbox_token: "{{ netbox_connect.token }}"
-    validate_certs: "{{ netbox_connect.validate_certs | default(false) }}"
+    validate_certs: "{{ netbox_connect.validate_certs }}"
     state: present
     data:
       virtual_machine: "{{ item.name }}"
@@ -331,12 +329,11 @@
   when: debug
 
 - name: Look up NetBox VM ID
-  uri:
+  ansible.builtin.uri:
     url: "{{ netbox_connect.url }}/api/virtualization/virtual-machines/?name={{ item.name }}"
     method: GET
-    headers:
-      Authorization: "Token {{ netbox_connect.token }}"
-    validate_certs: "{{ netbox_connect.validate_certs | default(false) }}"
+    headers: "{{ _netbox_api_headers }}"
+    validate_certs: "{{ netbox_connect.validate_certs }}"
     status_code: [200]
   delegate_to: localhost
   register: _nb_vm_lookup
@@ -347,16 +344,14 @@
 
 # 9) Set primary IP
 - name: Set primary IPv4 by ID
-  uri:
+  ansible.builtin.uri:
     url: "{{ netbox_connect.url }}/api/virtualization/virtual-machines/{{ _nb_vm_id }}/"
     method: PATCH
-    headers:
-      Authorization: "Token {{ netbox_connect.token }}"
-      Content-Type: "application/json"
+    headers: "{{ _netbox_api_headers }}"
     body_format: json
     body:
       primary_ip4: "{{ _nb_ip_lookup.json.results[0].id }}"
-    validate_certs: "{{ netbox_connect.validate_certs | default(false) }}"
+    validate_certs: "{{ netbox_connect.validate_certs }}"
     status_code: [200]
   delegate_to: localhost
   when:

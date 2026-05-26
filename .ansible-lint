@@ -9,6 +9,9 @@ exclude_paths:
   - .github/
   - playbooks/artifacts/
   - artifacts/
+  # Vendored standalone role reinstalled by `ansible-galaxy role install`
+  # in CI — not our code to lint.
+  - roles/geerlingguy.docker/
 
 skip_list:
   # Allow inline Jinja that looks like flow maps (our JS-in-mongosh eval).
@@ -32,9 +35,13 @@ warn_list:
   - jinja[spacing]
 
 kinds:
-  - playbook: 'playbooks/**/*.yml'
-  - tasks: 'roles/*/tasks/**/*.yml'
-  - vars: 'roles/*/defaults/**/*.yml'
-  - vars: 'roles/*/vars/**/*.yml'
-  - handlers: 'roles/*/handlers/**/*.yml'
-  - meta: 'roles/*/meta/**/*.yml'
+  # Underscore-prefixed files in playbooks/ are tasks-only fragments
+  # (e.g. _setup.yml) consumed by sibling playbooks via include_tasks —
+  # must be classified before the playbook glob below.
+  - tasks: "playbooks/**/_*.yml"
+  - playbook: "playbooks/**/*.yml"
+  - tasks: "roles/*/tasks/**/*.yml"
+  - vars: "roles/*/defaults/**/*.yml"
+  - vars: "roles/*/vars/**/*.yml"
+  - handlers: "roles/*/handlers/**/*.yml"
+  - meta: "roles/*/meta/**/*.yml"

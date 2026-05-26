@@ -1,0 +1,141 @@
+---
+# ──────────────────────────────────────────────────────────────────────────
+# Variable wiring map for netbox_lookup
+# ──────────────────────────────────────────────────────────────────────────
+# Single source of truth for: what other roles export → what this role
+# consumes → what NetBox API fields it queries → what it exports back.
+#
+# Loaded as role vars (precedence #14) so the maps are inspectable at
+# runtime (`debug: var=_lookup_input_map`), but tasks do NOT reference
+# these directly — they're a documentation / wiring table.
+#
+# Edit this file FIRST when adding a new enrichment field, then wire it
+# through query (tasks/) → output (instances enrichment) so the role's
+# contract stays explicit.
+# ──────────────────────────────────────────────────────────────────────────
+
+# ── Shared NetBox API headers (auth + JSON content-type) ──────────────────
+# Reused by every `ansible.builtin.uri` call in this role so the header
+# definition stays in one place. Token is resolved lazily via Jinja at
+# template time — netbox_connect is required at role entry.
+_netbox_api_headers:
+  Authorization: "Token {{ netbox_connect.token }}"
+  Content-Type: "application/json"
+  Accept: "application/json"
+
+# ── INPUTS: bare role-level vars (read from inventory / other roles) ──────
+_lookup_input_map:
+  netbox_enabled:
+    source: inventory
+    type: bool
+    default: true
+    purpose: Master NetBox switch (skips ALL netbox_* roles when false)
+  netbox_lookup_enabled:
+    source: inventory
+    type: bool
+    default: true
+    purpose: Per-role toggle (skip this role specifically)
+  netbox_connect:
+    source: inventory (typically group_vars/all/netbox.yml, vaulted)
+    type: dict
+    fields: [url, token, validate_certs]
+    purpose: NetBox API connection params
+  instance_cluster_name:
+    source: roles/instance/defaults/main.yml
+    type: str
+    purpose: vCenter cluster name — scopes enrichment queries
+  instance_folder:
+    source: roles/instance/defaults/main.yml
+    type: str
+    purpose: vCenter folder — fallback scope via `cf_vcenter_folder` custom field
+  netbox_vrf:
+    source: inventory
+    type: str
+    purpose: VRF name for IP-address filtering
+  netbox_lookup_interface:
+    source: inventory
+    type: str
+    default: "ens192"
+    purpose: Which NIC to extract IP from when enriching
+  netbox_lookup_set_instances:
+    source: inventory
+    type: bool
+    default: true
+    purpose: Whether to populate top-level `instances` from results
+  netbox_lookup_cluster: { source: inventory, type: str, purpose: Tag-lookup query filter }
+  netbox_lookup_site: { source: inventory, type: str, purpose: Tag-lookup query filter }
+  netbox_lookup_tenant: { source: inventory, type: str, purpose: Tag-lookup query filter }
+  netbox_lookup_role: { source: inventory, type: str, purpose: Tag-lookup query filter }
+  netbox_lookup_status: { source: inventory, type: str, purpose: Tag-lookup query filter }
+  netbox_lookup_tags: { source: inventory, type: list, purpose: Tag-lookup query filter }
+  netbox_lookup_custom_fields: { source: inventory, type: dict, purpose: Tag-lookup query filter (cf_*) }
+
+# ── INPUTS: per-VM dict fields (read from each item in `instances`) ───────
+_lookup_per_vm_input_map:
+  name:
+    type: str
+    required: in enrich + tag-lookup mode
+    purpose: VM hostname — primary lookup key
+  netbox_id:
+    type: int
+    required: in resolve mode
+    purpose: Existing NetBox VM ID (skip name-based search)
+  ipv4:
+    type: str
+    optional: true
+    purpose: Populated by enrichment if missing
+  tags:
+    type: list
+    optional: true
+    purpose: If present, skips NetBox tag merge for this VM
+
+# ── NetBox API resources this role QUERIES (read-only) ────────────────────
+_lookup_netbox_query_map:
+  "virtualization/clusters":
+    fields_read: [name, id]
+    keyed_by: instance_cluster_name
+    purpose: Resolve cluster name → cluster_id for downstream queries
+  "virtualization/virtual-machines":
+    fields_read:
+      - name
+      - id
+      - vcpus
+      - memory
+      - disk
+      - status
+      - platform.slug
+      - role.slug
+      - site.slug
+      - tenant.slug
+      - cluster.name
+      - "tags[].slug"
+      - custom_fields
+    keyed_by: [name, netbox_id, "query_filters (tag-lookup mode)"]
+    purpose: Enrich / resolve / query VMs
+  "ipam/ip-addresses":
+    fields_read: [address, "family.value (4 or 6)"]
+    keyed_by: [virtual_machine_id, vrf_id]
+    purpose: Fetch IPv4/IPv6 for each VM
+  "ipam/vrfs":
+    fields_read: [id]
+    keyed_by: netbox_vrf
+    purpose: Resolve VRF name → VRF ID
+
+# ── OUTPUTS: facts this role exports ──────────────────────────────────────
+_lookup_output_map:
+  instances:
+    type: "list[dict]"
+    set_when: netbox_lookup_set_instances=true
+    fields:
+      [name, ipv4, ipv6, netbox_id, cpu, memory_mb, disks, status,
+       platform, role, site, tenant, cluster, tags, custom_fields]
+    consumed_by: [netbox_register, common/build_host_groups, instance]
+  netbox_vm_list:
+    type: "list[dict]"
+    set_when: always (in query mode)
+    fields: same as `instances`
+    consumed_by: ad-hoc consumers / debug
+  _instances_enriched:
+    type: "list[dict]"
+    set_when: internal — intermediate accumulator
+    consumed_by: this role only

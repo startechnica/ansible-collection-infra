@@ -163,16 +163,13 @@
 # `quiet:` is tied to the global `debug` flag so the output stays opt-in,
 # matching what the standalone debug used to do.
 #
-# Note on the `(_boot_config.status | default({})).foo | default('?')`
-# pattern: Ansible templates BOTH fail_msg and success_msg at task-finalize
-# time, regardless of which branch the assert routes to. So unsafe
-# attribute access in either message crashes the task before the assertion
-# even runs. The boot_manager module returns `.status` only when it
-# actually applied a change — on no-op runs `_boot_config` is a bare dict
-# without `.status`. Guard the parent dict, then default the leaf.
+# Ansible templates BOTH fail_msg and success_msg at task-finalize time,
+# regardless of which branch the assert routes to. Unsafe attribute access
+# in either message crashes the task before the assertion even runs, so
+# guard the parent dict and default the leaf.
 - name: "Assert boot firmware applied for {{ item.name }}"
   vars:
-    _bf_status: "{{ _boot_config.status | default({}) }}"
+    _bf_status: "{{ _boot_config.vm_boot_status | default({}) }}"
     _bf_expected: "{{ item.boot_firmware | default(instance_boot_firmware) }}"
     _bf_current: "{{ _bf_status.current_boot_firmware | default('') }}"
   ansible.builtin.assert:
@@ -187,8 +184,7 @@
       {{ item.name }}: boot_firmware={{ _bf_current }}
       (was {{ _bf_status.previous_boot_firmware | default('n/a') }})
     quiet: "{{ not (debug | bool) }}"
-  # Skip on no-op runs: when the module returns `changed=false` it means
-  # the desired firmware was already in place, and on that path the return
-  # shape doesn't include `.status`. Trust the module's own signal rather
+  # Skip on no-op runs: when the module returns `changed=false` the desired
+  # firmware was already in place. Trust the module's own signal rather
   # than re-probing.
   when: _boot_config is changed

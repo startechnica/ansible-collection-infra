@@ -65,7 +65,15 @@
          | items2dict(key_name='key', value_name='value')
          | to_nice_yaml(indent=2) }}
 
-- name: "Wait for VMware Tools running on {{ item.name }}"
+- name: "Wait for VMware Tools fully registered on {{ item.name }}"
+  # Must check BOTH toolsRunningStatus AND toolsVersionStatus2 — not just
+  # running status. community.vmware.vmware_vm_shell fails fast with
+  # "The VMwareTools are not installed" when toolsVersionStatus2 ==
+  # guestToolsNotInstalled, even if running status already says
+  # guestToolsRunning. vmtoolsd registers running BEFORE version on first
+  # boot, so there's a window where the running gate passes but the
+  # downstream vmware_vm_shell preflight in ssh_config.yml dies on the
+  # version field. Use vsphere schema to read both fields in one call.
   community.vmware.vmware_guest_info:
     hostname: "{{ vcenter_connect.hostname }}"
     username: "{{ vcenter_connect.username }}"
@@ -74,9 +82,15 @@
     datacenter: "{{ instance_datacenter }}"
     folder: "{{ instance_folder_path }}"
     name: "{{ item.name }}"
+    schema: vsphere
+    properties:
+      - guest.toolsRunningStatus
+      - guest.toolsVersionStatus2
   delegate_to: localhost
   register: vm_tools_info
-  until: (vm_tools_info.instance.guest_tools_status | default('')) == 'guestToolsRunning'
+  until:
+    - (vm_tools_info.instance.guest.toolsRunningStatus | default('')) == 'guestToolsRunning'
+    - (vm_tools_info.instance.guest.toolsVersionStatus2 | default('')) != 'guestToolsNotInstalled'
   retries: 50
   delay: 20
 

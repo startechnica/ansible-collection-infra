@@ -18,7 +18,7 @@
   netbox.netbox.netbox_service:
     netbox_url: "{{ netbox_connect.url }}"
     netbox_token: "{{ netbox_connect.token }}"
-    validate_certs: "{{ netbox_connect.validate_certs | default(false) }}"
+    validate_certs: "{{ netbox_connect.validate_certs }}"
     state: present
     data:
       virtual_machine: "{{ netbox_vm_name }}"

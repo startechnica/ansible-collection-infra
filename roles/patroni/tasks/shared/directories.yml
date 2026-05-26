@@ -35,9 +35,9 @@
 
     # ── Patroni-owned (postgres data, logs, backups, WAL archive) ──
     - { path: "{{ postgresql_root_dir }}", owner: "{{ patroni_uid }}", group: "{{ patroni_gid }}", mode: "0700", recurse: true }
-    - { path: "{{ postgresql_log_dir }}",  owner: "{{ patroni_uid }}", group: "{{ patroni_gid }}", recurse: true }
-    - { path: "{{ patroni_backup_dir }}",  owner: "{{ patroni_uid }}", group: "{{ patroni_gid }}", recurse: true }
-    - { path: "{{ wal_archive_dir }}",     owner: "{{ patroni_uid }}", group: "{{ patroni_gid }}", recurse: true }
+    - { path: "{{ postgresql_log_dir }}", owner: "{{ patroni_uid }}", group: "{{ patroni_gid }}", recurse: true }
+    - { path: "{{ patroni_backup_dir }}", owner: "{{ patroni_uid }}", group: "{{ patroni_gid }}", recurse: true }
+    - { path: "{{ wal_archive_dir }}", owner: "{{ patroni_uid }}", group: "{{ patroni_gid }}", recurse: true }
 
     # ── etcd-owned (data directory) ──
     - { path: "{{ etcd_data_dir }}", owner: "{{ etcd_uid }}", group: "{{ etcd_gid }}", mode: "0700", recurse: true }

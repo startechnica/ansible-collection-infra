@@ -1,3 +1,4 @@
+---
 # =============================================================================
 # Example: Cloud-Init based VM provisioning (Ubuntu, Debian)
 # =============================================================================
@@ -5,7 +6,7 @@
 #   instance_init_type: cloud-init
 #   content_library_{name,template,type} = ubuntu-images / noble-server-cloudimg-amd64 / ovf
 #   instance_user_{name,password,sudo,shell,...}
-#   docker_install / docker_users / docker_daemon_options
+#   docker_enabled / docker_users / docker_daemon_options
 #
 # Override any of those per-inventory by re-declaring under `vars:` below.
 #
@@ -23,11 +24,6 @@
 #   # Patroni HA Postgres (etcd + HAProxy + PgBouncer + vip-manager)
 #   ansible-playbook startechnica.infra.deploy_patroni \
 #     -i inventories/example-cloud-init.yml --ask-vault-pass
-#
-#   # Dry-run (validate inventory only)
-#   ansible-playbook startechnica.infra.deploy \
-#     -i inventories/example-cloud-init.yml \
-#     -e validation_only=true --ask-vault-pass --tags provision
 # =============================================================================
 
 all:
@@ -40,12 +36,12 @@ all:
         localhost:
       vars:
         # ── vCenter / cluster ────────────────────────────────────────────
-        instance_cluster_name: MyCluster          # vCenter cluster name
+        instance_cluster_name: MyCluster # vCenter cluster name
         # instance_datacenter: Datacenter         # only needed if vCenter has >1 DC
         # instance_domain_name: example.internal  # appended to VM hostname
 
         # ── Network ──────────────────────────────────────────────────────
-        portgroup_name: pg-app                   # distributed port group name
+        portgroup_name: pg-app # distributed port group name
         portgroup_dvswitch_name: DSwitch01
         # Standalone ESXi (no DVS) — comment out portgroup_dvswitch_name, use:
         # portgroup_vswitch_name: vSwitch0

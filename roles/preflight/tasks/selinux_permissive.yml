@@ -29,12 +29,12 @@
 - name: Persist SELinux=permissive in /etc/selinux/config
   ansible.builtin.lineinfile:
     path: /etc/selinux/config
-    regexp: '^SELINUX='
-    line: 'SELINUX=permissive'
+    regexp: "^SELINUX="
+    line: "SELINUX=permissive"
     state: present
     create: false
   register: _selinux_persisted
-  failed_when: false  # /etc/selinux/config may be absent on some minimal images
+  failed_when: false # /etc/selinux/config may be absent on some minimal images
 
 - name: Re-probe SELinux mode after setenforce
   ansible.builtin.command: getenforce
@@ -61,7 +61,6 @@
       errors, or whether SELinux is locked at the boot-arg level.
     success_msg:
       - >-
-        SELinux mode: {{ _selinux_after.stdout | default('unknown') }}
-        {%- if _selinux_current.stdout | default('') == 'Enforcing' %} (was Enforcing, switched at runtime){%- endif %}.
+        SELinux mode: {{ _selinux_after.stdout | default('unknown') }}{%- if _selinux_current.stdout | default('') == 'Enforcing' %} (was Enforcing, switched at runtime){%- endif %}.
       - >-
         Persisted in /etc/selinux/config: {{ 'yes' if not (_selinux_persisted is failed) else 'no (file absent)' }}.

@@ -33,7 +33,7 @@ instance_cpu: 2
 instance_disk_size_gb: 40
 
 content_library_name: test-library
-content_library_template: test-template
+content_library_item_name: test-template
 content_library_type: ovf
 
 instance_user_name: testuser

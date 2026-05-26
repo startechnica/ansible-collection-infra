@@ -19,11 +19,11 @@ vault_vcenter_password: vcenter-service-account-password
 vault_netbox_token: 0123456789abcdef0123456789abcdef01234567
 
 # MongoDB
-vault_mongodb_admin_password: ""              # empty = auto-generated
+vault_mongodb_admin_password: "" # empty = auto-generated
 vault_mongodb_app_password: app-primary-password
 
 # Patroni / PostgreSQL
-vault_postgres_password: ""                   # empty = auto-generated
+vault_postgres_password: "" # empty = auto-generated
 vault_patroni_app_password: app-primary-password-pg
 
 # S3 (shared by MongoDB + Patroni backups)

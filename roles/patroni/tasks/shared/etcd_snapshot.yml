@@ -64,5 +64,5 @@
     name: etcd-snapshot.timer
     enabled: false
     state: stopped
-  failed_when: false   # idempotent — unit may not exist on first run
+  failed_when: false # idempotent — unit may not exist on first run
   when: etcd_snapshot_schedule | length == 0

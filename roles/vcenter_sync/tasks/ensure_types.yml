@@ -3,7 +3,7 @@
 # Dry-run: query and report status. Normal: create if missing.
 
 - name: Check existing NetBox types
-  uri:
+  ansible.builtin.uri:
     url: "{{ netbox_connect.url }}/api/{{ nb_type.endpoint }}/?slug={{ nb_type.slug }}"
     method: GET
     headers:

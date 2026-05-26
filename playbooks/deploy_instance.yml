@@ -41,8 +41,6 @@
   hosts: localhost
   gather_facts: true
   tags: [provision]
-  collections:
-    - community.vmware
   roles:
     - role: instance
 
@@ -52,8 +50,6 @@
   hosts: localhost
   gather_facts: false
   tags: [netbox_register, netbox]
-  collections:
-    - netbox.netbox
   roles:
     - role: netbox_register
       when:

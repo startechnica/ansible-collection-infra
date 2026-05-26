@@ -20,7 +20,7 @@
     # at first boot, so `python3 -m venv` already works.
     - name: Ensure python3-venv is available (for venv creation)
       ansible.builtin.package:
-        name: "{{ 'python3-venv' if ansible_os_family == 'Debian' else 'python3-virtualenv' }}"
+        name: "{{ 'python3-venv' if ansible_facts['os_family'] == 'Debian' else 'python3-virtualenv' }}"
         state: present
       when: instance_init_type | default('ignition') == 'cloud-init'
 

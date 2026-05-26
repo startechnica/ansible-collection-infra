@@ -16,7 +16,7 @@
 #     - assert: ansible_failed_result.msg matches the expected fragment
 
 # ── Happy path ─────────────────────────────────────────────────────────────
-- name: "molecule :: happy path (single + multi-NIC + multi-disk)"
+- name: "Molecule :: happy path (single + multi-NIC + multi-disk)"
   hosts: localhost
   connection: local
   gather_facts: false
@@ -50,13 +50,13 @@
       ansible.builtin.assert:
         that:
           - instances | length == 2
-          - instances[0].name == 'test-vm-01'           # defaulted from hostname
+          - instances[0].name == 'test-vm-01' # defaulted from hostname
           - instances[1].name == 'explicit-vcenter-name' # explicit `name` preserved
         fail_msg: "Hostname-to-name normalization didn't produce the expected list"
         success_msg: "Hostname-to-name normalization works (2 instances normalized)"
 
 # ── Negative: memory_mb not divisible by 4 ─────────────────────────────────
-- name: "molecule :: reject memory_mb not divisible by 4"
+- name: "Molecule :: reject memory_mb not divisible by 4"
   hosts: localhost
   connection: local
   gather_facts: false
@@ -73,20 +73,24 @@
     - name: "Reset instances fact for this play"
       ansible.builtin.set_fact:
         instances: "{{ _fixture_instances }}"
-    - block:
-        - ansible.builtin.import_role:
+    - name: Run validation under negative fixture
+      block:
+        - name: Invoke validate/input.yml (expect failure)
+          ansible.builtin.import_role:
             name: instance
             tasks_from: validate/input.yml
-        - ansible.builtin.fail:
+        - name: Force test failure if validation passed
+          ansible.builtin.fail:
             msg: "Validation should have rejected memory_mb=1023 but didn't"
       rescue:
-        - ansible.builtin.assert:
+        - name: Verify rescue caught the expected error
+          ansible.builtin.assert:
             that: (ansible_failed_result | to_json) is search('multiple of 4')
             fail_msg: "Wrong failure message: {{ ansible_failed_result.msg }}"
             success_msg: "Correctly rejected memory_mb=1023"
 
 # ── Negative: NIC with bad CIDR ────────────────────────────────────────────
-- name: "molecule :: reject NIC with invalid IPv4 CIDR"
+- name: "Molecule :: reject NIC with invalid IPv4 CIDR"
   hosts: localhost
   connection: local
   gather_facts: false
@@ -99,20 +103,24 @@
     - name: "Reset instances fact for this play"
       ansible.builtin.set_fact:
         instances: "{{ _fixture_instances }}"
-    - block:
-        - ansible.builtin.import_role:
+    - name: Run validation under negative fixture
+      block:
+        - name: Invoke validate/input.yml (expect failure)
+          ansible.builtin.import_role:
             name: instance
             tasks_from: validate/input.yml
-        - ansible.builtin.fail:
+        - name: Force test failure if validation passed
+          ansible.builtin.fail:
             msg: "Validation should have rejected ipv4='not-a-cidr' but didn't"
       rescue:
-        - ansible.builtin.assert:
+        - name: Verify rescue caught the expected error
+          ansible.builtin.assert:
             that: (ansible_failed_result | to_json) is search('Invalid NIC')
             fail_msg: "Wrong failure message: {{ ansible_failed_result.msg }}"
             success_msg: "Correctly rejected invalid IPv4 CIDR"
 
 # ── Negative: NIC with no ipv4 AND no ipv6 ─────────────────────────────────
-- name: "molecule :: reject NIC with neither ipv4 nor ipv6"
+- name: "Molecule :: reject NIC with neither ipv4 nor ipv6"
   hosts: localhost
   connection: local
   gather_facts: false
@@ -120,25 +128,29 @@
     _fixture_instances:
       - hostname: empty-nic
         networks:
-          - mtu: 1500   # NIC with no address at all
+          - mtu: 1500 # NIC with no address at all
   tasks:
     - name: "Reset instances fact for this play"
       ansible.builtin.set_fact:
         instances: "{{ _fixture_instances }}"
-    - block:
-        - ansible.builtin.import_role:
+    - name: Run validation under negative fixture
+      block:
+        - name: Invoke validate/input.yml (expect failure)
+          ansible.builtin.import_role:
             name: instance
             tasks_from: validate/input.yml
-        - ansible.builtin.fail:
+        - name: Force test failure if validation passed
+          ansible.builtin.fail:
             msg: "Validation should have rejected an addressless NIC but didn't"
       rescue:
-        - ansible.builtin.assert:
+        - name: Verify rescue caught the expected error
+          ansible.builtin.assert:
             that: (ansible_failed_result | to_json) is search('Invalid NIC')
             fail_msg: "Wrong failure message: {{ ansible_failed_result.msg }}"
             success_msg: "Correctly rejected NIC with no ipv4/ipv6"
 
 # ── Negative: disk with size_gb 0 (after merge with instance_disks) ────────
-- name: "molecule :: reject explicit per-disk size_gb 0"
+- name: "Molecule :: reject explicit per-disk size_gb 0"
   hosts: localhost
   connection: local
   gather_facts: false
@@ -151,46 +163,54 @@
         networks:
           - ipv4: 10.0.0.10/24
         disks:
-          - size_gb: 0   # explicitly invalid
+          - size_gb: 0 # explicitly invalid
   tasks:
     - name: "Reset instances fact for this play"
       ansible.builtin.set_fact:
         instances: "{{ _fixture_instances }}"
-    - block:
-        - ansible.builtin.import_role:
+    - name: Run validation under negative fixture
+      block:
+        - name: Invoke validate/input.yml (expect failure)
+          ansible.builtin.import_role:
             name: instance
             tasks_from: validate/input.yml
-        - ansible.builtin.fail:
+        - name: Force test failure if validation passed
+          ansible.builtin.fail:
             msg: "Validation should have rejected size_gb=0 but didn't"
       rescue:
-        - ansible.builtin.assert:
+        - name: Verify rescue caught the expected error
+          ansible.builtin.assert:
             that: (ansible_failed_result | to_json) is search('positive size_gb')
             fail_msg: "Wrong failure message: {{ ansible_failed_result.msg }}"
             success_msg: "Correctly rejected size_gb=0"
 
 # ── Negative: NIC omits `name`, role-level portgroup_name unset ────────────
-- name: "molecule :: reject NIC without `name` when portgroup_name is unset"
+- name: "Molecule :: reject NIC without `name` when portgroup_name is unset"
   hosts: localhost
   connection: local
   gather_facts: false
   vars:
-    portgroup_name: ""   # role-level fallback intentionally cleared
+    portgroup_name: "" # role-level fallback intentionally cleared
     _fixture_instances:
       - hostname: nameless-nic
         networks:
-          - ipv4: 10.0.0.10/24   # no `name:` — needs portgroup_name fallback
+          - ipv4: 10.0.0.10/24 # no `name:` — needs portgroup_name fallback
   tasks:
     - name: "Reset instances fact for this play"
       ansible.builtin.set_fact:
         instances: "{{ _fixture_instances }}"
-    - block:
-        - ansible.builtin.import_role:
+    - name: Run validation under negative fixture
+      block:
+        - name: Invoke validate/input.yml (expect failure)
+          ansible.builtin.import_role:
             name: instance
             tasks_from: validate/input.yml
-        - ansible.builtin.fail:
+        - name: Force test failure if validation passed
+          ansible.builtin.fail:
             msg: "Validation should have required portgroup_name fallback but didn't"
       rescue:
-        - ansible.builtin.assert:
+        - name: Verify rescue caught the expected error
+          ansible.builtin.assert:
             that: (ansible_failed_result | to_json) is search('portgroup_name is required')
             fail_msg: "Wrong failure message: {{ ansible_failed_result.msg }}"
             success_msg: "Correctly required portgroup_name fallback"
