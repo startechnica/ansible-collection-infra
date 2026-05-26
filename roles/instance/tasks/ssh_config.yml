@@ -110,6 +110,12 @@
     # the overall shell exit is 0 regardless of internal sub-failures.
     # Intentionally NO `set -e` and NO `no_log` — these were the source
     # of opaque "Module failed" errors before.
+    #
+    # YAML INDENTATION WARNING: every line below must be at the SAME
+    # indentation level as `-c "`. Folded scalar (`>-`) preserves newlines
+    # when a line is MORE indented than the first content line, and bash
+    # treats `||` at the start of a new line as a syntax error (exit 2).
+    # Keep this block at one indent.
     - name: "Preflight — SELinux + socket activation on {{ item.name }}"
       when: _ssh_port | int != 22
       community.vmware.vmware_vm_shell:
@@ -124,22 +130,20 @@
         vm_password: "{{ instance_user_password }}"
         vm_shell: /bin/bash
         vm_shell_args: >-
-          -c "
-          if command -v semanage >/dev/null 2>&1; then
-            sudo semanage port -a -t ssh_port_t -p tcp {{ _ssh_port }} 2>&1
-            || sudo semanage port -m -t ssh_port_t -p tcp {{ _ssh_port }} 2>&1
-            || true;
+          -c "if command -v semanage >/dev/null 2>&1; then
+          sudo semanage port -a -t ssh_port_t -p tcp {{ _ssh_port }} 2>&1
+          || sudo semanage port -m -t ssh_port_t -p tcp {{ _ssh_port }} 2>&1
+          || true;
           fi;
           for sock in ssh.socket sshd.socket; do
-            systemctl is-enabled \"$sock\" >/dev/null 2>&1
-            && sudo systemctl disable --now \"$sock\" 2>&1
-            || true;
+          systemctl is-enabled \"$sock\" >/dev/null 2>&1
+          && sudo systemctl disable --now \"$sock\" 2>&1
+          || true;
           done;
           sudo systemctl enable ssh.service 2>&1
           || sudo systemctl enable sshd.service 2>&1
           || true;
-          exit 0
-          "
+          exit 0"
         wait_for_process: true
       delegate_to: localhost
 

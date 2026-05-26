@@ -18,10 +18,6 @@ argument_specs:
       debug_validation:
         type: bool
         default: false
-      validation_only:
-        type: bool
-        default: false
-        description: Run validation only; do not create any VMs.
 
       # ── vCenter connection ──
       vcenter_connect:

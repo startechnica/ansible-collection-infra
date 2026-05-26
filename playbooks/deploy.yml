@@ -231,9 +231,7 @@
       loop: "{{ instances }}"
       loop_control:
         label: "{{ item.hostname }}"
-      when:
-        - not (validation_only | default(false))
-        - instances | default([]) | length > 0
+      when: instances | default([]) | length > 0
 
 # ── Stage 4: Install Docker ──────────────────────────────────────────────────
 

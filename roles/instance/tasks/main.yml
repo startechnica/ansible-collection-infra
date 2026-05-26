@@ -55,9 +55,7 @@
   loop: "{{ instances }}"
   loop_control:
     label: "{{ item.name }}"
-  when:
-    - not (validation_only)
-    - instances_to_create | length == 0
+  when: instances_to_create | length == 0
 
 # Powered-on != ready. On ignition / FCOS hosts, the bootstrap services
 # (open-vm-tools → python3 → docker-ce → reboot) can still be in flight
@@ -144,16 +142,12 @@
   ansible.builtin.include_role:
     name: instance_ignition
     tasks_from: render_ignition.yml
-  when:
-    - instance_init_type == 'ignition'
-    - not (validation_only)
+  when: instance_init_type == 'ignition'
 
 # Phase 1: Deploy all VMs in parallel (async)
 - name: Deploy all VMs from content library
   ansible.builtin.include_tasks: deploy_all.yml
-  when:
-    - not (validation_only)
-    - instances_to_create | length > 0
+  when: instances_to_create | length > 0
 
 # Phase 2a: Per-VM pre-boot setup + power-on. Sequential per VM:
 # hardware reconfig → floppy remove → first-boot config inject → power on
@@ -166,9 +160,7 @@
   loop_control:
     loop_var: instance
     label: "{{ instance.name }}"
-  when:
-    - not (validation_only)
-    - instances_to_create | length > 0
+  when: instances_to_create | length > 0
 
 # Phase 2b: wait for vmtools+IP on all VMs in a single batch query.
 # Folds N × ~17 min serial waits (the previous per-VM pattern in verify.yml)
@@ -177,9 +169,7 @@
 # defensive per-VM probes for the IP/hostname assertions.
 - name: Wait for boot completion on all VMs (parallel)
   ansible.builtin.include_tasks: wait_for_boot_all.yml
-  when:
-    - not (validation_only)
-    - instances_to_create | length > 0
+  when: instances_to_create | length > 0
 
 # Phase 2c: Per-VM post-boot work (verify, detach CD-ROM, post-provision,
 # instance_ssh_configs). Sequential per VM, but the slow part — waiting for
@@ -189,14 +179,11 @@
   loop: "{{ instances_to_create }}"
   loop_control:
     label: "{{ item.name }}"
-  when:
-    - not (validation_only)
-    - instances_to_create | length > 0
+  when: instances_to_create | length > 0
 
 - name: Assign permissions
   ansible.builtin.include_tasks: permission.yml
   when:
-    - not (validation_only)
     - vcenter_principal_user | length > 0
     - vcenter_permission_enabled
 
@@ -212,9 +199,7 @@
 - name: Initialize enriched instances accumulator
   ansible.builtin.set_fact:
     _enriched_instances: []
-  when:
-    - not (validation_only)
-    - _provisioned_vm_facts is defined
+  when: _provisioned_vm_facts is defined
 
 - name: Append each instance (with discovered IP merged into networks[0] when first NIC was DHCP/unset)
   ansible.builtin.set_fact:
@@ -234,16 +219,12 @@
   loop: "{{ instances }}"
   loop_control:
     label: "{{ item.name }}"
-  when:
-    - not (validation_only)
-    - _provisioned_vm_facts is defined
+  when: _provisioned_vm_facts is defined
 
 - name: Replace instances with the enriched list
   ansible.builtin.set_fact:
     instances: "{{ _enriched_instances }}"
-  when:
-    - not (validation_only)
-    - _provisioned_vm_facts is defined
+  when: _provisioned_vm_facts is defined
 
 # ── Publish role outputs for downstream consumers ────────────────────────────
 

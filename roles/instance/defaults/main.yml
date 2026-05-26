@@ -11,11 +11,6 @@ debug: false
 ##
 debug_validation: false
 
-## @param validation_only [default: false] Run only validation tasks without creating any VMs.
-## Useful for dry-run checks before actual provisioning.
-##
-validation_only: false
-
 ## @section vCenter Connection
 ## @description vCenter credentials. Typically loaded via vars_files from a vault-encrypted file.
 ## See group_vars/all/vcenter.yml.
@@ -49,7 +44,7 @@ instance_domain_name: ""
 ## @param instance_dns_servers [default: [8.8.8.8, 1.1.1.1]] DNS servers configured in the guest OS.
 ##
 instance_dns_servers:
-  - 1.1.1.1
+  - 8.8.4.4
   - 8.8.8.8
 
 ## @param instance_timezone [default: ""] Timezone for the guest OS.

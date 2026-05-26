@@ -24,11 +24,6 @@
 #   # Patroni HA Postgres (etcd + HAProxy + PgBouncer + vip-manager)
 #   ansible-playbook startechnica.infra.deploy_patroni \
 #     -i inventories/example-cloud-init.yml --ask-vault-pass
-#
-#   # Dry-run (validate inventory only)
-#   ansible-playbook startechnica.infra.deploy \
-#     -i inventories/example-cloud-init.yml \
-#     -e validation_only=true --ask-vault-pass --tags provision
 # =============================================================================
 
 all:

@@ -48,6 +48,20 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   port → verify new port reachable from controller → drop 22. On
   verify failure, sshd stays on both ports so the operator can SSH in
   on 22 to diagnose.
+- Removed `validation_only` knob and all `- not (validation_only)`
+  gates. The flag was an under-used pre-flight short-circuit (skip VM
+  creation, only run validators) — equivalent dry-running is better
+  served by `ansible-playbook --check` or `--syntax-check`, and the
+  validator tasks (validate/vcenter, validate/input, validate/vms,
+  validate/template, validate/role, etc.) still run unconditionally
+  on every play so any inventory error is caught regardless. Removed
+  from: roles/instance/defaults/main.yml (declaration + docstring),
+  roles/instance/meta/argument_specs.yml, roles/instance/tasks/main.yml
+  (9 `when:` blocks), playbooks/deploy.yml (1 block), plus stale doc
+  references in roles/instance/README.md, molecule/default/README.md,
+  examples/cloud-init.yml. Inventory migration: drop any
+  `validation_only:` lines or `-e validation_only=true` invocations
+  — they're silently ignored now.
 - Renamed `docker_install` → `docker_enabled`. Aligns with
   `podman_enabled` and `mongodb_enabled` / `patroni_enabled` naming —
   the var is a host-level enable toggle, not just an install action.

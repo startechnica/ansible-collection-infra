@@ -67,9 +67,6 @@ ansible-playbook playbooks/deploy.yml -i inventories/<your-inventory>.yml --ask-
 # Provision VMs only:
 ansible-playbook playbooks/deploy.yml -i inventories/<your-inventory>.yml --ask-vault-pass --tags provision
 
-# Dry-run (validation only, no VM creation):
-ansible-playbook playbooks/deploy.yml -i inventories/<your-inventory>.yml --ask-vault-pass --tags provision -e validation_only=true
-
 # Or via FQCN when installed as a collection:
 ansible-playbook startechnica.infra.deploy -i inventories/<your-inventory>.yml --ask-vault-pass --tags provision
 ```
@@ -239,7 +236,6 @@ Commands are executed via VMware Tools (`vmware_vm_shell`) as the `default_user`
 |---|---|---|
 | `debug` | `false` | Show detailed debug output |
 | `debug_validation` | `false` | Show validation step details |
-| `validation_only` | `false` | Run validations only, skip VM creation |
 
 ## Per-VM Overrides
 
@@ -365,14 +361,6 @@ instances:
   - hostname: test-vm-01
     networks:
       - ipv4: 192.168.1.50/24
-```
-
-### Validation Only (Dry Run)
-
-```bash
-ansible-playbook playbooks/deploy.yml \
-  -i inventories/myproject.yml \
-  --tags provision -e validation_only=true
 ```
 
 ### Override Variables at Runtime
