@@ -14,7 +14,7 @@ argument_specs:
         type: int
         description: >-
           Total RAM requested by containers on this host (MB). Used for a
-          sanity warning when ansible_memtotal_mb is below the request.
+          sanity warning when ansible_facts['memtotal_mb'] is below the request.
       service_venv_path:
         type: str
         default: /opt/ansible-venv

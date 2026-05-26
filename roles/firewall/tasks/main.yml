@@ -9,8 +9,8 @@
 #   nftables  — FCOS / RHCOS / minimal Fedora — direct nft management,
 #               no firewalld layer (would require rpm-ostree to install)
 #
-# Auto-detection: rpm-ostree-managed systems (ansible_pkg_mgr in
-# atomic_container/atomic) → nftables; ansible_os_family == 'Debian' →
+# Auto-detection: rpm-ostree-managed systems (ansible_facts['pkg_mgr'] in
+# atomic_container/atomic) → nftables; ansible_facts['os_family'] == 'Debian' →
 # ufw; everything else under RedHat family → firewalld. Override via
 # `firewall_backend` if needed.
 # ════════════════════════════════════════════════════════════════════
@@ -25,10 +25,13 @@
   when: not (firewall_enabled | bool)
 
 - name: Detect firewall backend
+  vars:
+    _of: "{{ ansible_facts['os_family'] }}"
+    _pm: "{{ ansible_facts['pkg_mgr'] | default('') }}"
   ansible.builtin.set_fact:
     _firewall_backend: >-
-      {%- if (firewall_backend) != 'auto' -%} {{ firewall_backend }}{%- elif ansible_os_family == 'Debian' -%} ufw{%- elif ansible_pkg_mgr | default('') in ['atomic_container', 'atomic']
-      -%} nftables{%- elif ansible_os_family == 'RedHat' -%} firewalld{%- else -%} unsupported{%- endif -%}
+      {%- if (firewall_backend) != 'auto' -%} {{ firewall_backend }}{%- elif _of == 'Debian' -%} ufw{%- elif _pm in ['atomic_container', 'atomic']
+      -%} nftables{%- elif _of == 'RedHat' -%} firewalld{%- else -%} unsupported{%- endif -%}
 
 # Trusted-sources fact is computed FIRST because firewall_service_source_map
 # (and the per-rule expansion below) reference it for the SSH entry.
@@ -150,8 +153,8 @@
   ansible.builtin.fail:
     msg: >-
       firewall role couldn't pick a backend. Detected
-      ansible_os_family='{{ ansible_os_family }}',
-      ansible_pkg_mgr='{{ ansible_pkg_mgr | default('') }}'.
+      ansible_facts['os_family']='{{ ansible_facts['os_family'] }}',
+      ansible_facts['pkg_mgr']='{{ ansible_facts['pkg_mgr'] | default('') }}'.
       Supported: ufw (Debian), firewalld (RHEL family), nftables (FCOS).
       Set `firewall_backend` explicitly to one of those, or
       `firewall_enabled: false` to skip.

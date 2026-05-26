@@ -99,10 +99,10 @@
 
 - name: Auto-calculate PostgreSQL memory settings
   ansible.builtin.set_fact:
-    pg_shared_buffers: "{{ pg_shared_buffers if pg_shared_buffers else '%dMB' | format((ansible_memtotal_mb / 4) | int) }}"
-    pg_effective_cache: "{{ pg_effective_cache if pg_effective_cache else '%dMB' | format((ansible_memtotal_mb * 3 / 4) | int) }}"
-    pg_work_mem: "{{ pg_work_mem if pg_work_mem else '%dMB' | format([ansible_memtotal_mb / 64, 4] | max | int) }}"
-    pg_maint_mem: "{{ pg_maint_mem if pg_maint_mem else '%dMB' | format([ansible_memtotal_mb / 8, 2048] | min | int) }}"
+    pg_shared_buffers: "{{ pg_shared_buffers if pg_shared_buffers else '%dMB' | format((ansible_facts['memtotal_mb'] / 4) | int) }}"
+    pg_effective_cache: "{{ pg_effective_cache if pg_effective_cache else '%dMB' | format((ansible_facts['memtotal_mb'] * 3 / 4) | int) }}"
+    pg_work_mem: "{{ pg_work_mem if pg_work_mem else '%dMB' | format([ansible_facts['memtotal_mb'] / 64, 4] | max | int) }}"
+    pg_maint_mem: "{{ pg_maint_mem if pg_maint_mem else '%dMB' | format([ansible_facts['memtotal_mb'] / 8, 2048] | min | int) }}"
   when: patroni_action == 'provision'
 
 - name: Detect VIP interface

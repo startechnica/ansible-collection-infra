@@ -11,8 +11,9 @@ via `include_role: tasks_from:`.
 
 `instance_platform_preset` (parent-role var) selects a row in
 `_platform_map` (`roles/common/vars/main.yml`). The row's `ignition:`
-sub-dict supplies every flavour-varying knob; callers rarely need to
-override individual `ignition_flavour_default.*` keys.
+sub-dict supplies every flavour-varying knob; callers read it as
+`_os_preset.ignition.<field>` (published as a host fact by
+`common/tasks/resolve_platform_preset.yml`).
 
 | Preset | Butane variant | Spec version | Template prefix | Default user | Default channel | Channels | Metadata URL |
 |---|---|---|---|---|---|---|---|
@@ -21,11 +22,16 @@ override individual `ignition_flavour_default.*` keys.
 | `rhel-coreos` | `openshift` | `4.21.0` | `rhcos` | `core` | `4.16` | (Red Hat portal) | — (manual OVA) |
 | `opensuse-microos` | `opensuse` | `1.0.0` | `openSUSE-MicroOS` | `opensuse` | `tumbleweed` | `tumbleweed` | — (manual OVA) |
 
-All of those are available as `ignition_flavour_default.butane_variant`,
-`ignition_flavour_default.butane_spec_version`, `ignition_flavour_default.channel`, `ignition_flavour_default.metadata_url`,
-`ignition_flavour_default.instance_user_name`, etc. The `{channel}` placeholder in the
-metadata/OVA URLs is substituted from `ignition_flavour_default.channel`, so flipping
-channels (e.g. `ignition_flavour_default.channel: lts` for Flatcar) requires no URL edits.
+Field access from consumers:
+- `_os_preset.ignition.butane_template` / `.butane_variant` / `.butane_spec_version`
+- `_os_preset.ignition.default_channel` / `.metadata_url` / `.ova_url`
+- `_os_preset.username` (top-level row field, also published as
+  `instance_user_name` host fact)
+
+To override per-deployment, edit the map row via
+`instance_netbox_platform_map` in inventory (consumer merges on top of
+`_platform_map`). To toggle `--strict` Butane parsing without touching
+the map, set the flat `ignition_butane_strict: true` knob.
 
 Auto-import currently parses only the FCOS stream schema. For other presets,
 pre-import the OVA into the content library manually (or via vCenter UI), set
@@ -50,7 +56,7 @@ Also bundled:
 - `item` (per-VM entries) — VM dict from the loop
 - `instances_to_create` (render/prepare) — full list for once-per-run ops
 - `ignition` — config dict: `butane_template`, `butane_variant`, `butane_spec_version`, `butane_strict`, `tmp_dir`
-- `ignition_fcos_stream`, `ignition_fcos_arch`, `ignition_fcos_stream_metadata_url` — flat FCOS-specific scalars (see instance defaults)
+- `ignition_channel`, `ignition_arch`, `ignition_metadata_url` — shared scalars for all ignition presets (see instance defaults); today only consumed by `fcos_prepare.yml`, but named neutrally so the same inventory works for any preset
 - `instance_platform_preset` — `fedora-coreos` / `flatcar` / `rhel-coreos` / `opensuse-microos`; supplies defaults for `butane_variant` + `butane_spec_version`
 - `content_library` — `name`, `template`, `template_prefix`, `auto_import`, etc.
 - `vcenter`, `instance_datacenter`, `instance_folder` — standard vCenter connection vars
@@ -98,6 +104,6 @@ deploy VMs from it without re-fetching metadata).
 
 ## Gotchas
 
-- **FCOS metadata endpoint** — defaults to `https://builds.coreos.fedoraproject.org/streams/<stream>.json`. Set `ignition_fcos_stream_metadata_url` to override (air-gapped / mirror).
+- **FCOS metadata endpoint** — defaults to `https://builds.coreos.fedoraproject.org/streams/<stream>.json`. Set `ignition_metadata_url` to override (air-gapped / mirror).
 - **Auto-import lag** — pulling the OVA into vCenter's content library from `builds.coreos.fedoraproject.org` can take 5+ minutes over slow WAN links; `fcos_prepare.yml` waits synchronously.
 - **Butane binary required** — no pure-Python Butane implementation exists; `butane` must be in PATH or replaced with a container wrapper.

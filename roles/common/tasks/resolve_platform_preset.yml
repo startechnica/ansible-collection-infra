@@ -28,9 +28,11 @@
     container_engine: "{{ _resolved_container_engine }}"
     content_library_name: "{{ _resolved_content_library_name }}"
     content_library_template: "{{ _resolved_content_library_template }}"
-    # Also publish the raw `_platform_map` so downstream lazy-eval expressions
-    # that depend on it (notably `instance/vars/main.yml::_ignition_flavour_default`
-    # → `ignition_flavour_default.<field>` referenced by Butane templates) can
-    # resolve after `include_role: name=common` returns and common's role vars
+    ignition_channel: "{{ _resolved_ignition_channel }}"
+    # Also publish the raw `_platform_map` and the matched-row helper
+    # `_os_preset` so consumers (Butane templates, render_ignition,
+    # downstream roles) can read `_os_preset.ignition.<field>` directly
+    # after `include_role: name=common` returns and common's role vars
     # leave scope. Host facts (precedence #18) persist for the play.
     _platform_map: "{{ _platform_map }}"
+    _os_preset: "{{ _os_preset }}"

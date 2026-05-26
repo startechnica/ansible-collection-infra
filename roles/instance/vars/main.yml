@@ -29,30 +29,3 @@ vsphere_hw_version_map:
   "esxi-6.7": 14
   "esxi-6.5": 13
   "esxi-6.0": 11
-
-# Auto-resolved ignition defaults — sourced from
-# `_platform_map[instance_platform_preset].ignition` (the canonical
-# per-flavour data in roles/common/vars/main.yml), with `instance_user_name`
-# taken from the row's top-level `username`.
-#
-# The public knob `ignition_flavour_default` in defaults/main.yml is just a
-# passthrough to this — that way an inventory CAN still override the whole
-# dict (defaults < inventory) but the resolution logic stays centralised.
-#
-# Self-references go through the PUBLIC `ignition_flavour_default.channel`
-# so an inventory override of `channel` propagates into the {channel}
-# substitutions in metadata_url / ova_url. Lazy evaluation: nothing here
-# is resolved until `instance_platform_preset` is set to an ignition row.
-_ignition_flavour_default:
-  butane_template: "{{ _platform_map[instance_platform_preset].ignition.butane_template }}"
-  butane_strict: false
-  butane_variant: "{{ _platform_map[instance_platform_preset].ignition.butane_variant }}"
-  butane_spec_version: "{{ _platform_map[instance_platform_preset].ignition.butane_spec_version }}"
-  channel: "{{ _platform_map[instance_platform_preset].ignition.default_channel }}"
-  metadata_url: >-
-    {{ _platform_map[instance_platform_preset].ignition.metadata_url
-       | replace('{channel}', ignition_flavour_default.channel | default(_platform_map[instance_platform_preset].ignition.default_channel)) }}
-  ova_url: >-
-    {{ _platform_map[instance_platform_preset].ignition.ova_url
-       | replace('{channel}', ignition_flavour_default.channel | default(_platform_map[instance_platform_preset].ignition.default_channel)) }}
-  instance_user_name: "{{ _platform_map[instance_platform_preset].username }}"

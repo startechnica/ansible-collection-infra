@@ -466,44 +466,38 @@ vcenter_permission_propagate: false
 ## These parameters are only used when instance_init_type is set to "ignition".
 ##
 ## Distro is selected via `instance_platform_preset` (one of fedora-coreos,
-## flatcar, rhel-coreos, opensuse-microos). The matching `_platform_map`
-## row's `ignition:` sub-dict supplies sane defaults for Butane variant /
-## spec version / content-library prefix. Override individual
-## `ignition_flavour_default.*` keys below to customize further.
+## flatcar, rhel-coreos, opensuse-microos). Consumers read the matching
+## row's `ignition:` sub-dict directly via
+## `_os_preset.ignition.<field>` (published as a host fact by
+## `common/tasks/resolve_platform_preset.yml`). To pin a custom Butane
+## template / variant / spec version, override the row in inventory via
+## `instance_netbox_platform_map` rather than threading new flat knobs.
 ##
-## @param ignition_flavour_default.butane_template [preset-derived] Butane template file to render per-VM.
-## @param ignition_flavour_default.butane_strict [default: false] Treat butane warnings as errors.
-## @param ignition_flavour_default.butane_variant [preset-derived] Butane variant header (fcos, flatcar, openshift, opensuse).
-## @param ignition_flavour_default.butane_spec_version [preset-derived] Butane spec version (e.g. 1.5.0 for FCOS, 1.1.0 for Flatcar).
-## @param ignition_flavour_default.channel [preset-derived] Release channel (stable, testing, beta, ...).
-## @param ignition_flavour_default.metadata_url [preset-derived] Stream / version metadata URL (with {channel} substituted).
-## @param ignition_flavour_default.instance_user_name [preset-derived] Default OS user on that distro (core, root, etc).
-##
-# Resolved per-flavour dict — auto-derived from
-# `_platform_map[instance_platform_preset].ignition` (logic in
-# roles/instance/vars/main.yml :: _ignition_flavour_default). Override
-# the whole dict per-inventory to pin a custom template path / channel.
-ignition_flavour_default: "{{ _ignition_flavour_default }}"
-
-# Flat ignition_* scalars — kept outside the `ignition:` dict so individual
-# overrides don't trigger the shallow-dict-merge foot-gun (replacing a dict
-# silently drops every key you don't re-declare).
-#
+## @param ignition_butane_strict [default: false] Treat butane warnings as errors
+## (passes `--strict` to the `butane` CLI in render_ignition.yml).
 ## @param ignition_tmp_dir [default: /tmp] Directory for the role's temporary .bu / .ign files.
+ignition_butane_strict: false
 ignition_tmp_dir: /tmp
 
-# FCOS-specific knobs — same flatten rationale.
-# Consumed by fcos_prepare.yml when instance_platform_preset=fedora-coreos.
+# Shared knobs for all ignition presets — same flatten rationale. Today
+# only fcos_prepare.yml consumes them (other presets require a manually
+# pre-imported OVA), but the names are intentionally generic so an
+# inventory targeting any ignition preset uses the same knob set.
 #
-## @param ignition_fcos_stream [default: stable] FCOS stream: stable, testing, or next.
-## @param ignition_fcos_arch [default: x86_64] Architecture for the FCOS OVA.
-## @param ignition_fcos_stream_metadata_url [default: auto-derived] Override
-##   the stream metadata endpoint (e.g. for an air-gapped mirror). Empty
-##   means auto-derive from `ignition_fcos_stream`.
+## @param ignition_channel [default: ""] Release channel / stream
+##   name. FCOS: stable/testing/next. Flatcar: stable/beta/alpha/lts.
+##   RHCOS: OpenShift minor version (e.g. "4.16"). MicroOS: tumbleweed.
+##   Empty = resolved at role entry by
+##   `common/tasks/resolve_platform_preset.yml` from
+##   `_platform_map[instance_platform_preset].ignition.default_channel`.
+## @param ignition_arch [default: x86_64] CPU architecture for the OVA.
+## @param ignition_metadata_url [default: auto-derived] Override the
+##   stream / version metadata endpoint (e.g. for an air-gapped mirror).
+##   Empty means auto-derive from the preset's metadata_url pattern.
 ##
-ignition_fcos_stream: stable
-ignition_fcos_arch: x86_64
-ignition_fcos_stream_metadata_url: "" # auto-generated from ignition_fcos_stream if empty
+ignition_channel: ""
+ignition_arch: x86_64
+ignition_metadata_url: "" # auto-generated from preset + ignition_channel if empty
 
 ## @section VM Definitions
 ## @description List of VMs to provision. See README.md for per-VM override options.

@@ -1,20 +1,26 @@
 ---
-# Phase 2b: power on every VM AT THE SAME TIME. Each vmware_guest call is
-# fired async (poll: 0) so they run in parallel rather than the previous
-# per-VM-loop sequential pattern. With ~3 VMs each taking ~30s to power-cycle
-# and start cloud-init/ignition, this is the difference between a 90s wall
-# clock and ~30s.
+# Phase 2b: power on each VM IN SEQUENCE. The vmware_guest call blocks
+# until vSphere acks the power-on request, then the loop moves to the
+# next VM. That ack happens well before the guest OS is ready — the
+# actual boot proceeds in the background on vSphere's side, so by the
+# time the loop finishes, all VMs are mid-boot in parallel. Subsequent
+# wait_for_boot_all.yml then waits for vmtools+IP across the fleet in a
+# single batch (still parallel).
 #
-# We don't need to wait for the async jobs to "finish" in the deep sense —
-# vmware_guest returns once vSphere acks the power-on request, well before
-# the guest OS is ready. Boot-readiness is verified later by configure_all.yml
-# (which checks IP / hostname / VMware Tools per-VM).
+# Why serial-ack instead of async/poll-0:
+#   * Forces deterministic order — operator sees N1 powered on before
+#     N2, before N3 — easier to follow in -v output and matches the
+#     mental model of "bring up node 1, then 2, then 3".
+#   * Avoids a vSphere thundering-herd when N VMs all power-on the same
+#     second and contend for the same datastore / network.
+#   * Wall-clock cost is small: each ack is sub-second; the long part
+#     (boot + cloud-init/ignition) is still parallel via the wait task.
 #
 # Power-on itself is the SAME vSphere API call for cloud-init and ignition.
 # Only the per-init-type status bookkeeping (cloud_init_status vs
 # ignition_status) differs — handled by a tiny dispatched include below.
 
-- name: "Power on all VMs (async)"
+- name: "Power on each VM (serial)"
   community.vmware.vmware_guest:
     hostname: "{{ vcenter_connect.hostname }}"
     username: "{{ vcenter_connect.username }}"
@@ -29,24 +35,6 @@
   loop_control:
     loop_var: instance
     label: "{{ instance.name }}"
-  async: 600
-  poll: 0
-  register: _poweron_jobs
-
-- name: "Wait for power-on commands to register"
-  ansible.builtin.async_status:
-    jid: "{{ job.ansible_job_id }}"
-  delegate_to: localhost
-  loop: "{{ _poweron_jobs.results }}"
-  loop_control:
-    loop_var: job
-    label: "{{ job.instance.name }}"
-  register: _poweron_results
-  until: _poweron_results.finished
-  retries: 30
-  delay: 2
-  when: job.ansible_job_id is defined
-  failed_when: false
 
 # Bookkeeping fact — the cloud-init / ignition cleanup tasks downstream
 # expect their respective `*_status[name].powered_on` flag set. Dispatch

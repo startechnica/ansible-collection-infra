@@ -3,9 +3,10 @@
 debug: false
 # Per-preset Butane / OVA metadata lives in
 # `_platform_map[instance_platform_preset].ignition`
-# (roles/common/vars/main.yml). Resolved into `ignition_flavour_default`
-# via roles/instance/vars/main.yml::_ignition_flavour_default. Vendor
-# knowledge tied to each distro's release process, not a deployment knob.
+# (roles/common/vars/main.yml). Consumers read it directly as
+# `_os_preset.ignition.<field>` after `resolve_platform_preset.yml`
+# publishes `_os_preset` as a host fact. Vendor knowledge tied to each
+# distro's release process, not a deployment knob.
 
 # Zincati: FCOS auto-updater. Default false on cluster nodes — an
 # unattended Zincati reboot of a Patroni leader / Mongo primary mid-

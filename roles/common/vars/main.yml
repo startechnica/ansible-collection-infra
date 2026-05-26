@@ -547,6 +547,10 @@ _resolved_container_engine: >-
   {{ container_engine
      if (container_engine | default('') | length > 0)
      else (_os_preset.container_engine | default('podman')) }}
+_resolved_ignition_channel: >-
+  {{ ignition_channel
+     if (ignition_channel | default('') | length > 0)
+     else (_os_preset.ignition.default_channel | default('')) }}
 
 # Inverse lookup: vSphere guestId → NetBox platform slug. Derived from
 # `_platform_map` so there's a single source of truth. Resolution chain

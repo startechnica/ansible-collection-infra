@@ -169,10 +169,12 @@
     - not (validation_only)
     - instances_to_create | length > 0
 
-# Phase 2b: Fire power-on for ALL VMs at once (async). The OS boot now
-# happens in parallel across every VM instead of one-by-one — biggest wall-
-# clock saving in this role for clusters of 3+ nodes.
-- name: Power on all VMs in parallel
+# Phase 2b: Send power-on commands to each VM in sequence. The
+# vmware_guest call returns once vSphere acks, so by the time the loop
+# ends every VM is mid-boot in parallel; the next phase waits for them
+# as a batch. Serial-ack gives deterministic ordering in output and
+# avoids datastore / network thundering-herd at first-boot.
+- name: Power on each VM (serial)
   ansible.builtin.include_tasks: poweron_all.yml
   when:
     - not (validation_only)
