@@ -49,7 +49,27 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   verify failure, sshd stays on both ports so the operator can SSH in
   on 22 to diagnose.
 
+### Added
+- `instance_ignition` Butane templates (`fcos.bu.j2`, `flatcar.bu.j2`,
+  `opensuse.bu.j2`, `rhcos.bu.j2`) now render a `Port` directive into
+  `/etc/ssh/sshd_config.d/99-ansible.conf` at first boot when
+  `instance_ssh_port` (or per-VM `instances[].ssh_port`) is non-22. sshd
+  binds the new port directly on first boot — no transitional 22→newport
+  migration, no second restart. The post-boot `ssh_config.yml` task still
+  runs but its Phase 0 probe detects the already-migrated state and skips
+  the transition (only re-writes the drop-in if `instance_ssh_configs`
+  adds more directives). Filename intentionally matches what the post-boot
+  task writes so both code paths converge on a single sshd_config drop-in.
+  SELinux port label (FCOS/RHCOS) and `ssh.socket` disable are still
+  handled by the post-boot task's preflight — Butane can't run semanage
+  in initramfs.
+
 ### Fixed
+- `roles/instance/tasks/ssh_config.yml` Phase 0 probe regex used POSIX
+  `[[:space:]]` which Python's `re.match` doesn't support — silently
+  mismatched, causing `_already_migrated` to be `False` even when the
+  drop-in was correctly written. Rewritten using `regex_search` with
+  `\s` (Python-compatible) to parse port numbers out of each `Port` line.
 - `playbooks/patroni/remove-node.yml`: uninstall dispatch was importing
   the patroni role with `tasks_from: uninstall.yml`, a file that doesn't
   exist — would have failed at runtime. Now dispatches via

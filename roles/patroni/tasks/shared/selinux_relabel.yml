@@ -14,7 +14,7 @@
     cmd: restorecon -RF /etc/containers/systemd/ /etc/systemd/system/
   changed_when: false
   failed_when: false
-  when: ansible_selinux.status | default('disabled') == 'enabled'
+  when: ansible_facts['selinux'].status | default('disabled') == 'enabled'
 
 # ── AVC observability ───────────────────────────────────────────────────────
 # Surface SELinux denials accumulated since boot so the operator can fix
@@ -26,7 +26,7 @@
   register: _selinux_avc
   changed_when: false
   failed_when: false
-  when: ansible_selinux.status | default('disabled') == 'enabled'
+  when: ansible_facts['selinux'].status | default('disabled') == 'enabled'
 
 - name: Report SELinux AVC denials (if any)
   ansible.builtin.debug:
@@ -40,5 +40,5 @@
       - "    sudo ausearch -m AVC,USER_AVC --start boot | audit2allow -m local_patroni"
       - "════════════════════════════════════════════════════════════════════"
   when:
-    - ansible_selinux.status | default('disabled') == 'enabled'
+    - ansible_facts['selinux'].status | default('disabled') == 'enabled'
     - _selinux_avc.rc | default(1) == 0

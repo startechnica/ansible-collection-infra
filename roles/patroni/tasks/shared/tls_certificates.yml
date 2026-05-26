@@ -54,9 +54,9 @@
     _san_dns: >-
       {%- set dns = ['localhost'] -%}
       {%- for host in groups['patroni_nodes'] -%}
-        {%- set _ = dns.append(hostvars[host].ansible_hostname) -%}
-        {%- if hostvars[host].ansible_fqdn != hostvars[host].ansible_hostname -%}
-          {%- set _ = dns.append(hostvars[host].ansible_fqdn) -%}
+        {%- set _ = dns.append(hostvars[host].ansible_facts['hostname']) -%}
+        {%- if hostvars[host].ansible_facts['fqdn'] != hostvars[host].ansible_facts['hostname'] -%}
+          {%- set _ = dns.append(hostvars[host].ansible_facts['fqdn']) -%}
         {%- endif -%}
       {%- endfor -%}
       {{ dns | unique }}

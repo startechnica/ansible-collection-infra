@@ -46,7 +46,7 @@
 - name: Publish mongodb_cluster_health fact
   ansible.builtin.set_fact:
     mongodb_cluster_health:
-      timestamp: "{{ ansible_date_time.iso8601 | default(lookup('pipe', 'date -u +%FT%TZ')) }}"
+      timestamp: "{{ ansible_facts['date_time'].iso8601 | default(lookup('pipe', 'date -u +%FT%TZ')) }}"
       cluster_type: "{{ mongodb_cluster_type }}"
       containers: "{{ _status.containers | default({}) }}"
       replica_sets: "{{ _status.replica_sets | default({}) }}"

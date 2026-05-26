@@ -67,8 +67,8 @@
         'site': vcenter_sync_site,
         'role': vcenter_sync_role,
         'tags': vcenter_sync_tags,
-        'cpu': host_result.ansible_facts.ansible_processor_vcpus | default(0),
-        'memory_mb': host_result.ansible_facts.ansible_memtotal_mb | default(0)
+        'cpu': host_result.ansible_facts.processor_vcpus | default(0),
+        'memory_mb': host_result.ansible_facts.memtotal_mb | default(0)
       }] }}
   loop: "{{ _vcenter_host_facts.results | default([]) }}"
   loop_control:

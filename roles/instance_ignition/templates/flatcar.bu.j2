@@ -33,6 +33,19 @@ storage:
       mode: 0644
       contents:
         inline: {{ instance.hostname }}{{ '.' ~ instance_domain_name if instance_domain_name | default('') | length > 0 else '' }}
+{% set _eff_ssh_port = (instance.ssh_port | default(instance_ssh_port | default(22))) | int %}
+{% if _eff_ssh_port != 22 %}
+
+    # sshd port fast-path: written at first boot so sshd binds {{ _eff_ssh_port }}
+    # directly. Filename matches post-boot ssh_config.yml so its probe skips
+    # the migration phase. See roles/instance/tasks/ssh_config.yml.
+    - path: /etc/ssh/sshd_config.d/99-ansible.conf
+      mode: 0644
+      contents:
+        inline: |
+          # Managed by startechnica.infra.instance_ignition (Butane fast-path)
+          Port {{ _eff_ssh_port }}
+{% endif %}
 
     # systemd-networkd unit per NIC. Flatcar uses systemd-networkd by default.
     # Default route + DNS land on the first NIC only — multiple default

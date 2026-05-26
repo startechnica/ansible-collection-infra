@@ -57,29 +57,12 @@
     _remote_tmp: /tmp/sshd_override.conf
   block:
     # ── Phase 0: detect existing state on the VM ─────────────────────────
-    # If the drop-in already has the new port AND does not have Port 22,
-    # we're already migrated — skip the transitional 22-and-new-port step.
-    - name: "Phase 0 — probe existing sshd drop-in on {{ item.name }}"
-      community.vmware.vmware_vm_shell:
-        hostname: "{{ vcenter_connect.hostname }}"
-        username: "{{ vcenter_connect.username }}"
-        password: "{{ vcenter_connect.password }}"
-        validate_certs: "{{ vcenter_connect.validate_certs }}"
-        datacenter: "{{ instance_datacenter }}"
-        folder: "{{ instance_folder_path }}"
-        vm_id: "{{ item.name }}"
-        vm_username: "{{ instance_user_name }}"
-        vm_password: "{{ instance_user_password }}"
-        vm_shell: /bin/bash
-        vm_shell_args: >-
-          -c "sudo grep -E '^[[:space:]]*Port[[:space:]]' {{ _drop_in_path }}
-              2>/dev/null > /tmp/_ssh_probe.out
-              || echo 'NO_DROPIN' > /tmp/_ssh_probe.out"
-        wait_for_process: true
-      delegate_to: localhost
-      no_log: true
-
-    - name: "Phase 0 — read probe result for {{ item.name }}"
+    # Fetch the drop-in directly via vmware_guest_file_operation — the file
+    # is mode 0644, no sudo needed. failed_when: false treats "file missing"
+    # as "not migrated yet" (which is the safe default — full migration
+    # runs). No-log intentionally OFF here so guest API errors surface
+    # cleanly for debugging.
+    - name: "Phase 0 — fetch existing sshd drop-in from {{ item.name }}"
       community.vmware.vmware_guest_file_operation:
         hostname: "{{ vcenter_connect.hostname }}"
         username: "{{ vcenter_connect.username }}"
@@ -91,18 +74,34 @@
         vm_username: "{{ instance_user_name }}"
         vm_password: "{{ instance_user_password }}"
         fetch:
-          src: /tmp/_ssh_probe.out
-          dest: "/tmp/_ssh_probe_{{ item.name }}.out"
+          src: "{{ _drop_in_path }}"
+          dest: "/tmp/_ssh_dropin_{{ item.name }}.conf"
       delegate_to: localhost
-      no_log: true
+      register: _dropin_fetch
+      failed_when: false
 
-    - name: "Phase 0 — interpret probe for {{ item.name }}"
+    - name: "Phase 0 — read local drop-in copy for {{ item.name }}"
+      ansible.builtin.slurp:
+        src: "/tmp/_ssh_dropin_{{ item.name }}.conf"
+      register: _dropin_slurp
+      delegate_to: localhost
+      failed_when: false
+      when: _dropin_fetch is succeeded
+
+    - name: "Phase 0 — interpret drop-in for {{ item.name }}"
+      # Regex is Python re (Jinja's regex_search), so use \s — NOT POSIX
+      # [[:space:]]. Multiline flag (?m) anchors ^/$ at each line. Already
+      # migrated iff: file exists AND has `Port <newport>` AND no `Port 22`.
       ansible.builtin.set_fact:
         _already_migrated: >-
-          {{ (_probe_lines | select('match', '^[[:space:]]*Port[[:space:]]+' ~ _ssh_port ~ '[[:space:]]*$') | list | length > 0)
-             and (_probe_lines | select('match', '^[[:space:]]*Port[[:space:]]+22[[:space:]]*$') | list | length == 0) }}
+          {{ _dropin_fetch is succeeded
+             and (_dropin_text | regex_search('(?m)^\\s*Port\\s+' ~ (_ssh_port | string) ~ '\\s*$') is not none)
+             and (_dropin_text | regex_search('(?m)^\\s*Port\\s+22\\s*$') is none) }}
       vars:
-        _probe_lines: "{{ lookup('file', '/tmp/_ssh_probe_' ~ item.name ~ '.out').splitlines() }}"
+        _dropin_text: >-
+          {{ (_dropin_slurp.content | b64decode)
+             if (_dropin_slurp is defined and _dropin_slurp is succeeded and _dropin_slurp.content is defined)
+             else '' }}
 
     # ── SELinux + socket-activation preflight (always, before any restart) ─
     # Run regardless of port — semanage is no-op if port is already labeled;
@@ -293,7 +292,7 @@
         state: absent
       loop:
         - "{{ _local_tmp }}"
-        - "/tmp/_ssh_probe_{{ item.name }}.out"
+        - "/tmp/_ssh_dropin_{{ item.name }}.conf"
       loop_control:
         loop_var: path
       delegate_to: localhost

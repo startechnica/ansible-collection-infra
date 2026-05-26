@@ -72,6 +72,24 @@ storage:
           PasswordAuthentication yes
           PermitRootLogin prohibit-password
 {% endif %}
+{% set _eff_ssh_port = (instance.ssh_port | default(instance_ssh_port | default(22))) | int %}
+{% if _eff_ssh_port != 22 %}
+
+    # sshd port fast-path: written at first boot so sshd binds {{ _eff_ssh_port }}
+    # directly — no transitional 22→{{ _eff_ssh_port }} dance, no second restart.
+    # Filename matches what roles/instance/tasks/ssh_config.yml writes (99-ansible.conf)
+    # so the post-boot probe sees an already-migrated state and skips Phase 1.
+    # SELinux port label (semanage) and ssh.socket disable still happen in the
+    # post-boot task's preflight — Butane can't run semanage in initramfs.
+    - path: /etc/ssh/sshd_config.d/99-ansible.conf
+      mode: 0644
+      contents:
+        inline: |
+          # Managed by startechnica.infra.instance_ignition (Butane fast-path)
+          # Post-boot ssh_config.yml will re-write this file if more directives
+          # are added via instance_ssh_configs.
+          Port {{ _eff_ssh_port }}
+{% endif %}
 {% if instance.ignition.role | default('') | length > 0 %}
 
     - path: /etc/node-role

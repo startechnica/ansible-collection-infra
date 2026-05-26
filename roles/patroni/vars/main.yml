@@ -11,5 +11,5 @@
 # names it `arm64`. All other archs pass through unchanged.
 # ref: https://github.com/cybertec-postgresql/vip-manager/releases
 _vip_manager_arch: >-
-  {{ 'arm64' if (ansible_architecture | default('x86_64')) == 'aarch64'
-     else (ansible_architecture | default('x86_64')) }}
+  {{ 'arm64' if (ansible_facts['architecture'] | default('x86_64')) == 'aarch64'
+     else (ansible_facts['architecture'] | default('x86_64')) }}

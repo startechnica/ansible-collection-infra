@@ -3,7 +3,7 @@ vm.swappiness = 1
 vm.dirty_ratio = 10
 vm.dirty_background_ratio = 3
 
-{% if ansible_swaptotal_mb | int > 0 %}
+{% if ansible_facts['swaptotal_mb'] | int > 0 %}
 vm.overcommit_ratio = 80
 vm.overcommit_memory = 2
 {% endif %}

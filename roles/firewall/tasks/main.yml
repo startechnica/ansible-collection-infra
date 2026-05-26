@@ -50,8 +50,8 @@
 - name: Resolve Ansible controller IP (as seen from target)
   ansible.builtin.set_fact:
     _controller_ip: >-
-      {{ (ansible_env.SSH_CONNECTION | default('') | split | first)
-         if (ansible_env.SSH_CONNECTION | default('') | length > 0)
+      {{ (ansible_facts['env'].SSH_CONNECTION | default('') | split | first)
+         if (ansible_facts['env'].SSH_CONNECTION | default('') | length > 0)
          else '' }}
 
 - name: Assemble effective trusted sources

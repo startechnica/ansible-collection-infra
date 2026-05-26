@@ -65,6 +65,18 @@ Also bundled:
 
 - [templates/fcos.bu.j2](templates/fcos.bu.j2) — Butane template rendered per VM before Butane→Ignition conversion.
 
+### Ignition-time SSH port fast-path
+
+All four Butane templates render `/etc/ssh/sshd_config.d/99-ansible.conf` with
+the chosen `Port` directive at first boot when `instance_ssh_port` (or per-VM
+`instances[].ssh_port`) is non-22. sshd binds the new port directly on first
+boot — no transitional 22→newport migration, no second restart. The post-boot
+[instance/tasks/ssh_config.yml](../instance/tasks/ssh_config.yml) task still
+runs (it handles SELinux port label + `ssh.socket` disable, which Butane
+can't do in initramfs), but its Phase 0 probe detects the already-migrated
+state and skips the transition phase. Filename matches the post-boot task's
+drop-in so both code paths converge on a single file.
+
 ## Requirements
 
 - `butane` binary on the controller for render_ignition.yml. Install via:

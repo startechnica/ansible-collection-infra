@@ -13,9 +13,9 @@
 - name: Assert kernel is compatible with MongoDB
   ansible.builtin.assert:
     that:
-      - ansible_kernel is version(mongodb_unsupported_kernel, '<')
+      - ansible_facts['kernel'] is version(mongodb_unsupported_kernel, '<')
     fail_msg: |
-      Kernel {{ ansible_kernel }} on {{ inventory_hostname }} is not compatible
+      Kernel {{ ansible_facts['kernel'] }} on {{ inventory_hostname }} is not compatible
       with MongoDB.
 
       Linux kernel >= 6.19 has a known incompatibility with current MongoDB
@@ -36,7 +36,7 @@
         4. Bypass with `mongodb_skip_kernel_check: true` (use only after
            verifying mongo runs on your kernel — running with this set on
            an incompatible kernel crashes containers in a tight loop).
-    success_msg: "Kernel {{ ansible_kernel }} is compatible with MongoDB."
+    success_msg: "Kernel {{ ansible_facts['kernel'] }} is compatible with MongoDB."
   when: not (mongodb_skip_kernel_check | bool)
 
 - name: Validate cluster type
