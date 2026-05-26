@@ -101,7 +101,7 @@ instance_networks:
 ## @section OS Identity
 ## @description Pick an OS row from `_platform_map` (roles/common/vars/main.yml)
 ## by its NetBox slug; that row supplies fallbacks for `content_library_name`,
-## `content_library_template`, `instance_user_name`, and
+## `content_library_item_name`, `instance_user_name`, and
 ## `instance_init_type` when those vars are not explicitly set in inventory.
 ## Any inventory override on those four vars still wins.
 
@@ -110,7 +110,7 @@ instance_networks:
 ## fallback (each var falls back to its own static default).
 ## e.g. "ubuntu-24-04-lts", "fedora-coreos", "rhel-9"
 ##
-instance_platform_preset: ""
+instance_platform_preset: fedora-coreos
 
 ## @section Content Library Parameters
 ## @description VM template source from vCenter Content Library.
@@ -119,13 +119,13 @@ instance_platform_preset: ""
 ## e.g. "ubuntu-images", "Fedora-CoreOS". Falls back to
 ## `_platform_map[instance_platform_preset].content_library_name` when unset.
 ##
-## @param content_library_template [default: ""] Template name within the content library.
+## @param content_library_item_name [default: ""] Item name within the content library.
 ## e.g. "noble-server-cloudimg-amd64", "fedora-coreos-43.20260105.3.0-vmware.x86_64"
 ## When EMPTY and auto_import is true, populated automatically with the
 ## latest FCOS release from upstream stream metadata (ignition only).
 ## When SET, the auto-import step is skipped — the value is treated as a
 ## pin and the role expects the OVA to already exist in the content library.
-## Falls back to `_platform_map[instance_platform_preset].content_library_template`
+## Falls back to `_platform_map[instance_platform_preset].content_library_item_name`
 ## when unset (and before the auto-import probe).
 ##
 ## @param content_library_type [default: ovf] Template type in the content library.
@@ -133,7 +133,7 @@ instance_platform_preset: ""
 ##
 ## @param content_library_auto_import [default: false] Automatically fetch and import
 ## the latest FCOS OVA into this content library (ignition only).
-## Only fires when `content_library_template` is empty — setting that var
+## Only fires when `content_library_item_name` is empty — setting that var
 ## explicitly opts out of auto-import and pins to a specific OVA name.
 ##
 ## @param content_library_template_prefix [default: fedora-coreos] Prefix for auto-imported
@@ -141,7 +141,7 @@ instance_platform_preset: ""
 ## Only used when auto_import is true.
 ##
 content_library_name: ""
-content_library_template: ""
+content_library_item_name: ""
 content_library_type: "ovf"
 content_library_auto_import: true
 content_library_template_prefix: "fedora-coreos"

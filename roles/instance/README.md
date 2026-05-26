@@ -103,7 +103,7 @@ all:
       mtu: 1500
 
     content_library_name: ubuntu-images
-    content_library_template: noble-server-cloudimg-amd64
+    content_library_item_name: noble-server-cloudimg-amd64
     content_library_type: ovf
 
     instances:
@@ -159,7 +159,7 @@ The role executes the following steps:
 | Variable | Default | Description |
 |---|---|---|
 | `content_library_name` | `""` | Content library name |
-| `content_library_template` | `""` | Template name in content library |
+| `content_library_item_name` | `""` | Template name in content library |
 | `content_library_type` | `ovf` | Template type: `ovf` or `vm-template` |
 
 ### Network
@@ -299,7 +299,7 @@ instance_disks:
   datastore: vsanDatastore
 
 content_library_name: "ubuntu-images"
-content_library_template: "noble-server-cloudimg-amd64"
+content_library_item_name: "noble-server-cloudimg-amd64"
 content_library_type: "ovf"
 
 portgroup_name: v100
@@ -345,7 +345,7 @@ instance_disks:
   datastore: local-datastore
 
 content_library_name: "ubuntu-images"
-content_library_template: "noble-server-cloudimg-amd64"
+content_library_item_name: "noble-server-cloudimg-amd64"
 content_library_type: "ovf"
 
 portgroup_name: VM Network

@@ -6,7 +6,7 @@
 #   _cl_source_url:  URL to import from (vCenter pulls directly)
 #   _cl_description: Description for the imported item
 #
-# Side effect: updates content_library_template to _cl_item_name
+# Side effect: updates content_library_item_name to _cl_item_name
 
 - name: "Import to content library (vCenter pulls from URL) — {{ _cl_item_name }}"
   vmware.vmware.import_content_library_ovf:
@@ -21,6 +21,6 @@
     state: present
   delegate_to: localhost
 
-- name: Set content library template to imported item
+- name: Set content library item name to imported item
   ansible.builtin.set_fact:
-    content_library_template: "{{ _cl_item_name }}"
+    content_library_item_name: "{{ _cl_item_name }}"

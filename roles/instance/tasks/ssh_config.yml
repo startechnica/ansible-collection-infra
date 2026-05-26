@@ -205,15 +205,16 @@
         vm_username: "{{ instance_user_name }}"
         vm_password: "{{ instance_user_password }}"
         vm_shell: /bin/bash
+        # YAML indent: every line same as `-c "` so `>-` folds to single line.
+        # 2>&1 on each step captures stderr for diagnostics.
         vm_shell_args: >-
-          -c "sudo install -o root -g root -m 0644 {{ _remote_tmp }} {{ _drop_in_path }}
-          && sudo sed -i -E 's/^[[:space:]]*Port[[:space:]]/#&/' /etc/ssh/sshd_config
-          && sudo sshd -t
-          && (sudo systemctl restart ssh 2>/dev/null || sudo systemctl restart sshd)
+          -c "sudo install -o root -g root -m 0644 {{ _remote_tmp }} {{ _drop_in_path }} 2>&1
+          && sudo sed -i -E 's/^[[:space:]]*Port[[:space:]]/#&/' /etc/ssh/sshd_config 2>&1
+          && sudo sshd -t 2>&1
+          && { sudo systemctl restart ssh 2>&1 || sudo systemctl restart sshd 2>&1; }
           && rm -f {{ _remote_tmp }}"
         wait_for_process: true
       delegate_to: localhost
-      no_log: true
 
     # ── Phase 2: verify the new port is reachable from controller ─────────
     # Stops the play hard if not — sshd is still on 22 so operator can SSH
@@ -281,14 +282,14 @@
         vm_username: "{{ instance_user_name }}"
         vm_password: "{{ instance_user_password }}"
         vm_shell: /bin/bash
+        # Same YAML indent + stderr-capture rules as Phase 1 install above.
         vm_shell_args: >-
-          -c "sudo install -o root -g root -m 0644 {{ _remote_tmp }} {{ _drop_in_path }}
-          && sudo sshd -t
-          && (sudo systemctl restart ssh 2>/dev/null || sudo systemctl restart sshd)
+          -c "sudo install -o root -g root -m 0644 {{ _remote_tmp }} {{ _drop_in_path }} 2>&1
+          && sudo sshd -t 2>&1
+          && { sudo systemctl restart ssh 2>&1 || sudo systemctl restart sshd 2>&1; }
           && rm -f {{ _remote_tmp }}"
         wait_for_process: true
       delegate_to: localhost
-      no_log: true
 
     # ── Local cleanup ─────────────────────────────────────────────────────
     - name: "Remove local temp files for {{ item.name }}"

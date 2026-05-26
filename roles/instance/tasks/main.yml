@@ -1,7 +1,7 @@
 ---
 # Ask `common` to publish the slug-resolved fallback values
 # (`instance_init_type`, `instance_user_name`, `container_engine`,
-# `content_library_name`, `content_library_template`) as host facts on
+# `content_library_name`, `content_library_item_name`) as host facts on
 # localhost, so every subsequent task in this role and its sub-roles
 # (instance_cloud_init, instance_ignition) reads bare public names and
 # gets the value resolved via `instance_platform_preset` →
@@ -103,13 +103,13 @@
       ansible.builtin.meta: end_role
 
 # For ignition + auto-import flows, fcos_prepare must run BEFORE validate.yml:
-# it's what populates `content_library_template` (the OVA name to import) by
+# it's what populates `content_library_item_name` (the OVA name to import) by
 # fetching FCOS stream metadata. validate/template.yml then verifies the
 # imported item exists in the content library. Running validate first leaves
-# `content_library_template=''` and trips the pre-flight assert.
+# `content_library_item_name=''` and trips the pre-flight assert.
 #
 # Skip auto-import when the inventory has explicitly pinned
-# `content_library_template` — without this gate, fcos_prepare would
+# `content_library_item_name` — without this gate, fcos_prepare would
 # silently overwrite the user's pin with whatever the upstream FCOS
 # stream metadata reports as the latest release. Setting the var means
 # "use this exact version", and the user is responsible for ensuring
@@ -122,7 +122,7 @@
   when:
     - instance_init_type == 'ignition'
     - content_library_auto_import | bool
-    - (content_library_template | length) == 0
+    - (content_library_item_name | length) == 0
 
 - name: Validate infrastructure
   ansible.builtin.include_tasks: validate.yml

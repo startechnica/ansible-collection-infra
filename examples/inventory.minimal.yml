@@ -46,7 +46,7 @@ all:
     # ── Template in the content library ─────────────────────────────────────
     instance_init_type: cloud-init
     content_library_name: templates
-    content_library_template: noble-server-cloudimg-amd64
+    content_library_item_name: noble-server-cloudimg-amd64
     content_library_type: ovf
 
     # ── VMs to provision ────────────────────────────────────────────────────

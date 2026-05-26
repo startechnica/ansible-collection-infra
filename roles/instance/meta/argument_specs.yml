@@ -110,7 +110,7 @@ argument_specs:
         default: ""
         description: >-
           NetBox platform slug; when set and matched in `_platform_map`,
-          supplies fallbacks for content_library_name, content_library_template,
+          supplies fallbacks for content_library_name, content_library_item_name,
           instance_user_name, and instance_init_type. Explicit inventory
           overrides on those four vars still win.
       instance_init_type:
@@ -128,18 +128,28 @@ argument_specs:
         description: >-
           Empty = resolved at role entry by `common/tasks/resolve_platform_preset.yml`
           from `_platform_map[instance_platform_preset].content_library_name`.
-      content_library_template:
+      content_library_item_name:
         type: str
         default: ""
         description: >-
           Auto-populated when content_library_auto_import is true. Empty
           (and auto_import off) = resolved at role entry by
           `common/tasks/resolve_platform_preset.yml` from
-          `_platform_map[instance_platform_preset].content_library_template`.
+          `_platform_map[instance_platform_preset].content_library_item_name`.
       content_library_type:
         type: str
         default: ovf
         choices: [ovf, vm-template]
+        description: >-
+          Content library item type. `ovf` uses
+          `vmware.vmware.deploy_content_library_ovf` (OVA/OVF imports — the
+          most common case for cloud-init / ignition images). `vm-template`
+          uses `vmware.vmware.deploy_content_library_template` for the
+          older vSphere VM Template type. `iso` is intentionally NOT
+          supported: ISOs are boot media, not deployable images — there's
+          no vSphere "deploy VM from ISO" call. If you need an ISO-installed
+          OS, install once via vCenter UI / one-off playbook, capture as an
+          OVA or VM template, then deploy from that via this role.
       content_library_auto_import:
         type: bool
         default: false

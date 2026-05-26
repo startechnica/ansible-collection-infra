@@ -35,7 +35,7 @@ the map, set the flat `ignition_butane_strict: true` knob.
 
 Auto-import currently parses only the FCOS stream schema. For other presets,
 pre-import the OVA into the content library manually (or via vCenter UI), set
-`content_library_template` to the imported name, and set
+`content_library_item_name` to the imported name, and set
 `content_library_auto_import: false`.
 
 ## Phases (entry points)

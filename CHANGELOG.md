@@ -48,6 +48,25 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   port → verify new port reachable from controller → drop 22. On
   verify failure, sshd stays on both ports so the operator can SSH in
   on 22 to diagnose.
+- Renamed `content_library_template` → `content_library_item_name`.
+  vSphere content libraries hold "items" (which may be OVAs, VM
+  templates, ISOs, etc.) — the field is the *item name*, not
+  specifically a "template". The new name matches what
+  `vmware.vmware.content_library_item_info` returns as `library_item_name`
+  and removes ambiguity with `content_library_template_prefix` (an
+  unrelated auto-import naming knob that stays unchanged). Affects:
+  roles/instance/defaults/main.yml, roles/instance/meta/argument_specs.yml,
+  roles/instance/tasks/main.yml + validate/template.yml,
+  roles/instance_ignition/tasks/{content_library_import,fcos_prepare}.yml,
+  roles/common/vars/main.yml (`_platform_map` field rename across all 44
+  OS rows + `_resolved_content_library_item_name`),
+  roles/common/tasks/resolve_platform_preset.yml (host-fact publish),
+  examples/inventory.{full,minimal}.yml + molecule fixture + READMEs +
+  mongodb/preflight comment. Inventory migration: rename the key
+  `content_library_template:` → `content_library_item_name:` in your
+  inventory or group_vars. The ansible-galaxy module name
+  `vmware.vmware.deploy_content_library_template` is unchanged — that's
+  the upstream module's identifier, not our variable.
 - Removed `validation_only` knob and all `- not (validation_only)`
   gates. The flag was an under-used pre-flight short-circuit (skip VM
   creation, only run validators) — equivalent dry-running is better

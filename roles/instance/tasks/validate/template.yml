@@ -7,40 +7,40 @@
     that:
       - content_library_name is defined
       - (content_library_name | string) | length > 0
-      - content_library_template is defined
-      - (content_library_template | string) | length > 0
+      - content_library_item_name is defined
+      - (content_library_item_name | string) | length > 0
     fail_msg: >-
       Content library lookup requires both `content_library_name` and
-      `content_library_template` to be non-empty. Got
+      `content_library_item_name` to be non-empty. Got
       content_library_name='{{ content_library_name }}',
-      content_library_template='{{ content_library_template }}'.
-      For ignition deployments, `content_library_template` is normally set
+      content_library_item_name='{{ content_library_item_name }}'.
+      For ignition deployments, `content_library_item_name` is normally set
       by the fcos_prepare task — if it's empty here, that task either
       didn't run or failed silently.
     success_msg: >-
       Content library inputs OK
-      (library='{{ content_library_name }}', template='{{ content_library_template }}').
+      (library='{{ content_library_name }}', template='{{ content_library_item_name }}').
   run_once: true
 
-- name: "Look up content library item — {{ 'library=' ~ content_library_name ~ ', template=' ~ content_library_template }}"
+- name: "Look up content library item — {{ 'library=' ~ content_library_name ~ ', template=' ~ content_library_item_name }}"
   vmware.vmware.content_library_item_info:
     hostname: "{{ vcenter_connect.hostname }}"
     username: "{{ vcenter_connect.username }}"
     password: "{{ vcenter_connect.password }}"
     validate_certs: "{{ vcenter_connect.validate_certs }}"
     library_name: "{{ content_library_name }}"
-    library_item_name: "{{ content_library_template }}"
+    library_item_name: "{{ content_library_item_name }}"
   delegate_to: localhost
   run_once: true
   register: template_info
   changed_when: false
 
-- name: "Assert exactly one template match for {{ content_library_template }}"
+- name: "Assert exactly one template match for {{ content_library_item_name }}"
   ansible.builtin.assert:
     that:
       - (template_info.library_item_info | default([])) | length == 1
     fail_msg: >-
-      Expected exactly one match for template '{{ content_library_template }}'
+      Expected exactly one match for template '{{ content_library_item_name }}'
       in content library '{{ content_library_name }}', got
       {{ template_info.library_item_info | default([]) | length }}.
       0 → not found: verify the library + item names in vCenter
@@ -50,7 +50,7 @@
       fcos_prepare task output for fetch errors.
       >1 → ambiguous: item names should be unique within a library; check
       for stale/duplicate entries in vCenter.
-    success_msg: "Template '{{ content_library_template }}' found in content library '{{ content_library_name }}'."
+    success_msg: "Template '{{ content_library_item_name }}' found in content library '{{ content_library_name }}'."
     quiet: true
   run_once: true
 
@@ -83,5 +83,5 @@
       against the installed collection version.
     success_msg:
       - "Content library: {{ content_library_name }} (id={{ _content_library_id }})"
-      - "Template:        {{ content_library_template }} (id={{ _content_library_item_id }})"
+      - "Template:        {{ content_library_item_name }} (id={{ _content_library_item_id }})"
   run_once: true

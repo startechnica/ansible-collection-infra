@@ -56,7 +56,7 @@ all:
     # ── Templates ──────────────────────────────────────────────────────────
     instance_init_type: cloud-init
     content_library_name: library-rocky
-    content_library_template: noble-server-cloudimg-amd64
+    content_library_item_name: noble-server-cloudimg-amd64
     content_library_type: ovf
 
     # ── VMs ────────────────────────────────────────────────────────────────

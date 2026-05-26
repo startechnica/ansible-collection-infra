@@ -23,7 +23,7 @@
 #                             Windows/FreeBSD/RouterOS → "" / N/A)
 #   .content_library_name     vSphere content library; empty = site-specific,
 #                             override via instance_netbox_platform_map merge
-#   .content_library_template canonical template name (defaults to slug);
+#   .content_library_item_name canonical template name (defaults to slug);
 #                             override per-site via the same merge
 #   .ignition                 per-flavour Butane / OVA metadata, only
 #                             populated for init_type=ignition rows
@@ -59,7 +59,7 @@ _platform_map:
     init_type: cloud-init
     container_engine: docker
     content_library_name: ubuntu-images
-    content_library_template: ubuntu-linux-64-bit
+    content_library_item_name: ubuntu-linux-64-bit
   ubuntu-16-04-lts:
     os_family: Debian
     distribution: Ubuntu
@@ -68,7 +68,7 @@ _platform_map:
     init_type: cloud-init
     container_engine: docker
     content_library_name: ubuntu-images
-    content_library_template: ubuntu-16-04-lts
+    content_library_item_name: ubuntu-16-04-lts
   ubuntu-20-04-lts:
     os_family: Debian
     distribution: Ubuntu
@@ -77,7 +77,7 @@ _platform_map:
     init_type: cloud-init
     container_engine: docker
     content_library_name: ubuntu-images
-    content_library_template: ubuntu-20-04-lts
+    content_library_item_name: ubuntu-20-04-lts
   ubuntu-22-04-lts:
     os_family: Debian
     distribution: Ubuntu
@@ -86,7 +86,7 @@ _platform_map:
     init_type: cloud-init
     container_engine: docker
     content_library_name: ubuntu-images
-    content_library_template: ubuntu-22-04-lts
+    content_library_item_name: ubuntu-22-04-lts
   ubuntu-24-04-lts:
     os_family: Debian
     distribution: Ubuntu
@@ -95,7 +95,7 @@ _platform_map:
     init_type: cloud-init
     container_engine: docker
     content_library_name: ubuntu-images
-    content_library_template: ubuntu-24-04-lts
+    content_library_item_name: ubuntu-24-04-lts
   # Debian — netbox-community alias `debian-gnulinux-N-64-bit` first, canonical `debian-N` last.
   debian-gnulinux-8-64-bit:
     os_family: Debian
@@ -105,7 +105,7 @@ _platform_map:
     init_type: cloud-init
     container_engine: docker
     content_library_name: debian-images
-    content_library_template: debian-gnulinux-8-64-bit
+    content_library_item_name: debian-gnulinux-8-64-bit
   debian-8:
     os_family: Debian
     distribution: Debian
@@ -114,7 +114,7 @@ _platform_map:
     init_type: cloud-init
     container_engine: docker
     content_library_name: debian-images
-    content_library_template: debian-8
+    content_library_item_name: debian-8
   debian-gnulinux-9-64-bit:
     os_family: Debian
     distribution: Debian
@@ -123,7 +123,7 @@ _platform_map:
     init_type: cloud-init
     container_engine: docker
     content_library_name: debian-images
-    content_library_template: debian-gnulinux-9-64-bit
+    content_library_item_name: debian-gnulinux-9-64-bit
   debian-9:
     os_family: Debian
     distribution: Debian
@@ -132,7 +132,7 @@ _platform_map:
     init_type: cloud-init
     container_engine: docker
     content_library_name: debian-images
-    content_library_template: debian-9
+    content_library_item_name: debian-9
   debian-gnulinux-10-64-bit:
     os_family: Debian
     distribution: Debian
@@ -141,7 +141,7 @@ _platform_map:
     init_type: cloud-init
     container_engine: docker
     content_library_name: debian-images
-    content_library_template: debian-gnulinux-10-64-bit
+    content_library_item_name: debian-gnulinux-10-64-bit
   debian-10:
     os_family: Debian
     distribution: Debian
@@ -150,7 +150,7 @@ _platform_map:
     init_type: cloud-init
     container_engine: docker
     content_library_name: debian-images
-    content_library_template: debian-10
+    content_library_item_name: debian-10
   debian-gnulinux-11-64-bit:
     os_family: Debian
     distribution: Debian
@@ -159,7 +159,7 @@ _platform_map:
     init_type: cloud-init
     container_engine: docker
     content_library_name: debian-images
-    content_library_template: debian-gnulinux-11-64-bit
+    content_library_item_name: debian-gnulinux-11-64-bit
   debian-11:
     os_family: Debian
     distribution: Debian
@@ -168,7 +168,7 @@ _platform_map:
     init_type: cloud-init
     container_engine: docker
     content_library_name: debian-images
-    content_library_template: debian-11
+    content_library_item_name: debian-11
   debian-gnulinux-12-64-bit:
     os_family: Debian
     distribution: Debian
@@ -177,7 +177,7 @@ _platform_map:
     init_type: cloud-init
     container_engine: docker
     content_library_name: debian-images
-    content_library_template: debian-gnulinux-12-64-bit
+    content_library_item_name: debian-gnulinux-12-64-bit
   debian-12:
     os_family: Debian
     distribution: Debian
@@ -186,7 +186,7 @@ _platform_map:
     init_type: cloud-init
     container_engine: docker
     content_library_name: debian-images
-    content_library_template: debian-12
+    content_library_item_name: debian-12
   debian-13:
     os_family: Debian
     distribution: Debian
@@ -195,7 +195,7 @@ _platform_map:
     init_type: cloud-init
     container_engine: docker
     content_library_name: debian-images
-    content_library_template: debian-13
+    content_library_item_name: debian-13
 
   # ── RedHat family (RHEL and clones — same os_family, different distribution)
   rhel-9:
@@ -206,7 +206,7 @@ _platform_map:
     init_type: cloud-init
     container_engine: podman
     content_library_name: redhat-images
-    content_library_template: rhel-9
+    content_library_item_name: rhel-9
   rhel-8:
     os_family: RedHat
     distribution: RedHat
@@ -215,7 +215,7 @@ _platform_map:
     init_type: cloud-init
     container_engine: podman
     content_library_name: redhat-images
-    content_library_template: rhel-8
+    content_library_item_name: rhel-8
   rhel-7:
     os_family: RedHat
     distribution: RedHat
@@ -224,7 +224,7 @@ _platform_map:
     init_type: cloud-init
     container_engine: podman
     content_library_name: redhat-images
-    content_library_template: rhel-7
+    content_library_item_name: rhel-7
   rocky-linux-9:
     os_family: RedHat
     distribution: Rocky
@@ -233,7 +233,7 @@ _platform_map:
     init_type: cloud-init
     container_engine: podman
     content_library_name: rocky-images
-    content_library_template: rocky-linux-9
+    content_library_item_name: rocky-linux-9
   almalinux-9:
     os_family: RedHat
     distribution: AlmaLinux
@@ -242,7 +242,7 @@ _platform_map:
     init_type: cloud-init
     container_engine: podman
     content_library_name: almalinux-images
-    content_library_template: almalinux-9
+    content_library_item_name: almalinux-9
   oracle-linux-9:
     os_family: RedHat
     distribution: OracleLinux
@@ -251,7 +251,7 @@ _platform_map:
     init_type: cloud-init
     container_engine: podman
     content_library_name: oraclelinux-images
-    content_library_template: oracle-linux-9
+    content_library_item_name: oracle-linux-9
   oracle-linux-8:
     os_family: RedHat
     distribution: OracleLinux
@@ -260,7 +260,7 @@ _platform_map:
     init_type: cloud-init
     container_engine: podman
     content_library_name: oraclelinux-images
-    content_library_template: oracle-linux-8
+    content_library_item_name: oracle-linux-8
   oracle-linux-7-64-bit:
     os_family: RedHat
     distribution: OracleLinux
@@ -269,7 +269,7 @@ _platform_map:
     init_type: cloud-init
     container_engine: podman
     content_library_name: oraclelinux-images
-    content_library_template: oracle-linux-7-64-bit
+    content_library_item_name: oracle-linux-7-64-bit
   oracle-linux-7:
     os_family: RedHat
     distribution: OracleLinux
@@ -278,7 +278,7 @@ _platform_map:
     init_type: cloud-init
     container_engine: podman
     content_library_name: oraclelinux-images
-    content_library_template: oracle-linux-7
+    content_library_item_name: oracle-linux-7
   centos-9:
     os_family: RedHat
     distribution: CentOS
@@ -287,7 +287,7 @@ _platform_map:
     init_type: cloud-init
     container_engine: podman
     content_library_name: centos-images
-    content_library_template: centos-9
+    content_library_item_name: centos-9
   centos-8:
     os_family: RedHat
     distribution: CentOS
@@ -296,7 +296,7 @@ _platform_map:
     init_type: cloud-init
     container_engine: podman
     content_library_name: centos-images
-    content_library_template: centos-8
+    content_library_item_name: centos-8
   centos-7:
     os_family: RedHat
     distribution: CentOS
@@ -305,7 +305,7 @@ _platform_map:
     init_type: cloud-init
     container_engine: podman
     content_library_name: centos-images
-    content_library_template: centos-7
+    content_library_item_name: centos-7
   fedora:
     os_family: RedHat
     distribution: Fedora
@@ -314,7 +314,7 @@ _platform_map:
     init_type: cloud-init
     container_engine: podman
     content_library_name: fedora-images
-    content_library_template: fedora
+    content_library_item_name: fedora
   # ── CoreOS-family (Ignition-based; all share coreos64Guest)
   # Listed before fedora-coreos so fedora-coreos wins the inverse
   # `_vsphere_guest_id_platform_map` lookup as the canonical slug.
@@ -326,7 +326,7 @@ _platform_map:
     init_type: ignition
     container_engine: docker
     content_library_name: flatcar-images
-    content_library_template: flatcar
+    content_library_item_name: flatcar
     ignition:
       butane_variant: flatcar
       butane_spec_version: "1.1.0"
@@ -344,7 +344,7 @@ _platform_map:
     init_type: ignition
     container_engine: podman
     content_library_name: redhat-images
-    content_library_template: rhel-coreos
+    content_library_item_name: rhel-coreos
     ignition:
       butane_variant: openshift
       butane_spec_version: "4.21.0"
@@ -365,7 +365,7 @@ _platform_map:
     init_type: ignition
     container_engine: podman
     content_library_name: fedora-images
-    content_library_template: fedora-coreos
+    content_library_item_name: fedora-coreos
     ignition:
       butane_variant: fcos
       butane_spec_version: "1.5.0"
@@ -388,7 +388,7 @@ _platform_map:
     init_type: ignition
     container_engine: podman
     content_library_name: opensuse-microos-images
-    content_library_template: opensuse-microos
+    content_library_item_name: opensuse-microos
     ignition:
       butane_variant: opensuse
       butane_spec_version: "1.0.0"
@@ -406,7 +406,7 @@ _platform_map:
     init_type: cloud-init
     container_engine: podman
     content_library_name: opensuse-tumbleweed-images
-    content_library_template: opensuse-tumbleweed
+    content_library_item_name: opensuse-tumbleweed
   sles-15:
     os_family: Suse
     distribution: SLES
@@ -415,7 +415,7 @@ _platform_map:
     init_type: cloud-init
     container_engine: docker
     content_library_name: sles-images
-    content_library_template: sles-15
+    content_library_item_name: sles-15
   sles-12:
     os_family: Suse
     distribution: SLES
@@ -424,7 +424,7 @@ _platform_map:
     init_type: cloud-init
     container_engine: docker
     content_library_name: sles-images
-    content_library_template: sles-12
+    content_library_item_name: sles-12
 
   # ── Windows family (ansible_distribution varies by SKU; Windows is the
   # closest stable label, override per-host if you need the full SKU string)
@@ -436,7 +436,7 @@ _platform_map:
     init_type: none
     container_engine: ""
     content_library_name: windows-images
-    content_library_template: windows-server-2022
+    content_library_item_name: windows-server-2022
   windows-server-2019:
     os_family: Windows
     distribution: Windows
@@ -445,7 +445,7 @@ _platform_map:
     init_type: none
     container_engine: ""
     content_library_name: windows-images
-    content_library_template: windows-server-2019
+    content_library_item_name: windows-server-2019
   windows-server-2016:
     os_family: Windows
     distribution: Windows
@@ -454,7 +454,7 @@ _platform_map:
     init_type: none
     container_engine: ""
     content_library_name: windows-images
-    content_library_template: windows-server-2016
+    content_library_item_name: windows-server-2016
   windows-11:
     os_family: Windows
     distribution: Windows
@@ -463,7 +463,7 @@ _platform_map:
     init_type: none
     container_engine: ""
     content_library_name: windows-images
-    content_library_template: windows-11
+    content_library_item_name: windows-11
   microsoft-windows-10-64-bit:
     os_family: Windows
     distribution: Windows
@@ -472,7 +472,7 @@ _platform_map:
     init_type: none
     container_engine: ""
     content_library_name: windows-images
-    content_library_template: microsoft-windows-10-64-bit
+    content_library_item_name: microsoft-windows-10-64-bit
   windows-10:
     os_family: Windows
     distribution: Windows
@@ -481,7 +481,7 @@ _platform_map:
     init_type: none
     container_engine: ""
     content_library_name: windows-images
-    content_library_template: windows-10
+    content_library_item_name: windows-10
 
   # ── FreeBSD family (pfSense, OPNsense, vanilla FreeBSD)
   pfsense:
@@ -492,7 +492,7 @@ _platform_map:
     init_type: none
     container_engine: ""
     content_library_name: freebsd-images
-    content_library_template: pfsense
+    content_library_item_name: pfsense
 
   # ── RouterOS (MikroTik). Not detected by ansible setup module; values
   # match what `community.routeros` users typically set manually.
@@ -505,7 +505,7 @@ _platform_map:
     init_type: none
     container_engine: ""
     content_library_name: routeros-images
-    content_library_template: mikrotik-routeros
+    content_library_item_name: mikrotik-routeros
 
 # ─── OS slug fallback resolution ──────────────────────────────────────────
 # Resolves the five OS-derived knobs against `_platform_map` when an
@@ -531,10 +531,10 @@ _resolved_content_library_name: >-
   {{ content_library_name
      if (content_library_name | default('') | length > 0)
      else (_os_preset.content_library_name | default('')) }}
-_resolved_content_library_template: >-
-  {{ content_library_template
-     if (content_library_template | default('') | length > 0)
-     else (_os_preset.content_library_template | default('')) }}
+_resolved_content_library_item_name: >-
+  {{ content_library_item_name
+     if (content_library_item_name | default('') | length > 0)
+     else (_os_preset.content_library_item_name | default('')) }}
 _resolved_instance_user_name: >-
   {{ instance_user_name
      if (instance_user_name | default('') | length > 0)

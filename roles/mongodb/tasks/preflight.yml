@@ -28,7 +28,7 @@
            bump can land WITHIN a single FCOS major release: e.g. FCOS
            43.20260217.3.1 shipped kernel 6.18 (works), FCOS 43.20260413.3.2
            shipped kernel 6.19 (broken). Pinning the FCOS major isn't enough
-           — pin the specific stream build via `content_library_template`
+           — pin the specific stream build via `content_library_item_name`
            in inventory.
         2. Move MongoDB nodes to a different OS (Ubuntu 24.04 ships 6.8).
         3. Wait for an upstream MongoDB patch that supports 6.19, then bump
