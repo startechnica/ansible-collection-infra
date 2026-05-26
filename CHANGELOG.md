@@ -115,48 +115,34 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   SELinux port label (FCOS/RHCOS) and `ssh.socket` disable are still
   handled by the post-boot task's preflight — Butane can't run semanage
   in initramfs.
-
-### Fixed
-- `roles/instance/tasks/ssh_config.yml` Phase 0 probe regex used POSIX
-  `[[:space:]]` which Python's `re.match` doesn't support — silently
-  mismatched, causing `_already_migrated` to be `False` even when the
-  drop-in was correctly written. Rewritten using `regex_search` with
-  `\s` (Python-compatible) to parse port numbers out of each `Port` line.
-- `playbooks/patroni/remove-node.yml`: uninstall dispatch was importing
-  the patroni role with `tasks_from: uninstall.yml`, a file that doesn't
-  exist — would have failed at runtime. Now dispatches via
-  `patroni_action: uninstall` through the role's `main.yml`, matching
-  the working `playbooks/mongodb/remove-node.yml` pattern.
-- Several `hosts:` templates in add-node / remove-node playbooks
-  (`groups['mongodb_nodes'][0]`, `{{ target_node }}`) crashed
-  ansible-playbook `--syntax-check` when the variable wasn't yet
-  defined. Refactored with `| default('localhost')` fallbacks; same
-  runtime behavior.
-- `roles/common/tasks/validate_inventory.yml`: `instance_user_name`
-  precondition now optional when init_type is ignition (the slug map
-  or `ignition_flavour_default.instance_user_name` supplies it). Auth
-  check now accepts `instance_user_ssh_authorized_keys` in addition to
-  `instance_user_password` / `instance_user_ssh_private_key`, matching
-  what Butane / cloud-init templates actually consume.
-
-### Changed
-- `galaxy.yml`: dependency version floors aligned with the higher
-  bounds already in `requirements.yml` (community.crypto >=3.2.0,
-  community.docker >=5.2.0, community.general >=12.6.0,
-  community.mongodb >=1.7.12, community.postgresql >=3.14.3,
-  community.vmware >=6.2.0, vmware.vmware >=2.8.0). `netbox.netbox`
-  lowered from `>=4.1.0` to `>=3.22.0` — no 4.x exists on Galaxy.
-- `.yamllint`: `line-length` max raised 180→200 to accommodate inline
-  Jinja `{%- if -%}` blocks in debug messages.
-- CI: lint + syntax-check now run on every branch push (not just
-  main). Molecule remains gated to main / PRs / manual dispatch.
-- CI actions bumped: `actions/checkout@v4`→`v6`,
-  `actions/setup-python@v5`→`v6` (Node 24 support).
-- `roles/geerlingguy.docker/` untracked from git — pinned in
-  `requirements.yml` and reinstalled fresh by CI, so the vendored copy
-  only drifted. Added to `.gitignore` and `galaxy.yml` `build_ignore`.
-
-### Added
+- `roles/instance_ignition/templates/fcos.bu.j2` —
+  `rpm-ostree-install-open-vm-tools.service` now copies the
+  `/usr/etc/vmware-tools/` factory payload into `/etc/vmware-tools/`
+  at first boot, then runs `systemctl reset-failed + restart` on
+  `vgauthd.service`. `rpm-ostree --apply-live` skips the rpm's `%post`
+  scriptlet that normally seeds `/etc`, leaving `vgauth.conf` and the
+  SAML XSD schemas absent — vgauthd then fails to start (`status=255`)
+  on every boot. Each step is `|| true`-guarded so a failure (no
+  `/usr/etc/vmware-tools`, vgauthd not present) doesn't poison the
+  bootstrap chain. Runs once per VM at first boot, before vmtoolsd is
+  started, so vgauthd never enters its failed state.
+- `roles/netbox_lookup/vars/main.yml` and
+  `roles/netbox_register/vars/main.yml` — wiring-table documentation
+  (`_lookup_input_map`, `_register_input_map`, `_*_per_vm_input_map`,
+  `_lookup_netbox_query_map`, `_register_netbox_write_map`,
+  `_*_output_map`, `_register_side_effect_map`) mapping every external
+  var these roles consume to the NetBox API resources they read/write
+  and the facts they export. Loaded as role vars so they're
+  runtime-inspectable via `debug: var=_lookup_input_map`, but tasks
+  don't reference them — they're the single source of truth for
+  "edit-FIRST-when-adding-a-field" discipline. Includes shared
+  `_netbox_api_headers` (Authorization + Content-Type + Accept) reused
+  by every `ansible.builtin.uri` call in both roles.
+- `roles/instance/meta/argument_specs.yml`: `content_library_type`
+  now has a `description:` documenting why `iso` is intentionally NOT
+  in `choices` (ISOs are boot media; no vSphere "deploy VM from ISO"
+  API). Surfaces in `ansible-doc -t role` output and in the rejection
+  message when an inventory typo specifies `iso`.
 - `ansible.utils >=5.1.0` declared as a runtime dependency
   (`common` and `instance` roles use `ansible.utils.ipv4` /
   `ansible.utils.ipv6` filters).
@@ -184,7 +170,7 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   ignition / none), `container_engine` (docker for Debian/Suse, podman
   for RedHat, `""` for Windows / FreeBSD / RouterOS),
   `content_library_name` (`<distribution>-images` by convention),
-  `content_library_template` (defaults to the slug). The 4 ignition
+  `content_library_item_name` (defaults to the slug). The 4 ignition
   rows (`fedora-coreos`, `flatcar`, `rhel-coreos`, `opensuse-microos`)
   additionally carry an `ignition:` sub-dict with butane_variant /
   butane_spec_version / butane_template / template_prefix /
@@ -192,12 +178,12 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   used to live in `ignition_flavour_map`.
 - `instance_platform_preset` — new top-level knob that picks an OS row
   from `_platform_map` to supply slug-based defaults for
-  `content_library_name`, `content_library_template`, `instance_user_name`,
+  `content_library_name`, `content_library_item_name`, `instance_user_name`,
   `instance_init_type`, and `container_engine`. Explicit inventory
   overrides on those five vars still win; unset (empty) falls back to
   the slug-derived value, then to a hardcoded final fallback
   (`ubuntu` / `ignition` / `podman` / `""`).
-- `_resolved_content_library_name`, `_resolved_content_library_template`,
+- `_resolved_content_library_name`, `_resolved_content_library_item_name`,
   `_resolved_instance_user_name`, `_resolved_instance_init_type`,
   `_resolved_container_engine` — derived vars in
   `roles/common/vars/main.yml` that implement the slug-fallback
@@ -207,6 +193,108 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   and `preflight` now read these `_resolved_*` names so the slug-based
   preset reaches every dispatch site (ansible_user on dynamic hosts,
   container runtime selection, Butane templates, etc.).
+
+### Fixed
+- `roles/instance/tasks/ssh_config.yml` Phase 0 probe regex used POSIX
+  `[[:space:]]` which Python's `re.match` doesn't support — silently
+  mismatched, causing `_already_migrated` to be `False` even when the
+  drop-in was correctly written. Rewritten using `regex_search` with
+  `\s` (Python-compatible) to parse port numbers out of each `Port` line.
+- `playbooks/patroni/remove-node.yml`: uninstall dispatch was importing
+  the patroni role with `tasks_from: uninstall.yml`, a file that doesn't
+  exist — would have failed at runtime. Now dispatches via
+  `patroni_action: uninstall` through the role's `main.yml`, matching
+  the working `playbooks/mongodb/remove-node.yml` pattern.
+- Several `hosts:` templates in add-node / remove-node playbooks
+  (`groups['mongodb_nodes'][0]`, `{{ target_node }}`) crashed
+  ansible-playbook `--syntax-check` when the variable wasn't yet
+  defined. Refactored with `| default('localhost')` fallbacks; same
+  runtime behavior.
+- `roles/common/tasks/validate_inventory.yml`: `instance_user_name`
+  precondition now optional when init_type is ignition (the slug map
+  or `ignition_flavour_default.instance_user_name` supplies it). Auth
+  check now accepts `instance_user_ssh_authorized_keys` in addition to
+  `instance_user_password` / `instance_user_ssh_private_key`, matching
+  what Butane / cloud-init templates actually consume.
+- `roles/instance/tasks/ssh_config.yml` Phase 0 probe rewritten from
+  `vmware_vm_shell` + sudo + redirected grep + file fetch to a single
+  `vmware_guest_file_operation: fetch` of the 0644 drop-in (no sudo)
+  + local `slurp` + regex_search interpret. The old shell-based probe
+  failed with opaque `"Failed to execute command"` on some
+  `community.vmware` versions and required `wait_for_process: true`.
+  Also removed `no_log: true` from all probe steps so guest API errors
+  surface cleanly. `failed_when: false` on the fetch treats "file
+  missing" as "not migrated yet" (safe default — full migration runs).
+- `roles/instance/tasks/ssh_config.yml` Preflight task hardening:
+  dropped `set -e` (its interaction with `||` chains and command
+  substitution caused exit code 2), simplified semanage availability
+  check to `command -v semanage` (drops OS_FAMILY case statement),
+  changed `2>/dev/null` → `2>&1` so stderr is captured, removed
+  `no_log: true`, added explicit `exit 0`. Then fixed YAML folded-
+  scalar indentation that was preserving newlines and causing `||` at
+  start of line (bash exit 2). Documented the YAML-indentation gotcha
+  in a warning comment.
+- `roles/instance/tasks/ssh_config.yml` Phase 1 + Phase 3 install
+  tasks: removed `no_log: true` and added `2>&1` to each shell step so
+  stderr surfaces in the failure result (was hiding sudo-TTY /
+  sshd -t / ssh.socket conflicts). Replaced `(... 2>/dev/null || ...)`
+  subshell with `{ ... 2>&1 || ... 2>&1; }` group so exit code
+  propagates correctly.
+- `roles/instance_ignition/tasks/post_boot_extras.yml`: previous
+  implementation used `ansible.builtin.stat` / `command` modules
+  which run on the Ansible CONTROLLER, not the VM — meaning the
+  `/usr/etc/vmware-tools` → `/etc/vmware-tools` recovery never
+  executed against any actual VM (the stat always returned False on
+  the controller). Rewritten to use `vmware_vm_shell` so the cp +
+  vgauthd reset actually runs on the target. Dropped
+  `wait_for_process: true` because restarting vgauthd briefly takes
+  the guest-auth daemon offline and trips controller-side
+  `ListProcessesInGuest` polls with `"None (unexpected)"`; the action
+  is idempotent + fast and nothing downstream depends on synchronous
+  completion. Gated to skip when the schemas file is already present
+  (true for any VM provisioned with the Butane fix from this release).
+
+### Changed
+- `galaxy.yml`: dependency version floors aligned with the higher
+  bounds already in `requirements.yml` (community.crypto >=3.2.0,
+  community.docker >=5.2.0, community.general >=12.6.0,
+  community.mongodb >=1.7.12, community.postgresql >=3.14.3,
+  community.vmware >=6.2.0, vmware.vmware >=2.8.0). `netbox.netbox`
+  lowered from `>=4.1.0` to `>=3.22.0` — no 4.x exists on Galaxy.
+- `.yamllint`: `line-length` max raised 180→200 to accommodate inline
+  Jinja `{%- if -%}` blocks in debug messages.
+- CI: lint + syntax-check now run on every branch push (not just
+  main). Molecule remains gated to main / PRs / manual dispatch.
+- CI actions bumped: `actions/checkout@v4`→`v6`,
+  `actions/setup-python@v5`→`v6` (Node 24 support).
+- `roles/geerlingguy.docker/` untracked from git — pinned in
+  `requirements.yml` and reinstalled fresh by CI, so the vendored copy
+  only drifted. Added to `.gitignore` and `galaxy.yml` `build_ignore`.
+- `roles/instance/tasks/main.yml` flow restructure: power-on folded
+  into the per-VM `prepare_all.yml` loop (Phase 2a), so VM N starts
+  booting while VM N+1 is still being prepared — overlapping boot
+  wall-clock with the prepare serialization that was previously paid
+  up-front. The separate `poweron_all.yml` Phase 2b is deleted; its
+  bookkeeping (per-init-type `poweron_mark.yml`) now operates on a
+  single `instance` loop_var instead of looping over the full list.
+  Serial-ack semantics preserved (deterministic order, no vSphere
+  thundering-herd). `wait_for_boot_all.yml` (parallel batch wait)
+  unchanged — still folds N×~17 min serial waits into one.
+- `roles/netbox_lookup/` + `roles/netbox_register/` task files: 14
+  inline `headers:` blocks across 5 task files replaced with
+  `headers: "{{ _netbox_api_headers }}"` so adding/removing an HTTP
+  header is a single-file edit. Added `Accept: application/json` while
+  consolidating — harmless on GET, correct for POST/PATCH.
+- `roles/netbox_lookup/` + `roles/netbox_register/` task files:
+  removed 20 redundant `| default(false)` filters on
+  `netbox_connect.validate_certs` across 9 task files. The value is
+  already defaulted to `false` in each role's `defaults/main.yml` —
+  the shadow default was misleading (suggesting the key might be unset,
+  which it can't be at role entry).
+- `roles/instance/tasks/validate/{template,input}.yml`: two
+  `success_msg:` strings converted from folded `>-` scalar to YAML
+  array form so multi-line output in `-v` runs renders cleanly per
+  line instead of as one wrapped string.
 
 ### Lint cleanup
 - ~60 missing task names added across mongodb / patroni entry-point
