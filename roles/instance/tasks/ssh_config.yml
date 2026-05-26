@@ -190,31 +190,80 @@
       delegate_to: localhost
       no_log: true
 
+    # vmware_vm_shell does NOT capture stdout/stderr — VMware Tools'
+    # StartProgramInGuest API only returns exit_code. So we redirect the
+    # whole chain to a guest log file, and the rescue fetches+displays it
+    # on failure. Without this, all you get is "exit_code: 255" with no
+    # indication of which step (install / sed / sshd -t / restart) blew up.
     - name: "Phase 1 — install transitional drop-in + restart sshd on {{ item.name }}"
       when:
         - _ssh_port | int != 22
         - not _already_migrated
-      community.vmware.vmware_vm_shell:
-        hostname: "{{ vcenter_connect.hostname }}"
-        username: "{{ vcenter_connect.username }}"
-        password: "{{ vcenter_connect.password }}"
-        validate_certs: "{{ vcenter_connect.validate_certs }}"
-        datacenter: "{{ instance_datacenter }}"
-        folder: "{{ instance_folder_path }}"
-        vm_id: "{{ item.name }}"
-        vm_username: "{{ instance_user_name }}"
-        vm_password: "{{ instance_user_password }}"
-        vm_shell: /bin/bash
-        # YAML indent: every line same as `-c "` so `>-` folds to single line.
-        # 2>&1 on each step captures stderr for diagnostics.
-        vm_shell_args: >-
-          -c "sudo install -o root -g root -m 0644 {{ _remote_tmp }} {{ _drop_in_path }} 2>&1
-          && sudo sed -i -E 's/^[[:space:]]*Port[[:space:]]/#&/' /etc/ssh/sshd_config 2>&1
-          && sudo sshd -t 2>&1
-          && { sudo systemctl restart ssh 2>&1 || sudo systemctl restart sshd 2>&1; }
-          && rm -f {{ _remote_tmp }}"
-        wait_for_process: true
-      delegate_to: localhost
+      block:
+        - name: "Phase 1 — install + restart sshd on {{ item.name }}"
+          community.vmware.vmware_vm_shell:
+            hostname: "{{ vcenter_connect.hostname }}"
+            username: "{{ vcenter_connect.username }}"
+            password: "{{ vcenter_connect.password }}"
+            validate_certs: "{{ vcenter_connect.validate_certs }}"
+            datacenter: "{{ instance_datacenter }}"
+            folder: "{{ instance_folder_path }}"
+            vm_id: "{{ item.name }}"
+            vm_username: "{{ instance_user_name }}"
+            vm_password: "{{ instance_user_password }}"
+            vm_shell: /bin/bash
+            # YAML indent: every line same as `-c "` so `>-` folds to single line.
+            # Outer `( ... ) >log 2>&1` makes per-step 2>&1 redundant; subshell
+            # exit code = the &&-chain's failing step (or rm -f on success).
+            # `install -d /run/sshd` first: on fresh Ubuntu cloud images
+            # systemd-tmpfiles sometimes hasn't materialised /run/sshd, and
+            # `sshd -t` then fails with "Missing privilege separation
+            # directory". `install -d` is idempotent — no-op if it exists.
+            vm_shell_args: >-
+              -c "( sudo install -d -o root -g root -m 0755 /run/sshd
+              && sudo install -o root -g root -m 0644 {{ _remote_tmp }} {{ _drop_in_path }}
+              && sudo sed -i -E 's/^[[:space:]]*Port[[:space:]]/#&/' /etc/ssh/sshd_config
+              && sudo sshd -t
+              && { sudo systemctl restart ssh || sudo systemctl restart sshd; }
+              && rm -f {{ _remote_tmp }}
+              ) > /tmp/ssh_phase1.log 2>&1"
+            wait_for_process: true
+          delegate_to: localhost
+      rescue:
+        - name: "Phase 1 — fetch failure log from {{ item.name }}"
+          community.vmware.vmware_guest_file_operation:
+            hostname: "{{ vcenter_connect.hostname }}"
+            username: "{{ vcenter_connect.username }}"
+            password: "{{ vcenter_connect.password }}"
+            validate_certs: "{{ vcenter_connect.validate_certs }}"
+            datacenter: "{{ instance_datacenter }}"
+            folder: "{{ instance_folder_path }}"
+            vm_id: "{{ item.name }}"
+            vm_username: "{{ instance_user_name }}"
+            vm_password: "{{ instance_user_password }}"
+            fetch:
+              src: /tmp/ssh_phase1.log
+              dest: "/tmp/_ssh_phase1_{{ item.name }}.log"
+          delegate_to: localhost
+          register: _phase1_fetch
+          failed_when: false
+
+        - name: "Phase 1 — read failure log for {{ item.name }}"
+          ansible.builtin.slurp:
+            src: "/tmp/_ssh_phase1_{{ item.name }}.log"
+          register: _phase1_log
+          delegate_to: localhost
+          failed_when: false
+          when: _phase1_fetch is succeeded
+
+        - name: "Phase 1 — fail with captured output for {{ item.name }}"
+          ansible.builtin.fail:
+            msg: |
+              Phase 1 install/restart FAILED on {{ item.name }}.
+              Guest log /tmp/ssh_phase1.log:
+              {{ (_phase1_log.content | b64decode)
+                 if (_phase1_log is defined and _phase1_log is succeeded and _phase1_log.content is defined)
+                 else '<log unavailable — guest API may have been unreachable>' }}
 
     # ── Phase 2: verify the new port is reachable from controller ─────────
     # Stops the play hard if not — sshd is still on 22 so operator can SSH
@@ -270,26 +319,67 @@
       delegate_to: localhost
       no_log: true
 
+    # Same log-to-file + rescue pattern as Phase 1 install above; see the
+    # comment block there for the rationale.
     - name: "Phase 3 — install final drop-in + reload sshd on {{ item.name }}"
-      community.vmware.vmware_vm_shell:
-        hostname: "{{ vcenter_connect.hostname }}"
-        username: "{{ vcenter_connect.username }}"
-        password: "{{ vcenter_connect.password }}"
-        validate_certs: "{{ vcenter_connect.validate_certs }}"
-        datacenter: "{{ instance_datacenter }}"
-        folder: "{{ instance_folder_path }}"
-        vm_id: "{{ item.name }}"
-        vm_username: "{{ instance_user_name }}"
-        vm_password: "{{ instance_user_password }}"
-        vm_shell: /bin/bash
-        # Same YAML indent + stderr-capture rules as Phase 1 install above.
-        vm_shell_args: >-
-          -c "sudo install -o root -g root -m 0644 {{ _remote_tmp }} {{ _drop_in_path }} 2>&1
-          && sudo sshd -t 2>&1
-          && { sudo systemctl restart ssh 2>&1 || sudo systemctl restart sshd 2>&1; }
-          && rm -f {{ _remote_tmp }}"
-        wait_for_process: true
-      delegate_to: localhost
+      block:
+        - name: "Phase 3 — install + restart sshd on {{ item.name }}"
+          community.vmware.vmware_vm_shell:
+            hostname: "{{ vcenter_connect.hostname }}"
+            username: "{{ vcenter_connect.username }}"
+            password: "{{ vcenter_connect.password }}"
+            validate_certs: "{{ vcenter_connect.validate_certs }}"
+            datacenter: "{{ instance_datacenter }}"
+            folder: "{{ instance_folder_path }}"
+            vm_id: "{{ item.name }}"
+            vm_username: "{{ instance_user_name }}"
+            vm_password: "{{ instance_user_password }}"
+            vm_shell: /bin/bash
+            # See Phase 1 install for why /run/sshd is created here.
+            vm_shell_args: >-
+              -c "( sudo install -d -o root -g root -m 0755 /run/sshd
+              && sudo install -o root -g root -m 0644 {{ _remote_tmp }} {{ _drop_in_path }}
+              && sudo sshd -t
+              && { sudo systemctl restart ssh || sudo systemctl restart sshd; }
+              && rm -f {{ _remote_tmp }}
+              ) > /tmp/ssh_phase3.log 2>&1"
+            wait_for_process: true
+          delegate_to: localhost
+      rescue:
+        - name: "Phase 3 — fetch failure log from {{ item.name }}"
+          community.vmware.vmware_guest_file_operation:
+            hostname: "{{ vcenter_connect.hostname }}"
+            username: "{{ vcenter_connect.username }}"
+            password: "{{ vcenter_connect.password }}"
+            validate_certs: "{{ vcenter_connect.validate_certs }}"
+            datacenter: "{{ instance_datacenter }}"
+            folder: "{{ instance_folder_path }}"
+            vm_id: "{{ item.name }}"
+            vm_username: "{{ instance_user_name }}"
+            vm_password: "{{ instance_user_password }}"
+            fetch:
+              src: /tmp/ssh_phase3.log
+              dest: "/tmp/_ssh_phase3_{{ item.name }}.log"
+          delegate_to: localhost
+          register: _phase3_fetch
+          failed_when: false
+
+        - name: "Phase 3 — read failure log for {{ item.name }}"
+          ansible.builtin.slurp:
+            src: "/tmp/_ssh_phase3_{{ item.name }}.log"
+          register: _phase3_log
+          delegate_to: localhost
+          failed_when: false
+          when: _phase3_fetch is succeeded
+
+        - name: "Phase 3 — fail with captured output for {{ item.name }}"
+          ansible.builtin.fail:
+            msg: |
+              Phase 3 install/restart FAILED on {{ item.name }}.
+              Guest log /tmp/ssh_phase3.log:
+              {{ (_phase3_log.content | b64decode)
+                 if (_phase3_log is defined and _phase3_log is succeeded and _phase3_log.content is defined)
+                 else '<log unavailable — guest API may have been unreachable>' }}
 
     # ── Local cleanup ─────────────────────────────────────────────────────
     - name: "Remove local temp files for {{ item.name }}"

@@ -394,6 +394,17 @@ systemd:
         # — it's a no-op until open-vm-tools is layered below).
         ExecStart=/usr/local/bin/publish-phase open-vm-tools-installing
         ExecStart=/usr/bin/rpm-ostree install --idempotent --apply-live --allow-inactive open-vm-tools
+        # rpm-ostree --apply-live skips the package's %post scriptlet that
+        # copies factory /etc defaults from /usr/etc/vmware-tools/ into
+        # /etc/vmware-tools/. Without this, vgauth.conf + vgauth/schemas/*
+        # are missing and vgauthd.service fails to start (status=255). Copy
+        # the whole tree with `cp -an` (no-clobber) so any user file we
+        # already wrote (tools.conf, our own conf.startechnica) is preserved.
+        # restorecon resets SELinux labels — survives a future enforcing flip.
+        # systemctl reset-failed clears vgauthd's failed-start counter so
+        # the restart actually proceeds (systemd refuses to start units
+        # past their StartLimitBurst until reset).
+        ExecStart=/bin/sh -c 'cp -anr /usr/etc/vmware-tools/. /etc/vmware-tools/ 2>/dev/null || true; restorecon -RF /etc/vmware-tools/ 2>/dev/null || true; systemctl reset-failed vgauthd.service 2>/dev/null || true; systemctl restart vgauthd.service 2>/dev/null || true'
         # Append our [guestinfo] block to /etc/vmware-tools/tools.conf
         # AFTER install (so the rpm-created file exists + we don't clobber
         # any defaults). Idempotent via grep-guard: no-op if our marker

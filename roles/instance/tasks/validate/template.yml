@@ -17,9 +17,10 @@
       For ignition deployments, `content_library_item_name` is normally set
       by the fcos_prepare task — if it's empty here, that task either
       didn't run or failed silently.
-    success_msg: >-
-      Content library inputs OK
-      (library='{{ content_library_name }}', template='{{ content_library_item_name }}').
+    success_msg:
+      - "Content library inputs OK"
+      - "  library: {{ content_library_name }}"
+      - "  item:    {{ content_library_item_name }}"
   run_once: true
 
 - name: "Look up content library item — {{ 'library=' ~ content_library_name ~ ', template=' ~ content_library_item_name }}"

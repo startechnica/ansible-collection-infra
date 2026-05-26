@@ -3,56 +3,48 @@
 # openSUSE MicroOS). Dispatched from instance/tasks/configure_all.yml via:
 #   include_role: name=instance_{{ instance_init_type|replace('-','_') }}
 #                 tasks_from=post_boot_extras.yml
+#
+# IMPORTANT: this task runs in the instance role's play context, which
+# delegates to localhost (vCenter API). Every step that needs to touch the
+# VM's filesystem MUST use vmware_vm_shell / vmware_guest_file_operation,
+# NOT ansible.builtin.stat / command — those would run on the controller.
 
 # ── open-vm-tools /etc payload recovery ─────────────────────────────────────
-# When open-vm-tools is layered via Butane `extensions:` or a firstboot
-# rpm-ostree-install unit (rather than interactively from a running
-# system), rpm-ostree skips the package's %post scriptlet that copies
-# the /etc payload from /usr/etc/vmware-tools/ into /etc/vmware-tools/.
-# vgauthd then fails to start because vgauth.conf and the SAML XSD
-# schemas it needs are absent. We materialize the factory copies
-# idempotently — cp -n preserves any user-managed tools.conf override.
-
-- name: Check for open-vm-tools factory /etc payload
-  ansible.builtin.stat:
-    path: /usr/etc/vmware-tools
-  register: _ovt_factory_etc
-
-- name: Materialize open-vm-tools /etc factory copies (FCOS layered-install fix)
-  ansible.builtin.command:
-    cmd: cp -anr /usr/etc/vmware-tools/. /etc/vmware-tools/
-    creates: /etc/vmware-tools/vgauth/schemas/saml-schema-assertion-2.0.xsd
-  register: _ovt_etc_copy
-  when: _ovt_factory_etc.stat.exists
-
-# Apply SELinux file contexts even when SELinux is permissive — the labels
-# are silently set by `cp -a` from /usr/etc, but restorecon reasserts them
-# from the installed file_contexts policy (covers cases where /usr/etc
-# labels drift, or future enforcing-mode flips).
-- name: Restore SELinux contexts on /etc/vmware-tools
-  ansible.builtin.command:
-    cmd: restorecon -RF /etc/vmware-tools/
-  changed_when: false
-  when:
-    - _ovt_factory_etc.stat.exists
-    - _ovt_etc_copy is changed
-
-- name: Inspect vgauthd current state
-  ansible.builtin.systemd:
-    name: vgauthd.service
-  register: _vgauthd_state
-  when:
-    - _ovt_factory_etc.stat.exists
-    - _ovt_etc_copy is changed
-
-# Only restart if the unit is actively running or wedged in failed state.
-# If the operator deliberately disabled vgauthd (it's optional unless you
-# use VMware host-to-guest auth), respect that — don't bring it back up.
-- name: Restart vgauthd to pick up newly populated /etc payload
-  ansible.builtin.systemd:
-    name: vgauthd.service
-    state: restarted
-  when:
-    - _ovt_factory_etc.stat.exists
-    - _ovt_etc_copy is changed
-    - _vgauthd_state.status.ActiveState | default('') in ['active', 'failed']
+# When open-vm-tools is layered via rpm-ostree --apply-live (our Butane
+# rpm-ostree-install-open-vm-tools.service), the package's %post scriptlet
+# that copies the /etc payload from /usr/etc/vmware-tools/ into
+# /etc/vmware-tools/ is skipped. vgauthd then fails to start (status=255)
+# because vgauth.conf and the SAML XSD schemas it needs are absent.
+#
+# As of 2026-05-26, the Butane install service ALSO performs this cp + reset
+# at first boot — so for new VMs, /etc/vmware-tools/ is already populated by
+# the time this task runs and the cp is a no-op (cp -an preserves existing).
+# This task remains as a safety net for older VMs (provisioned before the
+# Butane fix) or any future drift, and also resets vgauthd in case it's
+# wedged in failed state from a prior boot attempt.
+#
+# YAML INDENTATION: every line of vm_shell_args at the same indent as `-c "`
+# so the folded scalar collapses to a single bash command. See ssh_config.yml
+# for the why — `||` at the start of a folded-into-newline is a bash exit 2.
+- name: "Materialize open-vm-tools /etc payload + reset vgauthd on {{ item.name }}"
+  community.vmware.vmware_vm_shell:
+    hostname: "{{ vcenter_connect.hostname }}"
+    username: "{{ vcenter_connect.username }}"
+    password: "{{ vcenter_connect.password }}"
+    validate_certs: "{{ vcenter_connect.validate_certs }}"
+    datacenter: "{{ instance_datacenter }}"
+    folder: "{{ instance_folder_path }}"
+    vm_id: "{{ item.name }}"
+    vm_username: "{{ instance_user_name }}"
+    vm_password: "{{ instance_user_password }}"
+    vm_shell: /bin/bash
+    vm_shell_args: >-
+      -c "if [ -d /usr/etc/vmware-tools ]; then
+      sudo cp -anr /usr/etc/vmware-tools/. /etc/vmware-tools/ 2>&1 || true;
+      sudo restorecon -RF /etc/vmware-tools/ 2>&1 || true;
+      sudo systemctl reset-failed vgauthd.service 2>&1 || true;
+      sudo systemctl restart vgauthd.service 2>&1 || true;
+      fi;
+      exit 0"
+    wait_for_process: true
+  delegate_to: localhost

@@ -192,9 +192,10 @@
       vsphere_esxi_hostname='{{ vsphere_esxi_hostname }}'.
       Required: instance_cluster_name OR vsphere_esxi_hostname; portgroup_name is required
       only when at least one NIC entry omits `name:`.
-    success_msg: >-
-      Network input validation passed
-      (portgroup_fallback={{ portgroup_name }},
-      {{ 'cluster=' ~ instance_cluster_name if instance_cluster_name | length > 0
-         else 'vsphere_esxi_hostname=' ~ vsphere_esxi_hostname }}).
+    success_msg:
+      - "Network input validation passed"
+      - "  portgroup_fallback: {{ portgroup_name }}"
+      - "  {{ 'cluster:             ' ~ instance_cluster_name
+             if instance_cluster_name | length > 0
+             else 'vsphere_esxi_hostname: ' ~ vsphere_esxi_hostname }}"
   run_once: true
