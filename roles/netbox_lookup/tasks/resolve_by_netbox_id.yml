@@ -13,9 +13,8 @@
   ansible.builtin.uri:
     url: "{{ netbox_connect.url }}/api/virtualization/virtual-machines/{{ vm_item.netbox_id }}/"
     method: GET
-    headers:
-      Authorization: "Token {{ netbox_connect.token }}"
-    validate_certs: "{{ netbox_connect.validate_certs | default(false) }}"
+    headers: "{{ _netbox_api_headers }}"
+    validate_certs: "{{ netbox_connect.validate_certs }}"
     status_code: [200]
   delegate_to: localhost
   check_mode: false
@@ -29,9 +28,8 @@
   ansible.builtin.uri:
     url: "{{ netbox_connect.url }}/api/ipam/ip-addresses/?virtual_machine_id={{ vm_item.netbox_id }}"
     method: GET
-    headers:
-      Authorization: "Token {{ netbox_connect.token }}"
-    validate_certs: "{{ netbox_connect.validate_certs | default(false) }}"
+    headers: "{{ _netbox_api_headers }}"
+    validate_certs: "{{ netbox_connect.validate_certs }}"
     status_code: [200]
   delegate_to: localhost
   check_mode: false

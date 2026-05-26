@@ -13,7 +13,7 @@ The role auto-detects which mode to run based on the shape of the `instances` fa
 |---|---|---|
 | `[{name: foo}, ...]` (some entries without `ipv4`) | **Enrich** | Per-VM GET to NetBox; fill in `ipv4` / `ipv6` / `netbox_id` / `tags` on each VM that's missing them |
 | `[{netbox_id: 42}, ...]` (ID only, no name) | **Resolve** | Fetch full VM details by ID (name, IP, CPU, memory, disk, role, …) |
-| `[]` or unset | **Query** | Build the entire `instances` list from NetBox using the `netbox_query_*` filters |
+| `[]` or unset | **Query** | Build the entire `instances` list from NetBox using the `netbox_lookup_*` filters |
 
 Modes are additive — you can mix forms (some VMs with IPs, some without, some
 with only `netbox_id`) and the role resolves each correctly.
@@ -49,13 +49,13 @@ Combined with AND logic. All optional — omit or leave empty to skip.
 
 | Var | NetBox filter |
 |---|---|
-| `netbox_query_cluster` | `cluster=<name>` |
-| `netbox_query_site` | `site=<slug>` |
-| `netbox_query_tenant` | `tenant=<slug>` |
-| `netbox_query_role` | `role=<slug>` |
-| `netbox_query_status` | `status=<value>` (e.g. `active`, `planned`) |
-| `netbox_query_tags` | `tag=<csv>` (all must match) |
-| `netbox_query_custom_fields` | `cf_<key>=<value>` (map) |
+| `netbox_lookup_cluster` | `cluster=<name>` |
+| `netbox_lookup_site` | `site=<slug>` |
+| `netbox_lookup_tenant` | `tenant=<slug>` |
+| `netbox_lookup_role` | `role=<slug>` |
+| `netbox_lookup_status` | `status=<value>` (e.g. `active`, `planned`) |
+| `netbox_lookup_tags` | `tag=<csv>` (all must match) |
+| `netbox_lookup_custom_fields` | `cf_<key>=<value>` (map) |
 
 ### Output control
 
@@ -152,9 +152,9 @@ instances:
 ```yaml
 instances: []                          # or leave unset
 
-netbox_query_cluster: Deviruchi
-netbox_query_role: database
-netbox_query_tags: [production]
+netbox_lookup_cluster: Deviruchi
+netbox_lookup_role: database
+netbox_lookup_tags: [production]
 ```
 
 After the role runs, `instances` contains every VM in Deviruchi + database + production.

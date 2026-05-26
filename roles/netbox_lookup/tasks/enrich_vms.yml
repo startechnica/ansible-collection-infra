@@ -20,9 +20,8 @@
   ansible.builtin.uri:
     url: "{{ netbox_connect.url }}/api/virtualization/clusters/?limit=1000"
     method: GET
-    headers:
-      Authorization: "Token {{ netbox_connect.token }}"
-    validate_certs: "{{ netbox_connect.validate_certs | default(false) }}"
+    headers: "{{ _netbox_api_headers }}"
+    validate_certs: "{{ netbox_connect.validate_certs }}"
     status_code: [200]
   delegate_to: localhost
   check_mode: false
@@ -76,9 +75,8 @@
   ansible.builtin.uri:
     url: "{{ netbox_connect.url }}/api/virtualization/virtual-machines/?name={{ vm_item.name | urlencode }}{{ _nb_cluster_filter | default('') }}"
     method: GET
-    headers:
-      Authorization: "Token {{ netbox_connect.token }}"
-    validate_certs: "{{ netbox_connect.validate_certs | default(false) }}"
+    headers: "{{ _netbox_api_headers }}"
+    validate_certs: "{{ netbox_connect.validate_certs }}"
     status_code: [200]
   delegate_to: localhost
   check_mode: false
@@ -95,9 +93,8 @@
   ansible.builtin.uri:
     url: "{{ netbox_connect.url }}/api/ipam/vrfs/?name={{ netbox_vrf | urlencode }}"
     method: GET
-    headers:
-      Authorization: "Token {{ netbox_connect.token }}"
-    validate_certs: "{{ netbox_connect.validate_certs | default(false) }}"
+    headers: "{{ _netbox_api_headers }}"
+    validate_certs: "{{ netbox_connect.validate_certs }}"
     status_code: [200]
   delegate_to: localhost
   check_mode: false
@@ -133,9 +130,8 @@
       {{ netbox_connect.url }}/api/ipam/ip-addresses/?virtual_machine_id={{
       _nb_vm_result.json.results[0].id }}{{ _nb_vrf_filter | default('') }}
     method: GET
-    headers:
-      Authorization: "Token {{ netbox_connect.token }}"
-    validate_certs: "{{ netbox_connect.validate_certs | default(false) }}"
+    headers: "{{ _netbox_api_headers }}"
+    validate_certs: "{{ netbox_connect.validate_certs }}"
     status_code: [200]
   delegate_to: localhost
   check_mode: false
@@ -208,9 +204,8 @@
   ansible.builtin.uri:
     url: "{{ netbox_connect.url }}/api/virtualization/virtual-machines/?name={{ vm_item.name | urlencode }}{{ _nb_cluster_filter | default('') }}"
     method: GET
-    headers:
-      Authorization: "Token {{ netbox_connect.token }}"
-    validate_certs: "{{ netbox_connect.validate_certs | default(false) }}"
+    headers: "{{ _netbox_api_headers }}"
+    validate_certs: "{{ netbox_connect.validate_certs }}"
     status_code: [200]
   delegate_to: localhost
   check_mode: false

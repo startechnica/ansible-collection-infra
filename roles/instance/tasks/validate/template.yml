@@ -19,8 +19,8 @@
       didn't run or failed silently.
     success_msg:
       - "Content library inputs OK"
-      - "  library: {{ content_library_name }}"
-      - "  item:    {{ content_library_item_name }}"
+      - "Library name: {{ content_library_name }}"
+      - "Item name:    {{ content_library_item_name }}"
   run_once: true
 
 - name: "Look up content library item — {{ 'library=' ~ content_library_name ~ ', template=' ~ content_library_item_name }}"
@@ -83,6 +83,7 @@
       Re-check the vmware.vmware.content_library_item_info return shape
       against the installed collection version.
     success_msg:
-      - "Content library: {{ content_library_name }} (id={{ _content_library_id }})"
-      - "Template:        {{ content_library_item_name }} (id={{ _content_library_item_id }})"
+      - "Content library resolved successfully with non-empty IDs"
+      - "Library name: {{ content_library_name }} (id={{ _content_library_id }})"
+      - "Item name:    {{ content_library_item_name }} (id={{ _content_library_item_id }})"
   run_once: true

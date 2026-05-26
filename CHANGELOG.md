@@ -48,6 +48,14 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   port → verify new port reachable from controller → drop 22. On
   verify failure, sshd stays on both ports so the operator can SSH in
   on 22 to diagnose.
+- Renamed `netbox_query_*` → `netbox_lookup_*` (7 vars: `cluster`,
+  `site`, `tenant`, `role`, `status`, `tags`, `custom_fields`). The role
+  is named `netbox_lookup`, so the user-facing knob prefix should match
+  (consistent with `netbox_lookup_enabled`, `netbox_lookup_interface`,
+  `netbox_lookup_set_instances`). Affects `roles/netbox_lookup/`:
+  `defaults/main.yml`, `meta/argument_specs.yml`, `tasks/query_vms.yml`,
+  `vars/main.yml`, `README.md`. Inventory migration: rename the keys in
+  inventory or group_vars (old keys are silently ignored).
 - Renamed `content_library_template` → `content_library_item_name`.
   vSphere content libraries hold "items" (which may be OVAs, VM
   templates, ISOs, etc.) — the field is the *item name*, not

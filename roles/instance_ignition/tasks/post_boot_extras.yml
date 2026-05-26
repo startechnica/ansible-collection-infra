@@ -38,13 +38,22 @@
     vm_username: "{{ instance_user_name }}"
     vm_password: "{{ instance_user_password }}"
     vm_shell: /bin/bash
+    # Skip the entire block when /etc/vmware-tools/vgauth/schemas/ is already
+    # populated — true for any VM provisioned with the Butane fix. On old
+    # broken VMs the cp + vgauthd restart happens to recover them.
+    #
+    # No `wait_for_process: true` — restarting vgauthd briefly takes the
+    # guest-auth daemon offline, which trips controller-side
+    # ListProcessesInGuest polls with "None (unexpected)". This task is
+    # idempotent + fast (~1s) and nothing downstream depends on its synchronous
+    # completion, so fire-and-forget is the correct trade-off.
     vm_shell_args: >-
-      -c "if [ -d /usr/etc/vmware-tools ]; then
+      -c "if [ -d /usr/etc/vmware-tools ]
+      && [ ! -f /etc/vmware-tools/vgauth/schemas/saml-schema-assertion-2.0.xsd ]; then
       sudo cp -anr /usr/etc/vmware-tools/. /etc/vmware-tools/ 2>&1 || true;
       sudo restorecon -RF /etc/vmware-tools/ 2>&1 || true;
       sudo systemctl reset-failed vgauthd.service 2>&1 || true;
       sudo systemctl restart vgauthd.service 2>&1 || true;
       fi;
       exit 0"
-    wait_for_process: true
   delegate_to: localhost

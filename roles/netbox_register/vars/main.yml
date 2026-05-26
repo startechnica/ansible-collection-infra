@@ -1,0 +1,258 @@
+---
+# ──────────────────────────────────────────────────────────────────────────
+# Variable wiring map for netbox_register
+# ──────────────────────────────────────────────────────────────────────────
+# Single source of truth for: what other roles export → what this role
+# consumes → what NetBox fields it writes → what it exports back.
+#
+# Loaded as role vars (precedence #14) so the maps are inspectable at
+# runtime (`debug: var=_register_input_map`), but tasks do NOT reference
+# these directly — they're a documentation / wiring table.
+#
+# Edit this file FIRST when adding a new NetBox attribute the role should
+# create/update, then wire it through tasks/register_vm.yml.
+# ──────────────────────────────────────────────────────────────────────────
+
+# ── Shared NetBox API headers (auth + JSON content-type) ──────────────────
+# Reused by every `ansible.builtin.uri` call in this role so the header
+# definition stays in one place. Token is resolved lazily via Jinja at
+# template time — netbox_connect is required at role entry.
+_netbox_api_headers:
+  Authorization: "Token {{ netbox_connect.token }}"
+  Content-Type: "application/json"
+  Accept: "application/json"
+
+# ── INPUTS: bare role-level vars (read from inventory / other roles) ──────
+_register_input_map:
+  netbox_enabled:
+    source: inventory
+    type: bool
+    default: true
+    purpose: Master NetBox switch
+  netbox_register_enabled:
+    source: inventory
+    type: bool
+    default: true
+    purpose: Per-role toggle
+  netbox_connect:
+    source: inventory (vaulted)
+    type: dict
+    fields: [url, token, validate_certs]
+  instance_cpu:
+    source: roles/instance/defaults/main.yml
+    type: int
+    purpose: Per-VM CPU default (NetBox `vcpus`)
+  instance_memory_mb:
+    source: roles/instance/defaults/main.yml
+    type: int
+    purpose: Per-VM memory default (NetBox `memory`)
+  instance_disks:
+    source: roles/instance/defaults/main.yml
+    type: dict
+    field_used: size_gb
+    purpose: Per-VM disk default (NetBox `disk`)
+  instance_datacenter:
+    source: roles/instance/defaults/main.yml
+    type: str
+    purpose: vCenter datacenter scope (for UUID/MAC lookup)
+  instance_folder:
+    source: roles/instance/defaults/main.yml
+    type: str
+    purpose: vCenter folder (NetBox custom field `vcenter_folder`)
+  instance_cluster_name:
+    source: roles/instance/defaults/main.yml
+    type: str
+    purpose: Fallback NetBox cluster name when `netbox_cluster_name` unset
+  instance_domain_name:
+    source: roles/instance/defaults/main.yml
+    type: str
+    purpose: Appended to `item.name` for IP record's `dns_name`
+  netbox_device_name:
+    source: inventory
+    type: str
+    fallback: vsphere_esxi_hostname
+    purpose: ESXi host name in NetBox (device association)
+  netbox_device_platform:
+    source: inventory
+    type: str
+    default: "ubuntu-24-04-lts"
+    purpose: Default platform slug
+  netbox_device_role:
+    source: inventory
+    type: str
+    purpose: Default VM role slug
+  netbox_device_interface_name:
+    source: inventory
+    type: str
+    default: "ens192"
+    purpose: Default interface name on the NetBox VM
+  netbox_cluster_name:
+    source: inventory
+    type: str
+    fallback: instance_cluster_name
+    purpose: Explicit NetBox cluster (beats instance_cluster_name)
+  netbox_site_slug:
+    source: inventory
+    type: str
+    purpose: Site ownership
+  netbox_tenant_slug:
+    source: inventory
+    type: str
+    purpose: Tenant ownership
+  netbox_vrf:
+    source: inventory
+    type: str
+    purpose: Default VRF for IPs
+  instance_tags:
+    source: inventory
+    type: list
+    purpose: Global tag list (merged per-VM)
+  netbox_custom_fields:
+    source: inventory
+    type: dict
+    purpose: Global custom fields (merged per-VM)
+  vcenter_connect:
+    source: inventory (vaulted)
+    type: dict
+    fields: [hostname, username, password, validate_certs]
+    purpose: Optional — used for VM UUID/MAC lookup if not in `_provisioned_vm_facts`
+  _provisioned_vm_facts:
+    source: roles/instance/tasks/create_vm/verify.yml
+    type: dict (keyed by VM name)
+    fields: [instance_uuid, mac_address, ipv4, ipv6]
+    purpose: Avoids per-VM vCenter API round-trip for UUID/MAC
+
+# ── INPUTS: per-VM dict fields (read from each item in `instances`) ───────
+_register_per_vm_input_map:
+  name:
+    type: str
+    required: true
+    purpose: VM hostname (primary key)
+  "networks[0].ipv4":
+    type: str
+    optional: true
+    purpose: Primary NIC IPv4 (CIDR)
+  "networks[0].name":
+    type: str
+    optional: true
+    purpose: Portgroup → NetBox custom field `vcenter_portgroup_name`
+  cpu:
+    type: int
+    optional: true
+    purpose: Per-VM vcpus override
+  memory_mb:
+    type: int
+    optional: true
+    purpose: Per-VM memory override
+  "disks[0].size_gb":
+    type: int
+    optional: true
+    purpose: Per-VM disk override
+  status:
+    type: str
+    optional: true
+    purpose: "NetBox VM status (fallback: active if on infra, else planned)"
+  platform:
+    type: str
+    optional: true
+    purpose: Per-VM platform slug
+  role:
+    type: str
+    optional: true
+    purpose: Per-VM role slug
+  site:
+    type: str
+    optional: true
+    purpose: Per-VM site slug
+  tenant:
+    type: str
+    optional: true
+    purpose: Per-VM tenant slug
+  cluster_name:
+    type: str
+    optional: true
+    purpose: Per-VM cluster override
+  tags:
+    type: list
+    optional: true
+    purpose: Per-VM tags (merged with instance_tags)
+  custom_fields:
+    type: dict
+    optional: true
+    purpose: Per-VM custom fields
+  interface:
+    type: str
+    optional: true
+    purpose: "Interface name (fallback: netbox_device_interface_name)"
+  vrf:
+    type: str
+    optional: true
+    purpose: "Per-VM VRF (fallback: netbox_vrf)"
+  netbox_register:
+    type: bool
+    optional: true
+    default: true
+    purpose: Per-VM opt-out from registration
+
+# ── NetBox API resources this role WRITES ─────────────────────────────────
+_register_netbox_write_map:
+  netbox_virtual_machine:
+    fields:
+      - name             # ← item.name
+      - vcpus            # ← item.cpu | instance_cpu
+      - memory           # ← item.memory_mb | instance_memory_mb
+      - disk             # ← item.disks[0].size_gb | instance_disks.size_gb
+      - cluster          # ← item.cluster_name | netbox_cluster_name | instance_cluster_name
+      - platform         # ← item.platform | netbox_device_platform
+      - virtual_machine_role  # ← item.role | netbox_device_role
+      - site             # ← item.site | netbox_site_slug
+      - tenant           # ← item.tenant | netbox_tenant_slug
+      - status           # ← item.status | derived
+      - tags             # ← (instance_tags + item.tags) | unique
+      - custom_fields    # ← merged dict (see below)
+      - comments         # ← auto-generated
+    custom_fields:
+      vcenter_uuid: "← _provisioned_vm_facts[item.name].instance_uuid"
+      vcenter_folder: "← instance_folder"
+      vcenter_portgroup_name: "← item.networks[0].name"
+    operation: create/update
+  netbox_vm_interface:
+    fields: [virtual_machine, name, enabled, mac_address]
+    inputs: [item.name, item.interface | netbox_device_interface_name, _vm_mac]
+    operation: create/update
+  netbox_ip_address:
+    fields: [address, status, dns_name, assigned_object, vrf]
+    inputs:
+      ["item.networks[0].ipv4", "item.name + instance_domain_name",
+       "(item.vrf | netbox_vrf)"]
+    operation: create/update
+  netbox_virtual_disk:
+    fields: [virtual_machine, name, size, description]
+    inputs: [item.name, "(vCenter hardware device label)", capacityInBytes]
+    operation: create/update per-disk record
+  netbox_custom_field:
+    fields: [name, label, type, content_types]
+    inputs: "hardcoded: vcenter_uuid, vcenter_folder, vcenter_portgroup_name"
+    operation: ensure-exists (run once before per-VM loop)
+  netbox_service:
+    fields: [virtual_machine, name, ports, protocol, description]
+    inputs: external (register_services.yml context)
+    operation: create/update service ports
+
+# ── OUTPUTS: facts this role exports ──────────────────────────────────────
+_register_output_map:
+  _nb_vm_id:
+    type: int
+    set_when: per-VM in loop (after VM lookup/create)
+    consumed_by: this role only (used for interface + IP association)
+  "_nb_ip_lookup.json.results[0].id":
+    type: int
+    set_when: per-VM after IP create/update
+    consumed_by: this role only (set as VM's primary_ip4)
+
+# ── SIDE EFFECTS (writes to non-NetBox systems) ───────────────────────────
+_register_side_effect_map:
+  vcenter_custom_attribute:
+    target: vCenter VM (when `_vm_exists_on_infra=true`)
+    keys: [netbox_id, netbox_url]
+    purpose: Bi-directional pointer from vCenter back to NetBox record

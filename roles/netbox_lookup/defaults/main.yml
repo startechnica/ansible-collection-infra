@@ -23,40 +23,40 @@ netbox_connect:
 ## @description Filters to select which VMs to fetch from NetBox.
 ## All filters are optional — omit or leave empty to skip that filter.
 
-## @param netbox_query_cluster [default: ""] Filter VMs by cluster name.
+## @param netbox_lookup_cluster [default: ""] Filter VMs by cluster name.
 ## e.g. "Deviruchi"
 ##
-netbox_query_cluster: ""
+netbox_lookup_cluster: ""
 
-## @param netbox_query_site [default: ""] Filter VMs by site slug.
+## @param netbox_lookup_site [default: ""] Filter VMs by site slug.
 ## e.g. "dc-jakarta-1"
 ##
-netbox_query_site: ""
+netbox_lookup_site: ""
 
-## @param netbox_query_tenant [default: ""] Filter VMs by tenant slug.
+## @param netbox_lookup_tenant [default: ""] Filter VMs by tenant slug.
 ## e.g. "engineering"
 ##
-netbox_query_tenant: ""
+netbox_lookup_tenant: ""
 
-## @param netbox_query_role [default: ""] Filter VMs by role slug.
+## @param netbox_lookup_role [default: ""] Filter VMs by role slug.
 ## e.g. "database"
 ##
-netbox_query_role: ""
+netbox_lookup_role: ""
 
-## @param netbox_query_status [default: ""] Filter VMs by status.
+## @param netbox_lookup_status [default: ""] Filter VMs by status.
 ## Typical values: active, planned, staged, decommissioning, offline
 ## Leave empty to fetch VMs regardless of status.
 ##
-netbox_query_status: ""
+netbox_lookup_status: ""
 
-## @param netbox_query_tags [default: []] Filter VMs by tags (all must match).
+## @param netbox_lookup_tags [default: []] Filter VMs by tags (all must match).
 ## e.g. ["production", "docker"]
 ##
-netbox_query_tags: []
-# # @param netbox_query_custom_fields [default: {}] Filter by custom field values.
+netbox_lookup_tags: []
+# # @param netbox_lookup_custom_fields [default: {}] Filter by custom field values.
 # # e.g. { "environment": "production" }
 # #
-netbox_query_custom_fields: {}
+netbox_lookup_custom_fields: {}
 # # @section Output Configuration
 # # @description Controls how the fetched data maps to the `instances` list.
 

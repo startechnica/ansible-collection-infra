@@ -5,21 +5,20 @@
   ansible.builtin.set_fact:
     _nb_query_filter: >-
       {{ {}
-         | combine({'cluster': netbox_query_cluster} if netbox_query_cluster | length > 0 else {})
-         | combine({'site': netbox_query_site} if netbox_query_site | length > 0 else {})
-         | combine({'tenant': netbox_query_tenant} if netbox_query_tenant | length > 0 else {})
-         | combine({'role': netbox_query_role} if netbox_query_role | length > 0 else {})
-         | combine({'status': netbox_query_status} if netbox_query_status | length > 0 else {})
-         | combine({'tag': netbox_query_tags | join(',') } if netbox_query_tags | length > 0 else {})
+         | combine({'cluster': netbox_lookup_cluster} if netbox_lookup_cluster | length > 0 else {})
+         | combine({'site': netbox_lookup_site} if netbox_lookup_site | length > 0 else {})
+         | combine({'tenant': netbox_lookup_tenant} if netbox_lookup_tenant | length > 0 else {})
+         | combine({'role': netbox_lookup_role} if netbox_lookup_role | length > 0 else {})
+         | combine({'status': netbox_lookup_status} if netbox_lookup_status | length > 0 else {})
+         | combine({'tag': netbox_lookup_tags | join(',') } if netbox_lookup_tags | length > 0 else {})
       }}
 
 - name: Query VMs from NetBox
   ansible.builtin.uri:
     url: "{{ netbox_connect.url }}/api/virtualization/virtual-machines/?{{ _nb_query_filter | urlencode }}&limit=1000"
     method: GET
-    headers:
-      Authorization: "Token {{ netbox_connect.token }}"
-    validate_certs: "{{ netbox_connect.validate_certs | default(false) }}"
+    headers: "{{ _netbox_api_headers }}"
+    validate_certs: "{{ netbox_connect.validate_certs }}"
     status_code: [200]
   delegate_to: localhost
   check_mode: false
@@ -33,9 +32,8 @@
   ansible.builtin.uri:
     url: "{{ netbox_connect.url }}/api/ipam/ip-addresses/?virtual_machine_id={{ vm_item.id }}"
     method: GET
-    headers:
-      Authorization: "Token {{ netbox_connect.token }}"
-    validate_certs: "{{ netbox_connect.validate_certs | default(false) }}"
+    headers: "{{ _netbox_api_headers }}"
+    validate_certs: "{{ netbox_connect.validate_certs }}"
     status_code: [200]
   delegate_to: localhost
   check_mode: false

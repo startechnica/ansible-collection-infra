@@ -16,9 +16,8 @@
   ansible.builtin.uri:
     url: "{{ netbox_connect.url }}/api/status/"
     method: GET
-    headers:
-      Authorization: "Token {{ netbox_connect.token }}"
-    validate_certs: "{{ netbox_connect.validate_certs | default(false) }}"
+    headers: "{{ _netbox_api_headers }}"
+    validate_certs: "{{ netbox_connect.validate_certs }}"
     status_code: [200]
   delegate_to: localhost
   run_once: true
