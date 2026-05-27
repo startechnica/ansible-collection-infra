@@ -495,7 +495,7 @@ vcenter_permission_propagate: false
 ## Distro is selected via `instance_platform_preset` (one of fedora-coreos,
 ## flatcar, rhel-coreos, opensuse-microos). Consumers read the matching
 ## row's `ignition:` sub-dict directly via
-## `_os_preset.ignition.<field>` (published as a host fact by
+## `_platform_preset.ignition.<field>` (published as a host fact by
 ## `common/tasks/resolve_platform_preset.yml`). To pin a custom Butane
 ## template / variant / spec version, override the row in inventory via
 ## `instance_netbox_platform_map` rather than threading new flat knobs.

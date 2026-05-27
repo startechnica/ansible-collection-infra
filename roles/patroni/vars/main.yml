@@ -13,3 +13,39 @@
 _vip_manager_arch: >-
   {{ 'arm64' if (ansible_facts['architecture'] | default('x86_64')) == 'aarch64'
      else (ansible_facts['architecture'] | default('x86_64')) }}
+
+# Public service catalog — consumed by:
+#   - roles/patroni/tasks/shared/netbox_register_services.yml (NetBox registration)
+#   - roles/firewall/tasks/main.yml                           (auto-include ports)
+# Base list + optional postgres-exporter entry, gated on postgres_exporter_enabled.
+# Lazy-evaluated, so port-var changes in defaults/inventory propagate cleanly.
+_patroni_services_base:
+  - name: haproxy-primary
+    port: "{{ haproxy_primary_port | int }}"
+    protocol: tcp
+    description: "HAProxy PostgreSQL primary"
+  - name: haproxy-replicas
+    port: "{{ haproxy_replicas_port | int }}"
+    protocol: tcp
+    description: "HAProxy PostgreSQL replicas"
+  - name: pgbouncer
+    port: "{{ pgbouncer_port | int }}"
+    protocol: tcp
+    description: "PgBouncer connection pooler"
+  - name: patroni-api
+    port: "{{ patroni_api_port | int }}"
+    protocol: tcp
+    description: "Patroni REST API"
+  - name: etcd-client
+    port: "{{ etcd_client_port | int }}"
+    protocol: tcp
+    description: "etcd client"
+
+_patroni_services_exporter:
+  - name: postgres-exporter
+    port: "{{ postgres_exporter_port | int }}"
+    protocol: tcp
+    description: "Prometheus PostgreSQL exporter"
+
+patroni_services: >-
+  {{ _patroni_services_base + (_patroni_services_exporter if postgres_exporter_enabled | bool else []) }}

@@ -14,8 +14,8 @@
  #
  # Test against your MicroOS image before relying on this for production.
  # ─────────────────────────────────────────────────────────────────────── #}
-variant: {{ _os_preset.ignition.butane_variant }}
-version: {{ _os_preset.ignition.butane_spec_version }}
+variant: {{ _platform_preset.ignition.butane_variant }}
+version: {{ _platform_preset.ignition.butane_spec_version }}
 
 passwd:
   users:

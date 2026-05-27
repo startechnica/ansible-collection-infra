@@ -6,7 +6,7 @@
     msg:
       - "╔══════════════════════════════════════════════════════════════╗"
       - "║  WARNING: MongoDB UNINSTALL on {{ inventory_hostname }}"
-      - "║  Engine:     {{ container_engine | default('docker') }}"
+      - "║  Engine:     {{ mongodb_container_engine }}"
       - "║  Data root:  {{ mongodb_root_dir }}"
       - "║  Prune data: {{ mongodb_destroy_prune }}"
       - "╚══════════════════════════════════════════════════════════════╝"
@@ -51,14 +51,14 @@
     state: absent
     remove_orphans: true
   failed_when: false
-  when: container_engine | default('docker') == 'docker'
+  when: mongodb_container_engine == 'docker'
 
 - name: Remove Docker network (docker)
   community.docker.docker_network:
     name: "{{ mongodb_network }}"
     state: absent
   failed_when: false
-  when: container_engine | default('docker') == 'docker'
+  when: mongodb_container_engine == 'docker'
 
 # Podman / Quadlet path. Stop systemd services, disable them, remove
 # the Quadlet source files, daemon-reload. Containers run on
@@ -68,7 +68,7 @@
 # install and uninstall, and an "extra" stop on a non-existent unit is
 # a no-op with `failed_when: false`.
 - name: Stop and remove Quadlet services (podman)
-  when: container_engine | default('docker') == 'podman'
+  when: mongodb_container_engine == 'podman'
   block:
     - name: Stop + disable Quadlet services
       ansible.builtin.systemd:
@@ -161,7 +161,7 @@
   ansible.builtin.file:
     path: "{{ mongodb_root_dir }}/docker-compose.yml"
     state: absent
-  when: container_engine | default('docker') == 'docker'
+  when: mongodb_container_engine == 'docker'
 
 - name: Remove bootstrap-complete marker
   ansible.builtin.file:
@@ -264,4 +264,4 @@
   ansible.builtin.debug:
     msg: >-
       MongoDB cluster uninstalled from {{ inventory_hostname }}
-      (engine={{ container_engine | default('docker') }}).
+      (engine={{ mongodb_container_engine }}).

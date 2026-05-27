@@ -1,18 +1,38 @@
 ---
-# Register services (ports) on a VM in NetBox
+# Register services (ports) on a single VM in NetBox, then verify the
+# write took by re-querying.
 #
 # Required vars:
-#   netbox_vm_name:      VM name in NetBox
-#   netbox_vm_services:  List of services to register
-#     - name: service name
-#       port: port number
+#   netbox_vm_name      VM name in NetBox
+#   netbox_vm_services  List of service dicts:
+#     - name: service name             (required)
+#       port: port number              (required)
 #       protocol: tcp (default) or udp
-#       description: optional description
+#       description: optional
 #
-# Example:
-#   netbox_vm_services:
-#     - { name: mongos, port: 27017, protocol: tcp }
-#     - { name: mongod, port: 27019, protocol: tcp }
+# Optional var:
+#   netbox_vm_service_ips  List of IPv4 strings to attach to each service.
+#                          When unset, IPs are auto-resolved by looking up
+#                          `netbox_vm_name` in `hostvars['localhost'].instances`
+#                          (matching on `.name`, reading `.ipv4`). Pass an
+#                          empty list `[]` to skip IP attachment entirely.
+#
+# Verification: after the write loop, re-queries NetBox for the VM's
+# services and asserts every expected service name is present. Catches
+# silent partial writes (e.g., NetBox accepting the POST but never
+# persisting). Verifies presence by `name` only — does not compare ports
+# or IPs (those are returned by NetBox in a format that requires
+# additional resolution and would add brittleness for marginal gain).
+
+- name: Resolve service IPs for {{ netbox_vm_name }}
+  ansible.builtin.set_fact:
+    _nb_svc_ips: >-
+      {{ netbox_vm_service_ips
+         if (netbox_vm_service_ips is defined)
+         else (hostvars['localhost'].instances | default([])
+               | selectattr('name', 'equalto', netbox_vm_name)
+               | selectattr('ipv4', 'defined')
+               | map(attribute='ipv4') | list) }}
 
 - name: "Register service — {{ svc.name ~ ':' ~ svc.port ~ ' on ' ~ netbox_vm_name }}"
   netbox.netbox.netbox_service:
@@ -27,8 +47,42 @@
         - "{{ svc.port | int }}"
       protocol: "{{ svc.protocol | default('tcp') }}"
       description: "{{ svc.description | default(omit) }}"
+      ipaddresses: "{{ _nb_svc_ips if _nb_svc_ips else omit }}"
   delegate_to: localhost
   loop: "{{ netbox_vm_services }}"
   loop_control:
     loop_var: svc
     label: "{{ svc.name }}:{{ svc.port }}"
+
+# ── Post-registration verification ──────────────────────────────────────
+# Re-query the services NetBox actually has for this VM, compare against
+# the catalog we just wrote. Catches: server-side rejections that the
+# module reported as success, services deleted by another process during
+# the write loop, name collisions that silently merged entries.
+
+- name: Re-query NetBox services for {{ netbox_vm_name }}
+  ansible.builtin.uri:
+    url: "{{ netbox_connect.url }}/api/ipam/services/?virtual_machine={{ netbox_vm_name | urlencode }}&limit=0"
+    method: GET
+    headers: "{{ _netbox_api_headers }}"
+    validate_certs: "{{ netbox_connect.validate_certs }}"
+    status_code: [200]
+  delegate_to: localhost
+  register: _nb_svc_lookup
+
+- name: Assert all expected services landed for {{ netbox_vm_name }}
+  ansible.builtin.assert:
+    that:
+      - _missing | length == 0
+    fail_msg: >-
+      NetBox post-registration check failed for VM={{ netbox_vm_name }}:
+      expected {{ _expected | length }} service(s), missing
+      {{ _missing | length }} ({{ _missing | join(', ') }}).
+      Found in NetBox: {{ _found | join(', ') | default('(none)', true) }}.
+    success_msg: >-
+      Verified {{ _expected | length }} service(s) on {{ netbox_vm_name }}
+      ({{ _expected | join(', ') }}).
+  vars:
+    _expected: "{{ netbox_vm_services | map(attribute='name') | list }}"
+    _found: "{{ _nb_svc_lookup.json.results | map(attribute='name') | list }}"
+    _missing: "{{ _expected | difference(_found) }}"

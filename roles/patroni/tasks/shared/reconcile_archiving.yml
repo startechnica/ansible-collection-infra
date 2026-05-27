@@ -15,7 +15,7 @@
 # when values actually differ. Cheap on no-op runs (one show-config exec).
 
 - name: Discover Patroni leader
-  ansible.builtin.include_tasks: "../{{ container_engine | default('docker') }}/_detect_leader.yml"
+  ansible.builtin.include_tasks: "../{{ patroni_container_engine }}/_detect_leader.yml"
 
 - name: Compute desired archive_command / restore_command
   ansible.builtin.set_fact:
@@ -29,7 +29,7 @@
 - name: Read current Patroni dynamic config from DCS
   ansible.builtin.command:
     argv:
-      - "{{ container_engine | default('docker') }}"
+      - "{{ patroni_container_engine }}"
       - exec
       - patroni
       - patronictl
@@ -52,7 +52,7 @@
 - name: Push archive_command + restore_command to DCS via patronictl edit-config
   ansible.builtin.command:
     argv:
-      - "{{ container_engine | default('docker') }}"
+      - "{{ patroni_container_engine }}"
       - exec
       - patroni
       - patronictl

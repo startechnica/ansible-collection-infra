@@ -14,7 +14,7 @@
     project_src: "{{ patroni_dir }}"
     state: restarted
     remove_orphans: true
-  when: container_engine | default('docker') == 'docker'
+  when: patroni_container_engine == 'docker'
 
 - name: Restart stack (podman, systemd-managed)
   listen: restart stack
@@ -32,7 +32,7 @@
     - keepalived.service
   loop_control:
     label: "{{ item }}"
-  when: container_engine | default('docker') == 'podman'
+  when: patroni_container_engine == 'podman'
   failed_when: false
 
 # ── restart etcd ────────────────────────────────────────────────────
@@ -43,14 +43,14 @@
     project_src: "{{ patroni_dir }}"
     state: restarted
     services: [etcd]
-  when: container_engine | default('docker') == 'docker'
+  when: patroni_container_engine == 'docker'
 
 - name: Restart etcd (podman)
   listen: restart etcd
   ansible.builtin.systemd:
     name: etcd.service
     state: restarted
-  when: container_engine | default('docker') == 'podman'
+  when: patroni_container_engine == 'podman'
 
 # ── restart patroni ─────────────────────────────────────────────────
 
@@ -60,14 +60,14 @@
     project_src: "{{ patroni_dir }}"
     state: restarted
     services: [patroni]
-  when: container_engine | default('docker') == 'docker'
+  when: patroni_container_engine == 'docker'
 
 - name: Restart patroni (podman)
   listen: restart patroni
   ansible.builtin.systemd:
     name: patroni.service
     state: restarted
-  when: container_engine | default('docker') == 'podman'
+  when: patroni_container_engine == 'podman'
 
 # ── restart haproxy ─────────────────────────────────────────────────
 
@@ -77,14 +77,14 @@
     project_src: "{{ patroni_dir }}"
     state: restarted
     services: [haproxy]
-  when: container_engine | default('docker') == 'docker'
+  when: patroni_container_engine == 'docker'
 
 - name: Restart haproxy (podman)
   listen: restart haproxy
   ansible.builtin.systemd:
     name: haproxy.service
     state: restarted
-  when: container_engine | default('docker') == 'podman'
+  when: patroni_container_engine == 'podman'
 
 # ── restart pgbouncer ───────────────────────────────────────────────
 
@@ -94,14 +94,14 @@
     project_src: "{{ patroni_dir }}"
     state: restarted
     services: [pgbouncer]
-  when: container_engine | default('docker') == 'docker'
+  when: patroni_container_engine == 'docker'
 
 - name: Restart pgbouncer (podman)
   listen: restart pgbouncer
   ansible.builtin.systemd:
     name: pgbouncer.service
     state: restarted
-  when: container_engine | default('docker') == 'podman'
+  when: patroni_container_engine == 'podman'
 
 # ── restart postgres-exporter ───────────────────────────────────────
 
@@ -134,14 +134,14 @@
     project_src: "{{ patroni_dir }}"
     state: restarted
     services: [patroni]
-  when: container_engine | default('docker') == 'docker'
+  when: patroni_container_engine == 'docker'
 
 - name: Restart walg (podman)
   listen: restart walg
   ansible.builtin.systemd:
     name: patroni.service
     state: restarted
-  when: container_engine | default('docker') == 'podman'
+  when: patroni_container_engine == 'podman'
   failed_when: false
 
 # ── restart vip-manager (only when patroni_vip_enabled + use_vip_manager) ──
@@ -153,7 +153,7 @@
     state: restarted
     services: [vip-manager]
   when:
-    - container_engine | default('docker') == 'docker'
+    - patroni_container_engine == 'docker'
     - patroni_vip_enabled
     - use_vip_manager
 
@@ -163,7 +163,7 @@
     name: vip-manager.service
     state: restarted
   when:
-    - container_engine | default('docker') == 'podman'
+    - patroni_container_engine == 'podman'
     - patroni_vip_enabled
     - use_vip_manager
 
@@ -176,7 +176,7 @@
     state: restarted
     services: [keepalived]
   when:
-    - container_engine | default('docker') == 'docker'
+    - patroni_container_engine == 'docker'
     - patroni_vip_enabled
     - not use_vip_manager
 
@@ -186,7 +186,7 @@
     name: keepalived.service
     state: restarted
   when:
-    - container_engine | default('docker') == 'podman'
+    - patroni_container_engine == 'podman'
     - patroni_vip_enabled
     - not use_vip_manager
 

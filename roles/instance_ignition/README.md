@@ -12,7 +12,7 @@ via `include_role: tasks_from:`.
 `instance_platform_preset` (parent-role var) selects a row in
 `_platform_map` (`roles/common/vars/main.yml`). The row's `ignition:`
 sub-dict supplies every flavour-varying knob; callers read it as
-`_os_preset.ignition.<field>` (published as a host fact by
+`_platform_preset.ignition.<field>` (published as a host fact by
 `common/tasks/resolve_platform_preset.yml`).
 
 | Preset | Butane variant | Spec version | Template prefix | Default user | Default channel | Channels | Metadata URL |
@@ -23,9 +23,9 @@ sub-dict supplies every flavour-varying knob; callers read it as
 | `opensuse-microos` | `opensuse` | `1.0.0` | `openSUSE-MicroOS` | `opensuse` | `tumbleweed` | `tumbleweed` | — (manual OVA) |
 
 Field access from consumers:
-- `_os_preset.ignition.butane_template` / `.butane_variant` / `.butane_spec_version`
-- `_os_preset.ignition.default_channel` / `.metadata_url` / `.ova_url`
-- `_os_preset.username` (top-level row field, also published as
+- `_platform_preset.ignition.butane_template` / `.butane_variant` / `.butane_spec_version`
+- `_platform_preset.ignition.default_channel` / `.metadata_url` / `.ova_url`
+- `_platform_preset.username` (top-level row field, also published as
   `instance_user_name` host fact)
 
 To override per-deployment, edit the map row via

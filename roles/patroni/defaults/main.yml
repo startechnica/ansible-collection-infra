@@ -36,6 +36,13 @@ patroni_vip_address: ""
 patroni_vip_mask: 32
 patroni_vip_iface: ens192
 
+# ── Container engine ──
+# Per-role selector for the container runtime. Falls back to the global
+# `container_engine` (defaults to 'podman' here when neither is set).
+# Set this directly to run patroni on a different engine than mongodb
+# / other roles on the same host group.
+patroni_container_engine: "{{ container_engine | default('podman') }}"
+
 # Docker images
 postgresql_version: 18
 patroni_image: "ghcr.io/parmincloud/containers/patroni:4.1.0-pg18"

@@ -1,5 +1,5 @@
-variant: {{ _os_preset.ignition.butane_variant }}
-version: {{ _os_preset.ignition.butane_spec_version }}
+variant: {{ _platform_preset.ignition.butane_variant }}
+version: {{ _platform_preset.ignition.butane_spec_version }}
 
 # Drop the FCOS-default serial console karg. Cloud images set
 # `console=ttyS0,115200n8` so kernel logs and a getty land on the

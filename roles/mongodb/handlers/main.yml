@@ -16,9 +16,9 @@
     daemon_reload: true
 
 # Container restart dispatch. Both handlers listen to "restart mongodb",
-# but only the one matching the current container_engine actually fires.
-# Same pattern would be needed in patroni's handlers when its podman
-# path lands.
+# but only the one matching the current mongodb_container_engine actually
+# fires. Same pattern would be needed in patroni's handlers when its
+# podman path lands.
 #
 # On Podman, services are systemd-managed Quadlets — the .container files
 # in /etc/containers/systemd/ are converted to .service units by the
@@ -31,7 +31,7 @@
     project_src: "{{ mongodb_root_dir }}"
     state: present
     recreate: always
-  when: container_engine | default('docker') == 'docker'
+  when: mongodb_container_engine == 'docker'
 
 - name: Restart mongodb (podman, systemd-managed)
   listen: restart mongodb
@@ -41,4 +41,4 @@
   loop: "{{ _mongodb_services | default(['mongodb-mongod.service', 'mongodb-configsvr.service', 'mongodb-mongos.service', 'mongodb-exporter.service']) }}"
   loop_control:
     label: "{{ item }}"
-  when: container_engine | default('docker') == 'podman'
+  when: mongodb_container_engine == 'podman'

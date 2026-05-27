@@ -12,7 +12,7 @@
 
 set -eu
 
-ENGINE={{ container_engine | default('docker') }}
+ENGINE={{ patroni_container_engine }}
 RETAIN={{ walg_retention }}
 TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 

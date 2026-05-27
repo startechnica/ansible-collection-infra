@@ -34,8 +34,8 @@
   when: not (mongodb_enabled | bool)
 
 # ── Skip if the selected container engine isn't actually installed ──
-# `container_engine` is the authoritative selector; docker_enabled and
-# podman_enabled are independent install/enable toggles. If the
+# `mongodb_container_engine` is the authoritative selector; docker_enabled
+# and podman_enabled are independent install/enable toggles. If the
 # selected engine's toggle is off, there's nothing to dispatch against
 # — bail gracefully instead of trying to start containers on a runtime
 # that isn't there. See roles/instance/defaults/main.yml truth table.
@@ -44,24 +44,24 @@
 # (sysctl, ulimits, user/group, data dir) that may exist independently
 # of the container runtime, and the engine-specific container
 # teardown branches inside uninstall.yml are themselves gated on
-# container_engine — they no-op when the runtime isn't there.
+# mongodb_container_engine — they no-op when the runtime isn't there.
 
-- name: Skip MongoDB role (selected container_engine has no installed runtime)
+- name: Skip MongoDB role (selected mongodb_container_engine has no installed runtime)
   ansible.builtin.debug:
     msg: >-
-      container_engine={{ container_engine | default('docker') }} but
-      {{ 'docker_enabled' if container_engine | default('docker') == 'docker' else 'podman_enabled' }}=false
+      mongodb_container_engine={{ mongodb_container_engine }} but
+      {{ 'docker_enabled' if mongodb_container_engine == 'docker' else 'podman_enabled' }}=false
       on this host. Skipping mongodb role.
   when:
     - mongodb_action | default('provision') != 'uninstall'
-    - (container_engine | default('docker')) == 'docker' and not (docker_enabled | default(false) | bool) or (container_engine | default('docker')) == 'podman' and not
+    - mongodb_container_engine == 'docker' and not (docker_enabled | default(false) | bool) or mongodb_container_engine == 'podman' and not
       (podman_enabled | default(false) | bool)
 
 - name: End role if selected container engine is inactive
   ansible.builtin.meta: end_role
   when:
     - mongodb_action | default('provision') != 'uninstall'
-    - (container_engine | default('docker')) == 'docker' and not (docker_enabled | default(false) | bool) or (container_engine | default('docker')) == 'podman' and not
+    - mongodb_container_engine == 'docker' and not (docker_enabled | default(false) | bool) or mongodb_container_engine == 'podman' and not
       (podman_enabled | default(false) | bool)
 
 # ── Derived variables (always available) ──
@@ -138,19 +138,19 @@
   ansible.builtin.include_tasks: thp.yml
   when: mongodb_action | default('provision') == 'provision'
 
-# Container runtime dispatch. `container_engine` is the authoritative
-# selector. The skip-all guard at the top of this file already
-# end_roles when the selected engine's install/enable toggle is off,
-# so by the time we reach the dispatch we know the engine is active.
+# Container runtime dispatch. `mongodb_container_engine` is the
+# authoritative selector. The skip-all guard at the top of this file
+# already end_roles when the selected engine's install/enable toggle is
+# off, so by the time we reach the dispatch we know the engine is active.
 #
-#   container_engine | path
-#   -----------------|------
-#   docker           | docker.yml + docker_compose.yml
-#                      (cloud-init: geerlingguy.docker;
-#                       ignition FCOS: docker-ce layered via rpm-ostree)
-#   podman           | quadlet.yml
-#                      (.container units in /etc/containers/systemd/
-#                       on Network=host; ignition only)
+#   mongodb_container_engine | path
+#   -------------------------|------
+#   docker                   | docker.yml + docker_compose.yml
+#                              (cloud-init: geerlingguy.docker;
+#                               ignition FCOS: docker-ce layered via rpm-ostree)
+#   podman                   | quadlet.yml
+#                              (.container units in /etc/containers/systemd/
+#                               on Network=host; ignition only)
 #
 # Cloud-init + podman is intentionally NOT supported — that path uses
 # geerlingguy.docker and there's no podman alternative wired up.
@@ -162,19 +162,19 @@
   ansible.builtin.include_tasks: docker.yml
   when:
     - mongodb_action | default('provision') == 'provision'
-    - container_engine == 'docker'
+    - mongodb_container_engine == 'docker'
 
 - name: Deploy and start Docker Compose (docker)
   ansible.builtin.include_tasks: docker_compose.yml
   when:
     - mongodb_action | default('provision') == 'provision'
-    - container_engine == 'docker'
+    - mongodb_container_engine == 'docker'
 
 - name: Render Podman Quadlets and start services (podman)
   ansible.builtin.include_tasks: quadlet.yml
   when:
     - mongodb_action | default('provision') == 'provision'
-    - container_engine == 'podman'
+    - mongodb_container_engine == 'podman'
 
 - name: Initialize cluster (replica sets, admin user, shards)
   ansible.builtin.include_tasks: init_cluster.yml

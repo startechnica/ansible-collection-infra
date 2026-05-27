@@ -4,6 +4,62 @@ All notable changes to this collection are documented in this file. The format
 is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this collection adheres to [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Changed
+- Wired up `mongodb_container_engine` and `patroni_container_engine` as
+  the authoritative per-role selectors. Both vars existed in defaults
+  but were never consumed — every task, var, and handler in those roles
+  read `container_engine | default('docker')` directly. Now the global
+  `container_engine` flows through one bridge line in each role's
+  `defaults/main.yml`, and all dispatch / conditions / template paths
+  read the per-role var. Set `mongodb_container_engine` /
+  `patroni_container_engine` explicitly to run one stack on a different
+  engine than other roles on the same host group.
+- Bridged `hostvars['localhost'].artifacts_dir` in mongodb via a single
+  `mongodb_artifacts_dir` var in defaults. Eliminates six scattered
+  `hostvars['localhost'].artifacts_dir` references in `passwords.yml` and
+  `manage_users.yml`; `mongodb_local_certs_dir` now derives from the
+  bridge. Override `mongodb_artifacts_dir` once to relocate every
+  mongodb artifact (creds, certs). Patroni's `patroni_credentials_dir`
+  was already bridged the same way.
+- Moved `mongodb_services` (cluster-type catalog) and `patroni_services`
+  (with/without exporter) from `set_fact` in
+  `netbox_register_services.yml` to declarative entries in each role's
+  `vars/main.yml`. Catalogs are now available from role-load time, not
+  just after the netbox-registration task runs. The firewall role's
+  `mongodb_services | default([])` lookup now returns the real catalog
+  even when NetBox registration is gated off — previously fell back to
+  `[]` and silently omitted service ports.
+- Extracted per-VM service-registration mechanics into
+  `roles/netbox_register/tasks/register_services.yml`. Mongodb /
+  patroni's `netbox_register_services.yml` shrunk to a per-host loop
+  that includes the role with the relevant catalog. IP auto-resolution
+  from `hostvars['localhost'].instances` now lives in `netbox_register`
+  (the role that owns localhost dispatch); callers can override by
+  passing `netbox_vm_service_ips` explicitly.
+- Renamed `_os_preset` → `_platform_preset` across
+  `roles/common/vars/main.yml`, `roles/common/tasks/resolve_platform_preset.yml`,
+  `roles/instance/defaults/main.yml`, and the four
+  `roles/instance_ignition/templates/*.bu.j2` Butane templates. Internal
+  rename only — `_platform_preset` is a private `_`-prefixed var
+  resolved at role-load time; no inventory-visible change.
+
+### Added
+- Post-write verification in `roles/netbox_register/tasks/register_services.yml`.
+  After the per-VM service writes complete, re-queries NetBox for the
+  VM's services and asserts every catalog entry's `name` is present.
+  Catches server-side acceptance without persistence, deletions during
+  the write loop, and silent misregistration. One extra GET per VM.
+- `.claude/settings.json` with `permissions.allow: ["Bash"]` for the
+  repo. Project-scoped: applies to anyone who clones and runs Claude
+  Code here.
+
+### Behaviour notes
+- `mongodb_container_engine` and `patroni_container_engine` default to
+  `podman` when neither they nor `container_engine` are set. Inventories
+  that explicitly set `container_engine: docker` are unaffected.
+
 ## 1.0.1 (2026-05-25)
 
 ### Breaking changes
