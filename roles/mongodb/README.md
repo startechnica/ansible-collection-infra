@@ -202,7 +202,10 @@ on each replica set (via member-cert auth), and deploys agents **without
 recreating any mongod/mongos container**:
 
 ```bash
-ansible-playbook playbooks/mongodb/pbm-setup.yml -i inventories/<inv>.yml \
+ansible-playbook playbooks/mongodb_pbm_setup.yml -i inventories/<inv>.yml \
+  -e mongodb_pbm_enabled=true -e mongodb_pbm_pitr=true
+# or by FQCN (this play lives at the playbooks/ root):
+ansible-playbook startechnica.infra.mongodb_pbm_setup -i inventories/<inv>.yml \
   -e mongodb_pbm_enabled=true -e mongodb_pbm_pitr=true
 ```
 
@@ -229,7 +232,7 @@ cluster. Design notes: [docs/design/mongodb-pbm.md](../../docs/design/mongodb-pb
 | Verify the latest backup restores cleanly | `playbooks/mongodb/verify-backup.yml` |
 | Restore from a specific mongodump | `playbooks/mongodb/restore.yml -e restore_path=...` |
 | Point-in-time recovery (oplog replay, replica-set only) | `playbooks/mongodb/pitr.yml -e backup_path=... -e target_time=...` (or `-e backup_source=s3`) |
-| Enable PBM on a running cluster (no reprovision) | `playbooks/mongodb/pbm-setup.yml -e mongodb_pbm_enabled=true` |
+| Enable PBM on a running cluster (no reprovision) | `playbooks/mongodb_pbm_setup.yml -e mongodb_pbm_enabled=true` (FQCN: `startechnica.infra.mongodb_pbm_setup`) |
 | PBM backup (sharded-safe, cluster-consistent) | `playbooks/mongodb/pbm-backup.yml` |
 | PBM restore / PITR (sharded) | `playbooks/mongodb/pbm-restore.yml -e pbm_backup=<name>` or `-e pbm_target='YYYY-MM-DDThh:mm:ss'` |
 | PBM status (agents, storage, PITR window, backups) | `playbooks/mongodb/pbm-status.yml` |
