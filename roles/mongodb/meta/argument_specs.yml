@@ -213,6 +213,13 @@ argument_specs:
       mongodb_pbm_mem_limit_mb:
         type: int
         default: 256
+      mongodb_pbm_init_backup:
+        type: bool
+        default: true
+        description: >-
+          Force a storage resync and take a base backup (if none exists) during
+          provision/setup, so storage is initialized and PITR has an anchor.
+          Idempotent — skipped when a backup already exists.
       mongodb_pbm_compression:
         type: str
         default: s2

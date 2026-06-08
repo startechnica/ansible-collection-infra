@@ -188,6 +188,11 @@ mongodb_pbm_mem_limit_mb: 256
 # PBM continuous oplog slicing (restore to any timestamp in the window) is
 # gated on the shared mongodb_backup_pitr knob — the same switch that enables
 # mongodump --oplog for replica-set backups. One PITR intent, one knob.
+# On provision/setup, force a storage resync (clears "storage is not
+# initialized") and lay down a base backup if none exists yet — PBM needs one
+# before PITR can start slicing. Idempotent: skipped when a backup already
+# exists. Set false to manage the first backup yourself.
+mongodb_pbm_init_backup: true
 # Backup compression for `pbm backup`: none|gzip|snappy|lz4|s2|zstd.
 mongodb_pbm_compression: s2
 # Optional systemd OnCalendar for scheduled `pbm backup` (empty = on-demand /

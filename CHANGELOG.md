@@ -31,6 +31,16 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   user via member-cert (`__system`) auth and deploys agents with no container
   recreation. Logical backups + logical PITR on the Community image (physical
   needs PSMDB). Design: docs/design/mongodb-pbm.md.
+- **PBM storage init + base backup on provision** — after deploying agents and
+  applying config, the role now force-resyncs PBM storage (clearing *"storage is
+  not initialized"*) and lays down a base backup when none exists, so PITR has
+  the anchor it requires to start slicing (*"no backup found. full backup is
+  required to start PITR"*). Idempotent via `mongodb_pbm_init_backup` (default
+  `true`) — re-runs never create extra backups. Also fixes PBM S3 against
+  path-style-only / strict-checksum gateways: `forcePathStyle` (new
+  `s3_force_path_style`, default `true`) avoids `HeadObject 403`, and
+  `AWS_REQUEST/RESPONSE_CHECKSUM_*=when_required` on the agents avoids
+  `XAmzContentSHA256Mismatch` from the AWS SDK v2 default checksums.
 - **MongoDB scheduled backups** — provisioning now installs a host-level
   systemd timer (`mongodb-backup.timer` → `mongodb-backup.service`) on one
   node that runs the same mongodump → prune → S3-upload flow as
