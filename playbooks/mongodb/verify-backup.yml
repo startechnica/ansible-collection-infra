@@ -47,7 +47,7 @@
             TMPDIR=/opt/mongodb/backups/_verify
             {{ mongodb_container_engine }} run --rm \
               -v "$TMPDIR:/out" \
-              -e MC_HOST_s3="{{ s3_endpoint | regex_replace('^(https?://)', '\\1' ~ s3_access_key ~ ':' ~ s3_secret_key ~ '@') }}" \
+              -e MC_HOST_s3="{{ s3_endpoint | regex_replace('^(https?://)', '\\g<1>' ~ s3_access_key ~ ':' ~ s3_secret_key ~ '@') }}" \
               {{ s3_client_image }} \
               sh -c "mc find s3/{{ s3_bucket }}/{{ s3_prefix }}/ --name '*.tar.gz' \
                      | sort -r | head -n1 \

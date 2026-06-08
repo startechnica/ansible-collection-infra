@@ -115,12 +115,13 @@ mongodb_databases: []
 # ── Backup ──
 mongodb_backup_dir: "{{ mongodb_root_dir }}/backups"
 mongodb_backup_retain_days: 7
-## @param mongodb_backup_pitr [default: true] Pass --oplog to mongodump so the
+## @param mongodb_backup_pitr [default: false] Pass --oplog to mongodump so the
 ## backup captures oplog entries for the dump window, making it usable for
-## point-in-time recovery via playbooks/mongodb/pitr.yml. Incompatible with
-## per-db/collection backups (full cluster dump only) — set false if you take
-## scoped backups.
-mongodb_backup_pitr: true
+## point-in-time recovery via playbooks/mongodb/pitr.yml. Only valid for
+## replica-set deployments dumped from a mongod — mongodump --oplog is rejected
+## against a mongos, so leave this false on sharded clusters. Also incompatible
+## with per-db/collection backups (full cluster dump only).
+mongodb_backup_pitr: false
 
 # Scheduled backup — host-level systemd timer + oneshot service, same pattern
 # as patroni's walg-cron.timer (no crond dependency; FCOS doesn't ship it).
@@ -150,8 +151,6 @@ s3_secret_key: ""
 s3_region: "us-east-1"
 # Path prefix inside the bucket (mongodb only).
 s3_prefix: "mongodb/{{ mongodb_network }}"
-# Retention for objects in S3 (days). 0 = never prune.
-s3_retain_days: "{{ mongodb_backup_retain_days }}"
 # Docker image used to run the S3 client (mc). No host install needed.
 s3_client_image: "minio/mc:latest"
 

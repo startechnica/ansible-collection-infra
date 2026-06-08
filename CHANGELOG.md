@@ -6,6 +6,14 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
 
 ## 1.0.3 (unreleased)
 
+### Breaking changes
+- **Removed `s3_retain_days`.** Remote (S3) backup retention now always follows
+  `mongodb_backup_retain_days` — the var was a needless second knob (its default
+  was already `{{ mongodb_backup_retain_days }}`). Only affects deployments that
+  set `s3_retain_days` to a value *different* from `mongodb_backup_retain_days`;
+  set `mongodb_backup_retain_days` to the desired window instead. Migration:
+  [docs/UPGRADING.md](docs/UPGRADING.md).
+
 ### Added
 - **MongoDB scheduled backups** — provisioning now installs a host-level
   systemd timer (`mongodb-backup.timer` → `mongodb-backup.service`) on one
@@ -28,14 +36,28 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   archive; `-e backup_name=mongodump_…` selects a specific one. `backup_path`
   is no longer required when `backup_source=s3`.
 - **MongoDB backup PITR + TLS support** — `mongodb_backup` gained an `oplog`
-  param (wired via `mongodb_backup_pitr`, default `true`) that passes
-  `--oplog` so dumps are usable by `playbooks/mongodb/pitr.yml`. Both
+  param (wired via `mongodb_backup_pitr`, default `false`) that passes
+  `--oplog` so dumps are usable by `playbooks/mongodb/pitr.yml`. Only valid
+  for replica-set deployments — `mongodump --oplog` is rejected against a
+  mongos, so keep it off on sharded clusters. Both
   `mongodb_backup` and `mongodb_restore` gained `tls`/`tls_host_ca_file`/
   `tls_cert_file` params; the backup/restore tasks now auto-pass TLS when
   `mongos_tls_mode` is `requireTLS`/`preferTLS`, so backups keep working if
   mongos is hardened to `requireTLS`.
 
 ### Fixed
+- **Backups passed `--tls` for `preferTLS`, breaking on older mongodump** — the
+  backup/restore TLS auto-gate fired for both `requireTLS` and `preferTLS`, but
+  the dump connects over loopback inside the mongos netns where `preferTLS`
+  accepts plaintext. Passing `--tls` there is unnecessary and fails outright on
+  mongo images whose `mongodump` predates the `--tls` flag (*"unknown option
+  tls"*). TLS is now forced only for `requireTLS`.
+- **S3 credential injection broke on keys starting with a digit** — the
+  `MC_HOST_s3` URL was built with `regex_replace('^(https?://)', '\1' ~
+  s3_access_key ~ …)`; when `s3_access_key` began with a digit, `\1` + digit
+  parsed as backreference group 1N (e.g. `\19`), failing with *"invalid group
+  reference"*. Switched to the unambiguous `\g<1>` group syntax across all
+  backup/verify/PITR S3 templates. (Pre-existing since 1.0.2.)
 - **MongoDB day-2 backup playbooks were docker-only** — `pitr.yml` and
   `verify-backup.yml` hardcoded `docker`/`community.docker.*` for their
   disposable scratch containers, so they failed on podman hosts (the default

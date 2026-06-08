@@ -145,7 +145,7 @@ X.509 client auth users (auto-created):
    The object is then re-read and **SHA-256 compared end-to-end** against the
    local archive; only on a match is the local dump removed (pure-S3 — the
    bucket is the only copy). A mismatch fails the run and keeps the local copy.
-4. Remote retention: S3 objects older than `{{ s3_retain_days }}` pruned.
+4. Remote retention: S3 objects older than `{{ mongodb_backup_retain_days }}` pruned.
 
 `mongodb_backup_mode` selects the destination — `local` (node only, kept under
 `mongodb_backup_retain_days`) or `s3` (dump locally, upload, then delete the
@@ -205,7 +205,7 @@ Inputs are validated by [meta/argument_specs.yml](meta/argument_specs.yml). High
 | Admin | `mongodb_admin_user`, `mongodb_admin_password` (auto-gen if empty) |
 | App DBs | `mongodb_databases` (list of {name, users[{name, password, roles[]}]}) |
 | Backup local | `mongodb_backup_dir`, `mongodb_backup_retain_days`, `mongodb_backup_pitr`, `mongodb_backup_enabled`, `mongodb_backup_schedule`, `mongodb_backup_mode` |
-| Backup S3 | `s3_bucket`, `s3_endpoint`, `s3_access_key`, `s3_secret_key`, `s3_prefix`, `s3_retain_days` |
+| Backup S3 | `s3_bucket`, `s3_endpoint`, `s3_access_key`, `s3_secret_key`, `s3_prefix` |
 | Monitoring | `mongodb_exporter_enabled`, `mongodb_exporter_port` |
 | Uninstall | `mongodb_destroy_prune`, `mongodb_skip_confirm` |
 

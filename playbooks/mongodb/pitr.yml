@@ -8,8 +8,9 @@
 #
 # Prerequisites:
 #   - The base backup must have been taken with `--oplog` (mongodb_backup_pitr:
-#     true, the default), so it contains oplog.bson — or you have a separate
-#     oplog.bson.
+#     true), so it contains oplog.bson — or you have a separate oplog.bson.
+#     Note: --oplog backups only work on replica-set deployments, not sharded
+#     clusters dumped via mongos.
 #   - The oplog window between the backup and `target_time` must still be
 #     available in the live cluster's local.oplog.rs.
 #
@@ -90,7 +91,7 @@
             TMPDIR=/opt/mongodb/backups/_pitr
             NAME="{{ backup_name | default('') }}"
             MC="{{ mongodb_container_engine }} run --rm -v $TMPDIR:/out \
-              -e MC_HOST_s3={{ s3_endpoint | regex_replace('^(https?://)', '\\1' ~ s3_access_key ~ ':' ~ s3_secret_key ~ '@') }} \
+              -e MC_HOST_s3={{ s3_endpoint | regex_replace('^(https?://)', '\\g<1>' ~ s3_access_key ~ ':' ~ s3_secret_key ~ '@') }} \
               {{ s3_client_image }}"
             if [ -n "$NAME" ]; then
               $MC mc cp "s3/{{ s3_bucket }}/{{ s3_prefix }}/${NAME}.tar.gz" /out/

@@ -30,7 +30,7 @@ chown {{ mongodb_uid }}:{{ mongodb_gid }} "$BACKUP_DIR"
 # Optional flags assembled as words so empty values vanish under word-splitting.
 TLS_MOUNT=""
 TLS_ARGS=""
-{% if mongos_tls_mode in ['requireTLS', 'preferTLS'] %}
+{% if mongos_tls_mode == 'requireTLS' %}
 TLS_MOUNT="-v {{ mongodb_tls_dir }}/ca.pem:/tls/ca.pem:ro"
 TLS_ARGS="--tls --tlsCAFile /tls/ca.pem"
 {% endif %}
@@ -67,7 +67,7 @@ tar -czf "$ARCHIVE" -C "$BACKUP_DIR" "$NAME"
 
 $ENGINE run --rm \
   -v "$ARCHIVE:/backup/${NAME}.tar.gz:ro" \
-  -e MC_HOST_s3="{{ s3_endpoint | regex_replace('^(https?://)', '\\1' ~ s3_access_key ~ ':' ~ s3_secret_key ~ '@') }}" \
+  -e MC_HOST_s3="{{ s3_endpoint | regex_replace('^(https?://)', '\\g<1>' ~ s3_access_key ~ ':' ~ s3_secret_key ~ '@') }}" \
   {{ s3_client_image }} \
   cp "/backup/${NAME}.tar.gz" "s3/{{ s3_bucket }}/{{ s3_prefix }}/${NAME}.tar.gz"
 
@@ -76,7 +76,7 @@ $ENGINE run --rm \
 # corrupted transfer, this proves the stored bytes equal the dumped bytes.
 LOCAL_SHA="$(sha256sum "$ARCHIVE" | awk '{print $1}')"
 REMOTE_SHA="$($ENGINE run --rm \
-  -e MC_HOST_s3="{{ s3_endpoint | regex_replace('^(https?://)', '\\1' ~ s3_access_key ~ ':' ~ s3_secret_key ~ '@') }}" \
+  -e MC_HOST_s3="{{ s3_endpoint | regex_replace('^(https?://)', '\\g<1>' ~ s3_access_key ~ ':' ~ s3_secret_key ~ '@') }}" \
   {{ s3_client_image }} \
   cat "s3/{{ s3_bucket }}/{{ s3_prefix }}/${NAME}.tar.gz" | sha256sum | awk '{print $1}')"
 if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
@@ -86,11 +86,11 @@ if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
 fi
 echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Integrity verified: ${NAME}.tar.gz sha256=$LOCAL_SHA"
 
-{% if (s3_retain_days | int) > 0 %}
+{% if (mongodb_backup_retain_days | int) > 0 %}
 $ENGINE run --rm \
-  -e MC_HOST_s3="{{ s3_endpoint | regex_replace('^(https?://)', '\\1' ~ s3_access_key ~ ':' ~ s3_secret_key ~ '@') }}" \
+  -e MC_HOST_s3="{{ s3_endpoint | regex_replace('^(https?://)', '\\g<1>' ~ s3_access_key ~ ':' ~ s3_secret_key ~ '@') }}" \
   {{ s3_client_image }} \
-  rm --recursive --force --older-than "{{ s3_retain_days }}d" \
+  rm --recursive --force --older-than "{{ mongodb_backup_retain_days }}d" \
   "s3/{{ s3_bucket }}/{{ s3_prefix }}/"
 {% endif %}
 

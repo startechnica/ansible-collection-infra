@@ -10,7 +10,7 @@
     gid: "{{ mongodb_gid }}"
     retain_days: "{{ mongodb_backup_retain_days }}"
     oplog: "{{ mongodb_backup_pitr }}"
-    tls: "{{ mongos_tls_mode in ['requireTLS', 'preferTLS'] }}"
+    tls: "{{ mongos_tls_mode == 'requireTLS' }}"
     tls_host_ca_file: "{{ mongodb_tls_dir }}/ca.pem"
   register: _backup
   run_once: true

@@ -246,9 +246,6 @@ argument_specs:
       s3_prefix:
         type: str
         description: Path prefix inside the bucket. Defaults to `mongodb/<mongodb_network>`.
-      s3_retain_days:
-        type: str
-        description: Retention for S3 objects. Defaults to `mongodb_backup_retain_days`. Set `0` to disable prune.
       s3_client_image:
         type: str
         default: "minio/mc:latest"

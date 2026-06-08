@@ -12,7 +12,7 @@ tar -czf "$ARCHIVE" -C "{{ mongodb_backup_dir }}" "{{ _backup.backup_name }}"
 # Run mc in a throwaway container. Mount the archive read-only; pass creds via env.
 docker run --rm \
   -v "$ARCHIVE:/backup/${OBJECT_NAME}:ro" \
-  -e MC_HOST_s3="{{ s3_endpoint | regex_replace('^(https?://)', '\\1' ~ s3_access_key ~ ':' ~ s3_secret_key ~ '@') }}" \
+  -e MC_HOST_s3="{{ s3_endpoint | regex_replace('^(https?://)', '\\g<1>' ~ s3_access_key ~ ':' ~ s3_secret_key ~ '@') }}" \
   {{ s3_client_image }} \
   cp "/backup/${OBJECT_NAME}" "s3/{{ s3_bucket }}/{{ s3_prefix }}/${OBJECT_NAME}"
 
@@ -25,7 +25,7 @@ docker run --rm \
 # so there's no temp file; works for both single- and multipart objects.
 LOCAL_SHA="$(sha256sum "$ARCHIVE" | awk '{print $1}')"
 REMOTE_SHA="$(docker run --rm \
-  -e MC_HOST_s3="{{ s3_endpoint | regex_replace('^(https?://)', '\\1' ~ s3_access_key ~ ':' ~ s3_secret_key ~ '@') }}" \
+  -e MC_HOST_s3="{{ s3_endpoint | regex_replace('^(https?://)', '\\g<1>' ~ s3_access_key ~ ':' ~ s3_secret_key ~ '@') }}" \
   {{ s3_client_image }} \
   cat "s3/{{ s3_bucket }}/{{ s3_prefix }}/${OBJECT_NAME}" | sha256sum | awk '{print $1}')"
 if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
@@ -36,12 +36,12 @@ if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
 fi
 echo "Integrity verified: ${OBJECT_NAME} sha256=$LOCAL_SHA"
 
-{% if (s3_retain_days | int) > 0 %}
+{% if (mongodb_backup_retain_days | int) > 0 %}
 # Prune remote objects older than retention window
 docker run --rm \
-  -e MC_HOST_s3="{{ s3_endpoint | regex_replace('^(https?://)', '\\1' ~ s3_access_key ~ ':' ~ s3_secret_key ~ '@') }}" \
+  -e MC_HOST_s3="{{ s3_endpoint | regex_replace('^(https?://)', '\\g<1>' ~ s3_access_key ~ ':' ~ s3_secret_key ~ '@') }}" \
   {{ s3_client_image }} \
-  rm --recursive --force --older-than "{{ s3_retain_days }}d" \
+  rm --recursive --force --older-than "{{ mongodb_backup_retain_days }}d" \
   "s3/{{ s3_bucket }}/{{ s3_prefix }}/"
 {% endif %}
 
