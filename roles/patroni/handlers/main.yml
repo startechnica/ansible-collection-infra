@@ -103,6 +103,23 @@
     state: restarted
   when: container_engine | default('docker') == 'podman'
 
+# ── restart postgres-exporter ───────────────────────────────────────
+
+- name: Restart postgres-exporter (docker)
+  listen: restart postgres-exporter
+  community.docker.docker_compose_v2:
+    project_src: "{{ patroni_dir }}"
+    state: restarted
+    services: [postgres-exporter]
+  when: container_engine | default('docker') == 'docker'
+
+- name: Restart postgres-exporter (podman)
+  listen: restart postgres-exporter
+  ansible.builtin.systemd:
+    name: postgres-exporter.service
+    state: restarted
+  when: container_engine | default('docker') == 'podman'
+
 # ── restart walg (env file change) ──────────────────────────────────
 # Only the patroni container loads walg.env via EnvironmentFile (its
 # archive_command runs wal-g inside the container). walg-init has no
@@ -176,11 +193,14 @@
 # ── shared host-level handlers (engine-agnostic) ────────────────────
 
 - name: Reload systemd
+  listen: reload systemd
   ansible.builtin.systemd:
     daemon_reload: true
 
 - name: Reload sysctl
+  listen: reload sysctl
   ansible.builtin.command: sysctl --system
 
 - name: Reload udev
+  listen: reload udev
   ansible.builtin.shell: udevadm control --reload-rules && udevadm trigger

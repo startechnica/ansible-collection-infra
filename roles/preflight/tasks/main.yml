@@ -28,7 +28,7 @@
   when: instance_init_type | default('ignition') == 'ignition'
   tags: [preflight, quiet]
 
-- name: Set SELinux to permissive (RedHat family)
+- name: Configure SELinux mode (RedHat family)
   ansible.builtin.include_tasks: selinux_permissive.yml
   when: ansible_facts['os_family'] == 'RedHat'
   tags: [preflight, selinux]
