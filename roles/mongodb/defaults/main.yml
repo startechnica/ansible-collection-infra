@@ -194,7 +194,10 @@ mongodb_pbm_mem_limit_mb: 256
 # exists. Set false to manage the first backup yourself.
 mongodb_pbm_init_backup: true
 # Backup compression for `pbm backup`: none|gzip|snappy|lz4|s2|zstd.
-mongodb_pbm_compression: s2
+mongodb_pbm_compression: zstd
+# Optional compression level (codec-specific, e.g. zstd 1–22, gzip 1–9). Empty
+# uses the codec's default. Applies to both base backups and PITR oplog slices.
+mongodb_pbm_compression_level: ""
 # Optional systemd OnCalendar for scheduled `pbm backup` (empty = on-demand /
 # PITR-only). Same timer pattern as mongodb_backup_schedule.
 mongodb_pbm_schedule: ""

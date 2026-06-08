@@ -26,7 +26,10 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   standalone containers on docker). Day-2: `mongodb_action: pbm-setup|pbm-backup|pbm-restore|pbm-status`,
   `playbooks/mongodb_pbm_setup.yml` (FQCN-addressable) +
   `playbooks/mongodb/pbm-{backup,restore,status}.yml`; optional
-  scheduled backup via `mongodb_pbm_schedule`. `pbm-setup` retrofits PBM onto
+  scheduled backup via `mongodb_pbm_schedule`; backup compression is tunable
+  via `mongodb_pbm_compression` (default `zstd`) + optional
+  `mongodb_pbm_compression_level` (applied to base backups and PITR slices).
+  `pbm-setup` retrofits PBM onto
   an already-running cluster without reprovisioning — it creates the per-RS PBM
   user via member-cert (`__system`) auth and deploys agents with no container
   recreation. Logical backups + logical PITR on the Community image (physical

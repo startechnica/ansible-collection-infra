@@ -3,15 +3,18 @@
 # snapshot to the configured S3 store. `--wait` blocks until it completes.
 # Invoked via `mongodb_action: pbm-backup` or playbooks/mongodb/pbm-backup.yml.
 
-- name: Resolve PBM control container
+- name: Resolve PBM control container + compression args
   ansible.builtin.set_fact:
     _pbm_control: "{{ 'mongodb-pbm-config' if mongodb_cluster_type == 'sharded' else 'mongodb-pbm-shard' }}"
+    _pbm_compression_args: >-
+      --compression={{ mongodb_pbm_compression }}{{ (' --compression-level=' ~ mongodb_pbm_compression_level)
+      if mongodb_pbm_compression_level | string | length > 0 else '' }}
   run_once: true
 
 - name: Run PBM backup (waits for completion)
   ansible.builtin.command: >
     {{ mongodb_container_engine }} exec -e PBM_MONGODB_URI={{ _pbm_control_uri }}
-    {{ _pbm_control }} pbm backup --compression={{ mongodb_pbm_compression }} --wait
+    {{ _pbm_control }} pbm backup {{ _pbm_compression_args }} --wait
   register: _pbm_backup
   changed_when: true
   run_once: true

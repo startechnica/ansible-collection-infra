@@ -222,8 +222,14 @@ argument_specs:
           Idempotent — skipped when a backup already exists.
       mongodb_pbm_compression:
         type: str
-        default: s2
+        default: zstd
         choices: [none, gzip, snappy, lz4, s2, zstd]
+      mongodb_pbm_compression_level:
+        type: str
+        default: ""
+        description: >-
+          Optional codec-specific compression level (e.g. zstd 1–22, gzip 1–9).
+          Empty uses the codec default. Applies to base backups and PITR slices.
       mongodb_pbm_schedule:
         type: str
         default: ""

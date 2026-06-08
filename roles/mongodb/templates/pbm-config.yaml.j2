@@ -17,3 +17,6 @@ storage:
 pitr:
   enabled: {{ 'true' if mongodb_backup_pitr | bool else 'false' }}
   compression: {{ mongodb_pbm_compression }}
+{% if mongodb_pbm_compression_level | string | length > 0 %}
+  compressionLevel: {{ mongodb_pbm_compression_level }}
+{% endif %}
