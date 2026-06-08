@@ -62,6 +62,23 @@ mongodb_services: >-
   {{ _mongodb_services_sharded if mongodb_cluster_type == 'sharded'
      else _mongodb_services_replicaset }}
 
+# Connection string for PBM CLI control commands (pbm config/status/backup/
+# restore). Unlike the per-agent URI (directConnection, pinned to one node),
+# the CLI must reach the replica set that holds PBM's control data — the config
+# RS on sharded clusters, the shard RS on replica sets — so it uses replicaSet
+# discovery. directConnection is intentionally absent: with it, enumerating the
+# RS errors "a direct connection cannot be made if multiple hosts are
+# specified". The `$external` is literal (these are passed to `<engine> exec -e`
+# without a shell, so no $-expansion).
+_pbm_control_uri: >-
+  {{ 'mongodb://localhost:'
+     ~ (mongodb_configsvr_exec_port if mongodb_cluster_type == 'sharded' else mongodb_mongod_exec_port)
+     ~ '/?replicaSet='
+     ~ (mongodb_config_replset if mongodb_cluster_type == 'sharded' else mongodb_shard_replset)
+     ~ '&authMechanism=MONGODB-X509&authSource=$external&tls=true'
+     ~ '&tlsCertificateKeyFile=/etc/mongo/ssl/pbm-agent.pem'
+     ~ '&tlsCAFile=/etc/mongo/ssl/ca.pem' }}
+
 # Shared mongosh script that (idempotently) creates the custom `pbmAnyAction`
 # role and the $external PBM user with the role set PBM needs. Used by both the
 # cold-init path (init_cluster.yml, transitionToAuth window) and the retrofit

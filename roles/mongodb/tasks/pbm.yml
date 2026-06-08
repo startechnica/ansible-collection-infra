@@ -106,8 +106,8 @@
 # write goes through the control node's PBM collections.
 - name: Apply PBM storage + PITR config (cluster-wide)
   ansible.builtin.command: >
-    {{ mongodb_container_engine }} exec {{ _pbm_control }}
-    pbm config --file /etc/pbm/pbm-config.yaml
+    {{ mongodb_container_engine }} exec -e PBM_MONGODB_URI={{ _pbm_control_uri }}
+    {{ _pbm_control }} pbm config --file /etc/pbm/pbm-config.yaml
   register: _pbm_config_apply
   changed_when: "'OK' in (_pbm_config_apply.stdout | default('')) or _pbm_config_apply.rc == 0"
   retries: 12
@@ -116,7 +116,9 @@
   run_once: true
 
 - name: Wait for PBM agents to register
-  ansible.builtin.command: "{{ mongodb_container_engine }} exec {{ _pbm_control }} pbm status"
+  ansible.builtin.command: >
+    {{ mongodb_container_engine }} exec -e PBM_MONGODB_URI={{ _pbm_control_uri }}
+    {{ _pbm_control }} pbm status
   register: _pbm_status
   changed_when: false
   retries: 12

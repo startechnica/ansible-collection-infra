@@ -10,8 +10,8 @@
 
 - name: Run PBM backup (waits for completion)
   ansible.builtin.command: >
-    {{ mongodb_container_engine }} exec {{ _pbm_control }}
-    pbm backup --compression={{ mongodb_pbm_compression }} --wait
+    {{ mongodb_container_engine }} exec -e PBM_MONGODB_URI={{ _pbm_control_uri }}
+    {{ _pbm_control }} pbm backup --compression={{ mongodb_pbm_compression }} --wait
   register: _pbm_backup
   changed_when: true
   run_once: true

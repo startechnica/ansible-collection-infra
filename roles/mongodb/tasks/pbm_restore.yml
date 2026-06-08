@@ -22,8 +22,8 @@
 
 - name: Run PBM restore (waits for completion)
   ansible.builtin.command: >
-    {{ mongodb_container_engine }} exec {{ _pbm_control }}
-    pbm restore {{ ('--time=' ~ pbm_target) if (pbm_target is defined and pbm_target | length > 0) else pbm_backup }} --wait
+    {{ mongodb_container_engine }} exec -e PBM_MONGODB_URI={{ _pbm_control_uri }}
+    {{ _pbm_control }} pbm restore {{ ('--time=' ~ pbm_target) if (pbm_target is defined and pbm_target | length > 0) else pbm_backup }} --wait
   register: _pbm_restore
   changed_when: true
   run_once: true
