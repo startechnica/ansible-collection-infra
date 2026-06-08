@@ -6,7 +6,35 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+### Docs
+- Documented the **MongoDB 8 ↔ Linux kernel ≥ 6.19 incompatibility** (vendored
+  TCMalloc/rseq bug, unfixed upstream as of 2026-06). Added a gotcha with the
+  FCOS-build/kernel table to the `mongodb` role README and a condensed entry to
+  the top-level README troubleshooting section, cross-referencing the
+  `preflight` kernel assertion and the `mongodb_skip_kernel_check` bypass.
+
+### Added
+- `netbox_register_create` (default `true`) — the `netbox_register` role now
+  auto-creates the **platform, device role, and cluster** a VM references when
+  the slug/name doesn't already exist in NetBox, instead of failing
+  registration. Look-up-then-create only: existing objects are never modified.
+  Two supporting vars: `netbox_cluster_type` (default `VMware vSphere`, used
+  when a cluster must be created — NetBox requires a type) and
+  `netbox_register_default_role_color` (default `9e9e9e`). Site and tenant are
+  intentionally NOT auto-created (org-authoritative). Set
+  `netbox_register_create: false` to require all referents to pre-exist.
+
 ### Changed
+- `netbox_device_platform` now falls back to `instance_platform_preset` when
+  left empty, so a VM's registered NetBox platform matches the OS preset it was
+  actually built from without restating the slug. Resolution order:
+  per-VM `item.platform` → `netbox_device_platform` → `instance_platform_preset`.
+  **Potentially breaking:** the role default changed from a hardcoded
+  `ubuntu-24-04-lts` to `""`. Deployments that relied on the old default (no
+  explicit `netbox_device_platform` set) will now register with
+  `instance_platform_preset` (default `fedora-coreos`) instead of
+  `ubuntu-24-04-lts`. Set `netbox_device_platform: ubuntu-24-04-lts` explicitly
+  to preserve the previous value.
 - Wired up `mongodb_container_engine` and `patroni_container_engine` as
   the authoritative per-role selectors. Both vars existed in defaults
   but were never consumed — every task, var, and handler in those roles

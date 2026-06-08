@@ -1,0 +1,122 @@
+---
+# Ensure the NetBox objects a VM record references (platform, device role,
+# cluster) exist before we register the VM. The netbox.netbox modules resolve
+# these by slug/name and FAIL if the referent is missing — they never create
+# related objects themselves. Gated by `netbox_register_create` (default true).
+#
+# Strategy: look the object up first and create ONLY when absent (count == 0).
+# This is deliberately non-destructive — an object that already exists under a
+# different name/color is left untouched, so we never clobber a hand-curated
+# NetBox. Mirrors the VRF-resolution pattern already used in register_vm.yml.
+
+# ── Platform ─────────────────────────────────────────────────────────────────
+- name: "Look up platform '{{ _nb_platform }}'"
+  ansible.builtin.uri:
+    url: "{{ netbox_connect.url }}/api/dcim/platforms/?slug={{ _nb_platform | urlencode }}"
+    method: GET
+    headers: "{{ _netbox_api_headers }}"
+    validate_certs: "{{ netbox_connect.validate_certs }}"
+    status_code: [200]
+  delegate_to: localhost
+  register: _nb_platform_lookup
+  when: _nb_platform | length > 0
+
+- name: "Create missing platform '{{ _nb_platform }}'"
+  netbox.netbox.netbox_platform:
+    netbox_url: "{{ netbox_connect.url }}"
+    netbox_token: "{{ netbox_connect.token }}"
+    validate_certs: "{{ netbox_connect.validate_certs }}"
+    state: present
+    data:
+      name: "{{ _nb_platform }}"
+      slug: "{{ _nb_platform }}"
+  delegate_to: localhost
+  when:
+    - _nb_platform | length > 0
+    - (_nb_platform_lookup.json.count | default(0) | int) == 0
+
+# ── Device role ──────────────────────────────────────────────────────────────
+- name: "Look up device role '{{ _nb_role }}'"
+  ansible.builtin.uri:
+    url: "{{ netbox_connect.url }}/api/dcim/device-roles/?slug={{ _nb_role | urlencode }}"
+    method: GET
+    headers: "{{ _netbox_api_headers }}"
+    validate_certs: "{{ netbox_connect.validate_certs }}"
+    status_code: [200]
+  delegate_to: localhost
+  register: _nb_role_lookup
+  when: _nb_role | length > 0
+
+- name: "Create missing device role '{{ _nb_role }}'"
+  netbox.netbox.netbox_device_role:
+    netbox_url: "{{ netbox_connect.url }}"
+    netbox_token: "{{ netbox_connect.token }}"
+    validate_certs: "{{ netbox_connect.validate_certs }}"
+    state: present
+    data:
+      name: "{{ _nb_role }}"
+      slug: "{{ _nb_role }}"
+      color: "{{ netbox_register_default_role_color }}"
+      vm_role: true
+  delegate_to: localhost
+  when:
+    - _nb_role | length > 0
+    - (_nb_role_lookup.json.count | default(0) | int) == 0
+
+# ── Cluster (+ its required cluster type) ────────────────────────────────────
+# A cluster cannot be created without a cluster type, so ensure the type first.
+- name: "Look up cluster type '{{ netbox_cluster_type }}'"
+  ansible.builtin.uri:
+    url: "{{ netbox_connect.url }}/api/virtualization/cluster-types/?slug={{ _nb_cluster_type_slug | urlencode }}"
+    method: GET
+    headers: "{{ _netbox_api_headers }}"
+    validate_certs: "{{ netbox_connect.validate_certs }}"
+    status_code: [200]
+  delegate_to: localhost
+  register: _nb_cluster_type_lookup
+  when:
+    - _nb_cluster | length > 0
+    - netbox_cluster_type | length > 0
+
+- name: "Create missing cluster type '{{ netbox_cluster_type }}'"
+  netbox.netbox.netbox_cluster_type:
+    netbox_url: "{{ netbox_connect.url }}"
+    netbox_token: "{{ netbox_connect.token }}"
+    validate_certs: "{{ netbox_connect.validate_certs }}"
+    state: present
+    data:
+      name: "{{ netbox_cluster_type }}"
+      slug: "{{ _nb_cluster_type_slug }}"
+  delegate_to: localhost
+  when:
+    - _nb_cluster | length > 0
+    - netbox_cluster_type | length > 0
+    - (_nb_cluster_type_lookup.json.count | default(0) | int) == 0
+
+- name: "Look up cluster '{{ _nb_cluster }}'"
+  ansible.builtin.uri:
+    url: "{{ netbox_connect.url }}/api/virtualization/clusters/?name={{ _nb_cluster | urlencode }}"
+    method: GET
+    headers: "{{ _netbox_api_headers }}"
+    validate_certs: "{{ netbox_connect.validate_certs }}"
+    status_code: [200]
+  delegate_to: localhost
+  register: _nb_cluster_lookup
+  when:
+    - _nb_cluster | length > 0
+    - netbox_cluster_type | length > 0
+
+- name: "Create missing cluster '{{ _nb_cluster }}'"
+  netbox.netbox.netbox_cluster:
+    netbox_url: "{{ netbox_connect.url }}"
+    netbox_token: "{{ netbox_connect.token }}"
+    validate_certs: "{{ netbox_connect.validate_certs }}"
+    state: present
+    data:
+      name: "{{ _nb_cluster }}"
+      cluster_type: "{{ netbox_cluster_type }}"
+  delegate_to: localhost
+  when:
+    - _nb_cluster | length > 0
+    - netbox_cluster_type | length > 0
+    - (_nb_cluster_lookup.json.count | default(0) | int) == 0

@@ -94,9 +94,25 @@ keys you don't re-declare on override, so each field is a top-level variable.
 | `netbox_device_name` | `""` | NetBox DCIM device name for the underlying ESXi host. Falls back to `vsphere_esxi_hostname`. |
 | `netbox_device_vm_status` | `active` | VM status: `active`, `staged`, `planned`, `decommissioning`, `offline` |
 | `netbox_device_interface_name` | `ens192` | Primary network interface name |
-| `netbox_device_platform` | `ubuntu-24-04-lts` | Platform slug (must exist in NetBox) |
-| `netbox_device_role` | `""` | VM role slug (must exist in NetBox) |
-| `netbox_cluster_name` | `""` | NetBox Cluster name. Resolution: `item.cluster_name` → `netbox_cluster_name` → `instance_cluster_name` |
+| `netbox_device_platform` | `""` | Platform slug; empty → falls back to `instance_platform_preset`. Auto-created if missing (see `netbox_register_create`) |
+| `netbox_device_role` | `""` | VM role slug. Auto-created if missing (see `netbox_register_create`) |
+| `netbox_cluster_name` | `""` | NetBox Cluster name. Resolution: `item.cluster_name` → `netbox_cluster_name` → `instance_cluster_name`. Auto-created if missing |
+
+### Auto-creating referenced objects
+
+By default the role **creates the platform, device role, and cluster it
+references** when they don't already exist in NetBox, so registration doesn't
+fail on an unknown slug. Look-up-then-create only — an object that already
+exists is never modified.
+
+| Variable | Default | Description |
+|---|---|---|
+| `netbox_register_create` | `true` | Master toggle. Set `false` to require platform/role/cluster to pre-exist (NetBox authoritative). |
+| `netbox_cluster_type` | `VMware vSphere` | Cluster type used when auto-creating a cluster (NetBox requires one); slug derived from the name. |
+| `netbox_register_default_role_color` | `9e9e9e` | Hex color (no `#`) for an auto-created device role. |
+
+> Site and tenant are **not** auto-created — those are usually org-authoritative,
+> so a typo'd slug should fail loudly rather than spawn a junk record.
 
 ### Organization (`netbox_site_slug` / `netbox_tenant_slug`)
 
@@ -236,7 +252,7 @@ instance_disks:
   type: thin
 
 netbox_device_role: "database"
-netbox_device_platform: "ubuntu-24-04-lts"
+netbox_device_platform: "ubuntu-24-04-lts"   # or leave empty to inherit instance_platform_preset
 
 netbox_site_slug: "dc-jakarta-1"
 netbox_tenant_slug: "engineering"

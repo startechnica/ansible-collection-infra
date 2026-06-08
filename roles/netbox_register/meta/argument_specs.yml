@@ -74,7 +74,10 @@ argument_specs:
         default: ens192
       netbox_device_platform:
         type: str
-        default: ubuntu-24-04-lts
+        default: ""
+        description: >-
+          Platform slug assigned to the VM in NetBox. When empty, falls back to
+          instance_platform_preset (the OS preset the VM was built from).
 
       netbox_cluster_name:
         type: str
@@ -84,6 +87,27 @@ argument_specs:
           netbox_device_* set because the Cluster name is often independent of
           the underlying ESXi device name. Resolution chain (most-specific
           wins): item.cluster_name -> netbox_cluster_name -> instance_cluster_name.
+
+      netbox_register_create:
+        type: bool
+        default: true
+        description: >-
+          Auto-create referenced NetBox objects (platform, device role, cluster)
+          when missing, instead of failing VM registration. Look-up-then-create
+          only; existing objects are never modified. False = referents must
+          pre-exist.
+      netbox_cluster_type:
+        type: str
+        default: "VMware vSphere"
+        description: >-
+          Cluster type used when auto-creating a missing cluster (NetBox
+          requires a type). Slug is derived from this name.
+      netbox_register_default_role_color:
+        type: str
+        default: "9e9e9e"
+        description: >-
+          Hex color (no #) for a device role auto-created by
+          netbox_register_create.
 
       netbox_site_slug:
         type: str

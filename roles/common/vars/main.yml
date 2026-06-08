@@ -557,6 +557,7 @@ _resolved_ignition_channel: >-
 # at the consumer:
 #   item.netbox_platform                           # explicit per-VM
 #   netbox_device_platform                         # role-level default
+#   instance_platform_preset                       # OS preset (when above empty)
 #   instance_netbox_platform_map[guest_id]         # user-override map
 #   _vsphere_guest_id_platform_map[guest_id]       # canonical (this file)
 #   ''                                             # unmapped → caller decides

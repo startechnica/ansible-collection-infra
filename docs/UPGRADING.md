@@ -5,6 +5,29 @@ caveat: **pre-1.0 minor bumps may contain breaking changes**. Read the release
 notes in [../CHANGELOG.md](../CHANGELOG.md) before upgrading; this file
 documents the migration steps for breaking changes.
 
+## Unreleased
+
+### Potentially breaking — `netbox_device_platform` default is now empty
+
+The role default for `netbox_device_platform` changed from a hardcoded
+`ubuntu-24-04-lts` to `""`. When empty, it now falls back to
+`instance_platform_preset` (the OS preset the VM was built from), so the
+registered NetBox platform tracks the deployed OS automatically.
+
+**What you'll see:** VMs registered without an explicit `netbox_device_platform`
+now get `instance_platform_preset` (default `fedora-coreos`) instead of
+`ubuntu-24-04-lts`.
+
+**Action:** if you depended on the old `ubuntu-24-04-lts` default, set it
+explicitly in inventory:
+
+```yaml
+netbox_device_platform: ubuntu-24-04-lts
+```
+
+Resolution order (most specific wins; empty falls through): per-VM
+`item.platform` → `netbox_device_platform` → `instance_platform_preset`.
+
 ## 0.1.x → 0.2.0
 
 ### Breaking — path and role renames

@@ -65,11 +65,14 @@ netbox_device_vm_status: active
 ##
 netbox_device_interface_name: "ens192"
 
-## @param netbox_device_platform [default: ubuntu-24-04-lts] Platform slug to assign to the VM.
+## @param netbox_device_platform [default: ""] Platform slug to assign to the VM.
 ## Must match an existing platform in NetBox. Used to identify the OS/distribution.
-## e.g. "ubuntu-24.04", "centos-9", "windows-2022"
+## e.g. "ubuntu-24-04-lts", "centos-9", "windows-2022".
+## When left empty it falls back to `instance_platform_preset` (the OS preset the
+## VM was actually built from), so you only set this to override the registered
+## platform independently of the deployed OS.
 ##
-netbox_device_platform: "ubuntu-24-04-lts"
+netbox_device_platform: ""
 
 ## @section netbox_cluster_name
 ## @description NetBox Cluster identity. The Cluster the VMs are registered into.
@@ -106,6 +109,27 @@ netbox_tenant_slug: ""
 ## e.g. "production", "management"
 ##
 netbox_vrf: ""
+
+## @param netbox_register_create [default: true] Auto-create referenced NetBox
+## objects (platform, device role, cluster) when the slug/name doesn't already
+## exist, instead of failing VM registration. Look-up-then-create only — existing
+## objects are never modified. Set false to require all referents to pre-exist
+## (NetBox as the authoritative source of truth).
+##
+netbox_register_create: true
+
+## @param netbox_cluster_type [default: VMware vSphere] Cluster type used when
+## auto-creating a missing cluster (a NetBox cluster requires a type). The slug
+## is derived from this name. Only consulted when a cluster name resolves and
+## `netbox_register_create` is true.
+##
+netbox_cluster_type: "VMware vSphere"
+
+## @param netbox_register_default_role_color [default: 9e9e9e] Hex color (no #)
+## assigned to a device role auto-created by `netbox_register_create`. Grey by
+## default; NetBox requires a color on device roles.
+##
+netbox_register_default_role_color: "9e9e9e"
 
 ## @param instance_tags [default: []] List of tags to apply to the VM.
 ## Tags must already exist in NetBox or auto-creation must be enabled.
