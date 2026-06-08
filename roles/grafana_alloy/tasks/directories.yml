@@ -1,0 +1,16 @@
+---
+# /opt/grafana-alloy umbrella stays root:root 0755 (the /opt/<service>
+# convention). The container runs as root and reads host telemetry, so the
+# data dir is root-owned too.
+- name: Create grafana_alloy directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "{{ item.mode | default('0750') }}"
+  loop:
+    - { path: "{{ grafana_alloy_root_dir }}", mode: "0755" }
+    - { path: "{{ grafana_alloy_data_dir }}" }
+  loop_control:
+    label: "{{ item.path }}"

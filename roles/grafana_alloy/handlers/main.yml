@@ -1,0 +1,25 @@
+---
+# Container restart dispatch. Both handlers listen to "restart grafana_alloy",
+# but only the one matching the active container_engine fires. On podman the
+# container is a systemd-managed Quadlet, so restart goes through systemctl;
+# on docker it goes through compose. Lowercase listen: names match the
+# notify: strings exactly (handler matching is case-sensitive).
+
+- name: Reload systemd
+  listen: reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: Restart grafana_alloy (docker)
+  listen: restart grafana_alloy
+  community.docker.docker_compose_v2:
+    project_src: "{{ grafana_alloy_root_dir }}"
+    state: restarted
+  when: grafana_alloy_container_engine == 'docker'
+
+- name: Restart grafana_alloy (podman, systemd-managed)
+  listen: restart grafana_alloy
+  ansible.builtin.systemd:
+    name: grafana-alloy.service
+    state: restarted
+  when: grafana_alloy_container_engine == 'podman'

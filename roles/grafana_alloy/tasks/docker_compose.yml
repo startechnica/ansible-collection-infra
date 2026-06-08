@@ -1,0 +1,24 @@
+---
+- name: Deploy docker-compose.yml
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ grafana_alloy_root_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Start Grafana Alloy container
+  community.docker.docker_compose_v2:
+    project_src: "{{ grafana_alloy_root_dir }}"
+    state: present
+
+- name: Wait for Alloy container to be running
+  community.docker.docker_container_info:
+    name: grafana-alloy
+  register: _alloy_state
+  until: _alloy_state.container.State.Status == 'running'
+  retries: 20
+  delay: 3
+
+- name: Restore SELinux contexts (no-op on non-SELinux hosts)
+  ansible.builtin.include_tasks: selinux_relabel.yml

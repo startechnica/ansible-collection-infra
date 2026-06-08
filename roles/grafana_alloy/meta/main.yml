@@ -1,0 +1,30 @@
+---
+galaxy_info:
+  role_name: grafana_alloy
+  author: firmansyahn (firmansyah@nainggolan.id)
+  description: Deploy Grafana Alloy as a container to ship logs (Loki), metrics (Prometheus), and traces (Tempo)
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Ubuntu
+      versions:
+        - focal
+        - jammy
+        - noble
+    - name: Fedora
+      versions:
+        - "41"
+        - "42"
+        - "43"
+  galaxy_tags:
+    - grafana
+    - alloy
+    - observability
+    - monitoring
+    - opentelemetry
+
+dependencies: []
+# `preflight` is invoked explicitly from tasks/main.yml gated on
+# grafana_alloy_action (provision only) rather than declared as a hard
+# dependency, so uninstall/status don't pay for ~30s of system checks.
+# Mirrors the mongodb / patroni roles.

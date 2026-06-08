@@ -1,0 +1,76 @@
+---
+
+debug: false
+# ─── Grafana Alloy Role Defaults ──────────────────────────────────────────────
+#
+# Single-container telemetry collector. One Alloy instance per host ships:
+#   logs    → Loki        (journald via loki.source.journal)
+#   metrics → Prometheus  (node/unix metrics via remote_write)
+#   traces  → Tempo       (OTLP receiver → otlp exporter)
+#
+# Each pipeline is independently toggled. The config.alloy is assembled from
+# these variables; secrets are NOT written into config.alloy — passwords go
+# into an EnvironmentFile (alloy.env, mode 0600) and are read at runtime with
+# sys.env(), so the rendered config is safe to read.
+
+grafana_alloy_enabled: false
+grafana_alloy_action: provision
+
+# Authoritative engine selector for this role. Falls back to the host-wide
+# `container_engine` (set via platform preset), defaulting to podman. Set
+# directly to run Alloy on a different engine than the other roles on the host.
+grafana_alloy_container_engine: "{{ container_engine | default('podman') }}"
+
+# ── Container image ──
+grafana_alloy_version: "v1.12.1"
+grafana_alloy_image_registry: docker.io
+grafana_alloy_image_repository: grafana/alloy
+grafana_alloy_image_tag: "{{ grafana_alloy_version }}"
+
+# ── Paths (umbrella /opt/<service> convention) ──
+grafana_alloy_root_dir: /opt/grafana-alloy
+grafana_alloy_data_dir: "{{ grafana_alloy_root_dir }}/data"
+grafana_alloy_config_file: "{{ grafana_alloy_root_dir }}/config.alloy"
+grafana_alloy_env_file: "{{ grafana_alloy_root_dir }}/alloy.env"
+
+# ── Container resources / runtime ──
+grafana_alloy_mem_limit_mb: 256
+# host networking: required so the unix exporter and OTLP receivers bind the
+# host stack and node metrics are accurate. Override only if you know why.
+grafana_alloy_network_mode: host
+
+# ── HTTP server (web UI + /metrics) ──
+grafana_alloy_listen_address: "0.0.0.0"
+grafana_alloy_listen_port: 12345
+grafana_alloy_log_level: info
+
+# ── Common labels stamped on all telemetry ──
+grafana_alloy_cluster_label: ""
+
+# ── Logs → Loki ──
+grafana_alloy_logs_enabled: true
+grafana_alloy_loki_url: "" # e.g. https://logs-prod-xxx.grafana.net/loki/api/v1/push
+grafana_alloy_loki_username: "" # Grafana Cloud: numeric instance/user id
+grafana_alloy_loki_password: "" # API token — goes to alloy.env, read via sys.env()
+grafana_alloy_loki_tenant_id: "" # X-Scope-OrgID for multi-tenant Loki (optional)
+grafana_alloy_journal_max_age: "12h"
+
+# ── Metrics → Prometheus remote_write ──
+grafana_alloy_metrics_enabled: true
+grafana_alloy_prometheus_url: "" # e.g. https://prometheus-prod-xxx.grafana.net/api/prom/push
+grafana_alloy_prometheus_username: ""
+grafana_alloy_prometheus_password: "" # → alloy.env, read via sys.env()
+grafana_alloy_scrape_interval: "60s"
+grafana_alloy_node_exporter_enabled: true
+
+# ── Traces → Tempo (OTLP) ──
+grafana_alloy_traces_enabled: true
+grafana_alloy_tempo_url: "" # grpc: host:4317  |  http: https://tempo-xxx/otlp
+grafana_alloy_tempo_username: ""
+grafana_alloy_tempo_password: "" # → alloy.env, read via sys.env()
+grafana_alloy_tempo_protocol: grpc # grpc | http
+grafana_alloy_otlp_grpc_port: 4317
+grafana_alloy_otlp_http_port: 4318
+
+# ── Uninstall ──
+grafana_alloy_destroy_data: false # also remove {{ grafana_alloy_root_dir }} on uninstall

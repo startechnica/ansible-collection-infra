@@ -1,0 +1,30 @@
+---
+# Read-only state report. Engine-specific probe, then a single debug summary.
+
+- name: Probe Alloy container (docker)
+  community.docker.docker_container_info:
+    name: grafana-alloy
+  register: _alloy_docker
+  failed_when: false
+  when: grafana_alloy_container_engine == 'docker'
+
+- name: Probe Alloy service (podman)
+  ansible.builtin.systemd:
+    name: grafana-alloy.service
+  register: _alloy_podman
+  failed_when: false
+  when: grafana_alloy_container_engine == 'podman'
+
+- name: Show Grafana Alloy status
+  ansible.builtin.debug:
+    msg:
+      - "engine        : {{ grafana_alloy_container_engine }}"
+      - "image         : {{ grafana_alloy_image }}"
+      - >-
+        state         : {{ _alloy_docker.container.State.Status | default('unknown')
+        if grafana_alloy_container_engine == 'docker'
+        else _alloy_podman.status.ActiveState | default('unknown') }}
+      - "http server   : {{ grafana_alloy_listen_address }}:{{ grafana_alloy_listen_port }}"
+      - "logs → Loki   : {{ 'enabled → ' ~ grafana_alloy_loki_url if grafana_alloy_logs_enabled | bool else 'disabled' }}"
+      - "metrics → Prom: {{ 'enabled → ' ~ grafana_alloy_prometheus_url if grafana_alloy_metrics_enabled | bool else 'disabled' }}"
+      - "traces → Tempo: {{ 'enabled → ' ~ grafana_alloy_tempo_url if grafana_alloy_traces_enabled | bool else 'disabled' }}"

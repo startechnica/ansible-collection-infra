@@ -1,0 +1,55 @@
+---
+# Podman Quadlet path — Ignition-based hosts (FCOS, RHCOS, openSUSE MicroOS)
+# where Docker isn't available. Renders a .container file under
+# /etc/containers/systemd/ on Network=host, then asks systemd to materialize
+# it as a service and start it.
+
+- name: Ensure /etc/containers/systemd exists
+  ansible.builtin.file:
+    path: /etc/containers/systemd
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Render grafana-alloy Quadlet
+  ansible.builtin.template:
+    src: quadlets/grafana-alloy.container.j2
+    dest: /etc/containers/systemd/grafana-alloy.container
+    owner: root
+    group: root
+    mode: "0644"
+  register: _q_alloy
+
+# systemd-generators only convert .container files at daemon-reload (or boot).
+- name: Reload systemd to materialize Quadlet units
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: _q_alloy.changed
+
+- name: Enable + start grafana-alloy service
+  ansible.builtin.systemd:
+    name: grafana-alloy.service
+    enabled: true
+    state: started
+  register: _alloy_start
+
+# If the Quadlet re-rendered but the service was already running (not started
+# fresh by the task above), restart it to pick up the new unit.
+- name: Restart grafana-alloy if Quadlet changed and it was already running
+  ansible.builtin.systemd:
+    name: grafana-alloy.service
+    state: restarted
+  when:
+    - _q_alloy.changed
+    - not (_alloy_start.changed | default(false))
+
+- name: Wait for Alloy HTTP server to be listening
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ grafana_alloy_listen_port }}"
+    timeout: 60
+    state: started
+
+- name: Restore SELinux contexts (no-op on non-SELinux hosts)
+  ansible.builtin.include_tasks: selinux_relabel.yml

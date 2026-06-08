@@ -1,0 +1,14 @@
+---
+# Computed values derived from defaults/main.yml. Lazily evaluated on each
+# reference (not user inputs), so they're available the moment the role loads.
+
+# Fully-qualified container image reference.
+grafana_alloy_image: "{{ grafana_alloy_image_registry }}/{{ grafana_alloy_image_repository }}:{{ grafana_alloy_image_tag }}"
+
+# True when at least one backend password is set — gates the EnvironmentFile
+# wiring (compose env_file / Quadlet EnvironmentFile). Evaluates to the
+# string "True"/"False", so always consume with `| bool`.
+grafana_alloy_env_has_secrets: >-
+  {{ (grafana_alloy_loki_password | default('') | length > 0)
+     or (grafana_alloy_prometheus_password | default('') | length > 0)
+     or (grafana_alloy_tempo_password | default('') | length > 0) }}
