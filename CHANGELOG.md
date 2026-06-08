@@ -4,14 +4,15 @@ All notable changes to this collection are documented in this file. The format
 is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this collection adheres to [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## 1.0.2 (2026-06-08)
 
-### Docs
-- Documented the **MongoDB 8 ↔ Linux kernel ≥ 6.19 incompatibility** (vendored
-  TCMalloc/rseq bug, unfixed upstream as of 2026-06). Added a gotcha with the
-  FCOS-build/kernel table to the `mongodb` role README and a condensed entry to
-  the top-level README troubleshooting section, cross-referencing the
-  `preflight` kernel assertion and the `mongodb_skip_kernel_check` bypass.
+### Breaking changes
+- **`netbox_device_platform` default changed from `ubuntu-24-04-lts` to `""`.**
+  When empty it now falls back to `instance_platform_preset`, so a deployment
+  with no explicit `netbox_device_platform` set will register the VM with
+  `instance_platform_preset` (default `fedora-coreos`) instead of
+  `ubuntu-24-04-lts`. Set `netbox_device_platform: ubuntu-24-04-lts` explicitly
+  to preserve the previous value. Migration: [docs/UPGRADING.md](docs/UPGRADING.md).
 
 ### Added
 - `netbox_register_create` (default `true`) — the `netbox_register` role now
@@ -23,18 +24,21 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   `netbox_register_default_role_color` (default `9e9e9e`). Site and tenant are
   intentionally NOT auto-created (org-authoritative). Set
   `netbox_register_create: false` to require all referents to pre-exist.
+- Post-write verification in `roles/netbox_register/tasks/register_services.yml`.
+  After the per-VM service writes complete, re-queries NetBox for the
+  VM's services and asserts every catalog entry's `name` is present.
+  Catches server-side acceptance without persistence, deletions during
+  the write loop, and silent misregistration. One extra GET per VM.
+- `.claude/settings.json` with `permissions.allow: ["Bash"]` for the
+  repo. Project-scoped: applies to anyone who clones and runs Claude
+  Code here.
 
 ### Changed
 - `netbox_device_platform` now falls back to `instance_platform_preset` when
   left empty, so a VM's registered NetBox platform matches the OS preset it was
-  actually built from without restating the slug. Resolution order:
-  per-VM `item.platform` → `netbox_device_platform` → `instance_platform_preset`.
-  **Potentially breaking:** the role default changed from a hardcoded
-  `ubuntu-24-04-lts` to `""`. Deployments that relied on the old default (no
-  explicit `netbox_device_platform` set) will now register with
-  `instance_platform_preset` (default `fedora-coreos`) instead of
-  `ubuntu-24-04-lts`. Set `netbox_device_platform: ubuntu-24-04-lts` explicitly
-  to preserve the previous value.
+  actually built from. Resolution order: per-VM `item.platform` →
+  `netbox_device_platform` → `instance_platform_preset`. (Default change noted
+  under Breaking changes.)
 - Wired up `mongodb_container_engine` and `patroni_container_engine` as
   the authoritative per-role selectors. Both vars existed in defaults
   but were never consumed — every task, var, and handler in those roles
@@ -73,20 +77,18 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   rename only — `_platform_preset` is a private `_`-prefixed var
   resolved at role-load time; no inventory-visible change.
 
-### Added
-- Post-write verification in `roles/netbox_register/tasks/register_services.yml`.
-  After the per-VM service writes complete, re-queries NetBox for the
-  VM's services and asserts every catalog entry's `name` is present.
-  Catches server-side acceptance without persistence, deletions during
-  the write loop, and silent misregistration. One extra GET per VM.
-- `.claude/settings.json` with `permissions.allow: ["Bash"]` for the
-  repo. Project-scoped: applies to anyone who clones and runs Claude
-  Code here.
-
 ### Behaviour notes
 - `mongodb_container_engine` and `patroni_container_engine` default to
   `podman` when neither they nor `container_engine` are set. Inventories
   that explicitly set `container_engine: docker` are unaffected.
+
+### Docs
+- Documented the **MongoDB 8 ↔ Linux kernel ≥ 6.19 incompatibility** (vendored
+  TCMalloc/rseq bug, unfixed upstream as of 2026-06). Added a gotcha with the
+  FCOS-build/kernel table to the `mongodb` role README and a condensed entry to
+  the top-level README troubleshooting section, cross-referencing the
+  `preflight` kernel assertion and the `mongodb_skip_kernel_check` bypass.
+  Tracked in [#2](https://github.com/startechnica/ansible-collection-infra/issues/2).
 
 ## 1.0.1 (2026-05-25)
 
