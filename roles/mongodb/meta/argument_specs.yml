@@ -230,12 +230,6 @@ argument_specs:
         description: >-
           Optional codec-specific compression level (e.g. zstd 1–22, gzip 1–9).
           Empty uses the codec default. Applies to base backups and PITR slices.
-      mongodb_pbm_schedule:
-        type: str
-        default: ""
-        description: >
-          Optional systemd OnCalendar for scheduled `pbm backup` (empty =
-          on-demand / PITR-only).
       mongodb_pbm_x509_subject:
         type: str
         description: >

@@ -142,10 +142,16 @@ mongodb_pbm_image: "percona/percona-backup-mongodb:2.x.y"   # pin, not :latest
 mongodb_pbm_cn: "mongodb-pbm"              # client-cert CN
 mongodb_pbm_mem_limit_mb: 256
 mongodb_backup_pitr: false                 # enable continuous oplog slicing (shared knob)
-mongodb_pbm_compression: s2                # none|gzip|snappy|lz4|s2|zstd
-mongodb_pbm_schedule: ""                   # optional pbm backup cron (empty = on-demand/PITR only)
-mongodb_pbm_retain: 7                      # backups to keep (pbm config --set backup... / pbm delete)
+mongodb_pbm_compression: zstd              # none|gzip|snappy|lz4|s2|zstd
+mongodb_pbm_compression_level: ""          # optional codec level (zstd 1–22, …)
+mongodb_pbm_init_backup: true              # base backup on provision (PITR anchor)
 ```
+
+Scheduling + retention reuse the **shared backup knobs** rather than PBM-specific
+ones: the timer fires on `mongodb_backup_schedule` (empty disables it) and a
+post-backup `pbm cleanup` prunes base backups + their oplog chunks older than
+`mongodb_backup_retain_days`. One schedule, one retention window, for both the
+mongodump path and PBM.
 
 S3 target is the existing `s3_*` set — no duplication.
 
@@ -207,8 +213,9 @@ On sharded clusters, PBM is the answer and `mongodb_backup_pitr` stays false.
    Quadlet + compose templates, `pbm.yml`, `pbm config` apply, `pbm-status`.
    Validate `pbm status` shows all agents green and storage reachable.
 2. **Phase 2 — backups:** `pbm-backup.yml`, `mongodb_action: pbm-backup`,
-   optional `mongodb_pbm_schedule` (reuse the systemd-timer pattern from
-   `backup_schedule.yml`).
+   scheduled timer + `pbm cleanup` retention via the shared
+   `mongodb_backup_schedule` / `mongodb_backup_retain_days` knobs (reuse the
+   systemd-timer pattern from `backup_schedule.yml`).
 3. **Phase 3 — PITR + restore:** `mongodb_backup_pitr`, `pbm-restore.yml`,
    restore-to-timestamp, retention (`pbm delete` / retention policy).
 4. **Phase 4 — docs:** role README section, UPGRADING note, decision table

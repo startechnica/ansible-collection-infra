@@ -25,9 +25,12 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   `s3_*` target via PBM's native S3. Engine-dispatched (Quadlet on podman,
   standalone containers on docker). Day-2: `mongodb_action: pbm-setup|pbm-backup|pbm-restore|pbm-status`,
   `playbooks/mongodb_pbm_setup.yml` (FQCN-addressable) +
-  `playbooks/mongodb/pbm-{backup,restore,status}.yml`; optional
-  scheduled backup via `mongodb_pbm_schedule`; backup compression is tunable
-  via `mongodb_pbm_compression` (default `zstd`) + optional
+  `playbooks/mongodb/pbm-{backup,restore,status}.yml`. Scheduled base backups +
+  retention reuse the **shared** backup knobs — the timer fires on
+  `mongodb_backup_schedule` and a post-backup `pbm cleanup` prunes base backups
+  + oplog chunks older than `mongodb_backup_retain_days` (one schedule + one
+  retention window for both the mongodump path and PBM). Backup compression is
+  tunable via `mongodb_pbm_compression` (default `zstd`) + optional
   `mongodb_pbm_compression_level` (applied to base backups and PITR slices).
   `pbm-setup` retrofits PBM onto
   an already-running cluster without reprovisioning — it creates the per-RS PBM

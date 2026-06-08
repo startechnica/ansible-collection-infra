@@ -31,6 +31,9 @@
     _pbm_compression_args: >-
       --compression={{ mongodb_pbm_compression }}{{ (' --compression-level=' ~ mongodb_pbm_compression_level)
       if mongodb_pbm_compression_level | string | length > 0 else '' }}
+    # Control URI with `$` doubled so systemd unit ExecStart doesn't try to
+    # expand `$external` as an environment variable.
+    _pbm_uri_sd: "{{ _pbm_control_uri | replace('$', '$$') }}"
 
 # ── Render the storage/PITR config on every node (agents mount it) ──
 - name: Ensure PBM config directory
@@ -178,10 +181,14 @@
     - mongodb_pbm_init_backup | bool
     - (_pbm_list.stdout | default('{}') | from_json).snapshots | default([]) | length == 0
 
-# ── Optional scheduled `pbm backup` (host-level systemd timer, one node) ──
-# Same pattern as backup_schedule.yml. PBM backup is a cluster operation, so a
-# single node owns the timer (run_once). PITR (continuous oplog slicing) is
-# independent of this and runs on every agent when mongodb_backup_pitr is true.
+# ── Scheduled `pbm backup` + retention (host-level systemd timer, one node) ──
+# Reuses the shared backup knobs: fires on mongodb_backup_schedule, prunes via
+# mongodb_backup_retain_days. PBM backup is a cluster operation, so a single
+# node owns the timer (run_once). PITR (continuous oplog slicing) is independent
+# and runs on every agent when mongodb_backup_pitr is true. ExecStartPost runs
+# `pbm cleanup` (deletes base backups AND their oplog chunks older than the
+# retention window) only after a successful backup. -e PBM_MONGODB_URI pins the
+# control RS; `$external` is doubled (_pbm_uri_sd) so systemd doesn't expand it.
 - name: Install pbm-backup.service unit
   ansible.builtin.copy:
     dest: /etc/systemd/system/pbm-backup.service
@@ -195,12 +202,13 @@
 
       [Service]
       Type=oneshot
-      ExecStart=/usr/bin/{{ mongodb_container_engine }} exec {{ _pbm_control }} pbm backup {{ _pbm_compression_args }} --wait
+      ExecStart=/usr/bin/{{ mongodb_container_engine }} exec -e PBM_MONGODB_URI={{ _pbm_uri_sd }} {{ _pbm_control }} pbm backup {{ _pbm_compression_args }} --wait
+      ExecStartPost=/usr/bin/{{ mongodb_container_engine }} exec -e PBM_MONGODB_URI={{ _pbm_uri_sd }} {{ _pbm_control }} pbm cleanup --older-than {{ mongodb_backup_retain_days }}d --yes
       StandardOutput=append:/var/log/pbm-backup.log
       StandardError=append:/var/log/pbm-backup.log
   notify: reload systemd
   run_once: true
-  when: mongodb_pbm_schedule | length > 0
+  when: mongodb_backup_schedule | length > 0
 
 - name: Install pbm-backup.timer unit
   ansible.builtin.copy:
@@ -212,7 +220,7 @@
       Documentation=man:systemd.timer(5)
 
       [Timer]
-      OnCalendar={{ mongodb_pbm_schedule }}
+      OnCalendar={{ mongodb_backup_schedule }}
       Persistent=true
       Unit=pbm-backup.service
 
@@ -220,7 +228,7 @@
       WantedBy=timers.target
   notify: reload systemd
   run_once: true
-  when: mongodb_pbm_schedule | length > 0
+  when: mongodb_backup_schedule | length > 0
 
 - name: Enable and start pbm-backup.timer
   ansible.builtin.systemd:
@@ -229,7 +237,7 @@
     state: started
     daemon_reload: true
   run_once: true
-  when: mongodb_pbm_schedule | length > 0
+  when: mongodb_backup_schedule | length > 0
 
 - name: Disable pbm-backup.timer when no schedule
   ansible.builtin.systemd:
@@ -238,4 +246,4 @@
     state: stopped
   failed_when: false
   run_once: true
-  when: mongodb_pbm_schedule | length == 0
+  when: mongodb_backup_schedule | length == 0

@@ -197,10 +197,14 @@ mongodb_pbm_init_backup: true
 mongodb_pbm_compression: zstd
 # Optional compression level (codec-specific, e.g. zstd 1–22, gzip 1–9). Empty
 # uses the codec's default. Applies to both base backups and PITR oplog slices.
-mongodb_pbm_compression_level: ""
-# Optional systemd OnCalendar for scheduled `pbm backup` (empty = on-demand /
-# PITR-only). Same timer pattern as mongodb_backup_schedule.
-mongodb_pbm_schedule: ""
+mongodb_pbm_compression_level: 3
+# Scheduled `pbm backup` reuses the shared backup knobs rather than PBM-specific
+# ones: the timer fires on `mongodb_backup_schedule` (empty disables it) and a
+# post-backup `pbm cleanup` prunes base backups + their oplog chunks older than
+# `mongodb_backup_retain_days`. One schedule + one retention window for both the
+# mongodump path and PBM. Enabling PITR (mongodb_backup_pitr) without a schedule
+# leaves you a single base-backup anchor that never rotates — set a schedule so
+# the PITR window keeps a fresh floor and the bucket doesn't grow unbounded.
 # X.509 subject the PBM agent presents (mapped to a $external user with the
 # PBM role set). Mirrors mongodb_healthcheck_x509_subject / _exporter_.
 mongodb_pbm_x509_subject: "CN={{ mongodb_pbm_cn }},OU={{ mongodb_pki_client_ou }},O={{ mongodb_pki_o }}"
