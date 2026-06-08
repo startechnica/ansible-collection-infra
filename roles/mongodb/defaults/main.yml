@@ -185,8 +185,9 @@ mongodb_pbm_enabled: false
 mongodb_pbm_image: "docker.io/percona/percona-backup-mongodb:2.14.0"
 mongodb_pbm_cn: mongodb-pbm
 mongodb_pbm_mem_limit_mb: 256
-# Continuous oplog slicing → restore to any timestamp in the window.
-mongodb_pbm_pitr: false
+# PBM continuous oplog slicing (restore to any timestamp in the window) is
+# gated on the shared mongodb_backup_pitr knob — the same switch that enables
+# mongodump --oplog for replica-set backups. One PITR intent, one knob.
 # Backup compression for `pbm backup`: none|gzip|snappy|lz4|s2|zstd.
 mongodb_pbm_compression: s2
 # Optional systemd OnCalendar for scheduled `pbm backup` (empty = on-demand /

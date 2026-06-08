@@ -137,7 +137,7 @@
 # ── Optional scheduled `pbm backup` (host-level systemd timer, one node) ──
 # Same pattern as backup_schedule.yml. PBM backup is a cluster operation, so a
 # single node owns the timer (run_once). PITR (continuous oplog slicing) is
-# independent of this and runs on every agent when mongodb_pbm_pitr is true.
+# independent of this and runs on every agent when mongodb_backup_pitr is true.
 - name: Install pbm-backup.service unit
   ansible.builtin.copy:
     dest: /etc/systemd/system/pbm-backup.service

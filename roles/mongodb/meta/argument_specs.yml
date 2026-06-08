@@ -213,10 +213,6 @@ argument_specs:
       mongodb_pbm_mem_limit_mb:
         type: int
         default: 256
-      mongodb_pbm_pitr:
-        type: bool
-        default: false
-        description: Enable continuous oplog slicing for point-in-time recovery.
       mongodb_pbm_compression:
         type: str
         default: s2

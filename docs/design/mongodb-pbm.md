@@ -109,7 +109,7 @@ storage:
       access-key-id: "{{ s3_access_key }}"
       secret-access-key: "{{ s3_secret_key }}"
 pitr:
-  enabled: "{{ mongodb_pbm_pitr | bool }}"
+  enabled: "{{ mongodb_backup_pitr | bool }}"
   compression: "{{ mongodb_pbm_compression }}"
 ```
 
@@ -141,7 +141,7 @@ mongodb_pbm_enabled: false                 # master switch
 mongodb_pbm_image: "percona/percona-backup-mongodb:2.x.y"   # pin, not :latest
 mongodb_pbm_cn: "mongodb-pbm"              # client-cert CN
 mongodb_pbm_mem_limit_mb: 256
-mongodb_pbm_pitr: false                    # enable continuous oplog slicing
+mongodb_backup_pitr: false                 # enable continuous oplog slicing (shared knob)
 mongodb_pbm_compression: s2                # none|gzip|snappy|lz4|s2|zstd
 mongodb_pbm_schedule: ""                   # optional pbm backup cron (empty = on-demand/PITR only)
 mongodb_pbm_retain: 7                      # backups to keep (pbm config --set backup... / pbm delete)
@@ -194,7 +194,7 @@ Both can run. Guidance to document:
 | Need | Use |
 |---|---|
 | Replica-set PITR, scratch-restore/inspect single DB | existing `mongodump` + `pitr.yml` (`mongodb_backup_pitr: true`) |
-| **Sharded** cluster-consistent backup + PITR | **PBM** (`mongodb_pbm_enabled: true`, `mongodb_pbm_pitr: true`) |
+| **Sharded** cluster-consistent backup + PITR | **PBM** (`mongodb_pbm_enabled: true`, `mongodb_backup_pitr: true`) |
 | Quick ad-hoc logical dump of one DB to S3 | existing `mongodump` |
 
 Recommend **not** enabling both PITR mechanisms on the same cluster
@@ -209,7 +209,7 @@ On sharded clusters, PBM is the answer and `mongodb_backup_pitr` stays false.
 2. **Phase 2 — backups:** `pbm-backup.yml`, `mongodb_action: pbm-backup`,
    optional `mongodb_pbm_schedule` (reuse the systemd-timer pattern from
    `backup_schedule.yml`).
-3. **Phase 3 — PITR + restore:** `mongodb_pbm_pitr`, `pbm-restore.yml`,
+3. **Phase 3 — PITR + restore:** `mongodb_backup_pitr`, `pbm-restore.yml`,
    restore-to-timestamp, retention (`pbm delete` / retention policy).
 4. **Phase 4 — docs:** role README section, UPGRADING note, decision table
    above, the Community-vs-PSMDB constraint.
