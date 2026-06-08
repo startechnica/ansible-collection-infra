@@ -5,7 +5,7 @@ caveat: **pre-1.0 minor bumps may contain breaking changes**. Read the release
 notes in [../CHANGELOG.md](../CHANGELOG.md) before upgrading; this file
 documents the migration steps for breaking changes.
 
-## Unreleased
+## 1.0.2 (2026-06-08)
 
 ### Potentially breaking — `netbox_device_platform` default is now empty
 

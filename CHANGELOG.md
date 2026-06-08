@@ -4,6 +4,45 @@ All notable changes to this collection are documented in this file. The format
 is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this collection adheres to [Semantic Versioning](https://semver.org/).
 
+## 1.0.3 (unreleased)
+
+### Added
+- **MongoDB scheduled backups** — provisioning now installs a host-level
+  systemd timer (`mongodb-backup.timer` → `mongodb-backup.service`) on one
+  node that runs the same mongodump → prune → S3-upload flow as
+  `playbooks/mongodb/backup.yml`, on `mongodb_backup_schedule` (default
+  `*-*-* 02:00:00`). Mirrors patroni's `walg-cron.timer`; `Persistent=true`
+  catches up missed runs, output goes to `/var/log/mongodb-backup.log`. Master
+  switch `mongodb_backup_enabled` (default `true`) or an empty
+  `mongodb_backup_schedule` tears down the timer. `mongodb_backup_mode`
+  (`local`/`s3`, defaults to `s3` when `s3_bucket` is set) selects the
+  destination: `local` keeps the dump on the node under retention, `s3`
+  uploads then deletes the local copy (pure-S3). Before deleting, the uploaded
+  object is re-read and SHA-256 compared end-to-end against the local archive;
+  a mismatch fails the run and keeps the local copy. Applies to both the
+  on-demand and scheduled flows.
+- **PITR from S3** — `playbooks/mongodb/pitr.yml` gained `backup_source: s3`
+  (mirroring `verify-backup.yml`): it downloads + extracts the base mongodump
+  from the bucket before replaying, so point-in-time recovery works when the
+  local copy is gone (e.g. `mongodb_backup_mode: s3`). Defaults to latest
+  archive; `-e backup_name=mongodump_…` selects a specific one. `backup_path`
+  is no longer required when `backup_source=s3`.
+- **MongoDB backup PITR + TLS support** — `mongodb_backup` gained an `oplog`
+  param (wired via `mongodb_backup_pitr`, default `true`) that passes
+  `--oplog` so dumps are usable by `playbooks/mongodb/pitr.yml`. Both
+  `mongodb_backup` and `mongodb_restore` gained `tls`/`tls_host_ca_file`/
+  `tls_cert_file` params; the backup/restore tasks now auto-pass TLS when
+  `mongos_tls_mode` is `requireTLS`/`preferTLS`, so backups keep working if
+  mongos is hardened to `requireTLS`.
+
+### Fixed
+- **MongoDB day-2 backup playbooks were docker-only** — `pitr.yml` and
+  `verify-backup.yml` hardcoded `docker`/`community.docker.*` for their
+  disposable scratch containers, so they failed on podman hosts (the default
+  `mongodb_container_engine`). Both now drive container lifecycle through
+  `{{ mongodb_container_engine }}` (a single `run`/`exec`/`volume`/`rm` path
+  that works on docker and podman), and `pitr.yml`'s S3 fetch likewise.
+
 ## 1.0.2 (2026-06-08)
 
 ### Breaking changes
@@ -36,33 +75,6 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
 - `.claude/settings.json` with `permissions.allow: ["Bash"]` for the
   repo. Project-scoped: applies to anyone who clones and runs Claude
   Code here.
-- **MongoDB scheduled backups** — provisioning now installs a host-level
-  systemd timer (`mongodb-backup.timer` → `mongodb-backup.service`) on one
-  node that runs the same mongodump → prune → S3-upload flow as
-  `playbooks/mongodb/backup.yml`, on `mongodb_backup_schedule` (default
-  `*-*-* 02:00:00`). Mirrors patroni's `walg-cron.timer`; `Persistent=true`
-  catches up missed runs, output goes to `/var/log/mongodb-backup.log`. Master
-  switch `mongodb_backup_enabled` (default `true`) or an empty
-  `mongodb_backup_schedule` tears down the timer. `mongodb_backup_mode`
-  (`local`/`s3`, defaults to `s3` when `s3_bucket` is set) selects the
-  destination: `local` keeps the dump on the node under retention, `s3`
-  uploads then deletes the local copy (pure-S3). Before deleting, the uploaded
-  object is re-read and SHA-256 compared end-to-end against the local archive;
-  a mismatch fails the run and keeps the local copy. Applies to both the
-  on-demand and scheduled flows.
-- **PITR from S3** — `playbooks/mongodb/pitr.yml` gained `backup_source: s3`
-  (mirroring `verify-backup.yml`): it downloads + extracts the base mongodump
-  from the bucket before replaying, so point-in-time recovery works when the
-  local copy is gone (e.g. `mongodb_backup_mode: s3`). Defaults to latest
-  archive; `-e backup_name=mongodump_…` selects a specific one. `backup_path`
-  is no longer required when `backup_source=s3`.
-- **MongoDB backup PITR + TLS support** — `mongodb_backup` gained an `oplog`
-  param (wired via `mongodb_backup_oplog`, default `false`) that passes
-  `--oplog` so dumps are usable by `playbooks/mongodb/pitr.yml`. Both
-  `mongodb_backup` and `mongodb_restore` gained `tls`/`tls_host_ca_file`/
-  `tls_cert_file` params; the backup/restore tasks now auto-pass TLS when
-  `mongos_tls_mode` is `requireTLS`/`preferTLS`, so backups keep working if
-  mongos is hardened to `requireTLS`.
 
 ### Changed
 - `netbox_device_platform` now falls back to `instance_platform_preset` when
@@ -107,14 +119,6 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   `roles/instance_ignition/templates/*.bu.j2` Butane templates. Internal
   rename only — `_platform_preset` is a private `_`-prefixed var
   resolved at role-load time; no inventory-visible change.
-
-### Fixed
-- **MongoDB day-2 backup playbooks were docker-only** — `pitr.yml` and
-  `verify-backup.yml` hardcoded `docker`/`community.docker.*` for their
-  disposable scratch containers, so they failed on podman hosts (the default
-  `mongodb_container_engine`). Both now drive container lifecycle through
-  `{{ mongodb_container_engine }}` (a single `run`/`exec`/`volume`/`rm` path
-  that works on docker and podman), and `pitr.yml`'s S3 fetch likewise.
 
 ### Behaviour notes
 - `mongodb_container_engine` and `patroni_container_engine` default to
