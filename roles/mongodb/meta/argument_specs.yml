@@ -19,7 +19,7 @@ argument_specs:
       mongodb_action:
         type: str
         default: provision
-        choices: [provision, init, backup, restore, status, renew-certs, upgrade, uninstall, pbm-backup, pbm-restore, pbm-status]
+        choices: [provision, init, backup, restore, status, renew-certs, upgrade, uninstall, pbm-setup, pbm-backup, pbm-restore, pbm-status]
         description: Which sub-flow to run. Most day-2 playbooks override this.
 
       mongodb_cluster_type:

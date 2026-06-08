@@ -310,31 +310,7 @@
     _ce_command: >
       mongosh --port {{ mongodb_configsvr_exec_port }} --tls
       --tlsCAFile /etc/mongo/ssl/ca.pem
-      --quiet --eval "
-      try {
-        try {
-          db.getSiblingDB('admin').createRole({
-            role: 'pbmAnyAction',
-            privileges: [{ resource: { anyResource: true }, actions: ['anyAction'] }],
-            roles: []
-          });
-        } catch(re) { if (!re.message.includes('already exists')) throw re; }
-        db.getSiblingDB('\$external').createUser({
-          user: '{{ mongodb_pbm_x509_subject }}',
-          roles: [
-            { db: 'admin', role: 'readWrite' },
-            { db: 'admin', role: 'backup' },
-            { db: 'admin', role: 'clusterMonitor' },
-            { db: 'admin', role: 'restore' },
-            { db: 'admin', role: 'pbmAnyAction' }
-          ]
-        });
-        print('PBM_USER_CREATED');
-      } catch(e) {
-        if (e.message.includes('already exists') || e.message.includes('not primary')) {
-          print('PBM_USER_EXISTS');
-        } else { throw e; }
-      }"
+      --quiet --eval "{{ _pbm_create_user_js }}"
   when:
     - mongodb_pbm_enabled | bool
     - _is_sharded | bool
@@ -349,31 +325,7 @@
     _ce_command: >
       mongosh --port {{ mongodb_mongod_exec_port }} --tls
       --tlsCAFile /etc/mongo/ssl/ca.pem
-      --quiet --eval "
-      try {
-        try {
-          db.getSiblingDB('admin').createRole({
-            role: 'pbmAnyAction',
-            privileges: [{ resource: { anyResource: true }, actions: ['anyAction'] }],
-            roles: []
-          });
-        } catch(re) { if (!re.message.includes('already exists')) throw re; }
-        db.getSiblingDB('\$external').createUser({
-          user: '{{ mongodb_pbm_x509_subject }}',
-          roles: [
-            { db: 'admin', role: 'readWrite' },
-            { db: 'admin', role: 'backup' },
-            { db: 'admin', role: 'clusterMonitor' },
-            { db: 'admin', role: 'restore' },
-            { db: 'admin', role: 'pbmAnyAction' }
-          ]
-        });
-        print('PBM_USER_CREATED');
-      } catch(e) {
-        if (e.message.includes('already exists') || e.message.includes('not primary')) {
-          print('PBM_USER_EXISTS');
-        } else { throw e; }
-      }"
+      --quiet --eval "{{ _pbm_create_user_js }}"
   when:
     - mongodb_pbm_enabled | bool
     - not _mongodb_init_marker.stat.exists

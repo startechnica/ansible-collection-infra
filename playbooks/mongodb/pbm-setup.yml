@@ -1,0 +1,38 @@
+---
+# ─── MongoDB: retrofit Percona Backup (PBM) onto a running cluster ───────────
+#
+# Applies PBM to an ALREADY-PROVISIONED cluster without reprovisioning — no
+# mongod/configsvr/mongos container is recreated. Generates the agent cert,
+# creates the PBM role+user on each replica set (member-cert auth), and
+# deploys the agents.
+#
+# Run from the same controller that built the cluster (needs the CA in the
+# artifacts dir to sign the agent cert).
+#
+# Usage:
+#   ansible-playbook playbooks/mongodb/pbm-setup.yml -i inventories/<inv>.yml \
+#     -e mongodb_pbm_enabled=true [-e mongodb_pbm_pitr=true]
+#
+# (Better: set mongodb_pbm_enabled/mongodb_pbm_pitr in inventory so subsequent
+#  provision runs keep PBM enabled too.)
+
+- name: Setup mongodb hosts
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Build host group from instances
+      ansible.builtin.include_tasks: _setup.yml
+
+- name: PBM setup
+  hosts: mongodb_nodes
+  become: true
+  gather_facts: true
+  pre_tasks:
+    - name: Inherit localhost vars
+      ansible.builtin.include_role:
+        name: common
+        tasks_from: inherit_localhost_vars
+  roles:
+    - role: mongodb
+      vars:
+        mongodb_action: pbm-setup

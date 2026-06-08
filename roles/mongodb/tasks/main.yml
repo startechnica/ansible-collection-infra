@@ -198,6 +198,11 @@
 
 # ── On-demand actions ──
 
+- name: PBM setup (retrofit onto an already-running cluster)
+  ansible.builtin.include_tasks: pbm_setup.yml
+  when:
+    - mongodb_action | default('provision') == 'pbm-setup'
+
 - name: PBM backup
   ansible.builtin.include_tasks: pbm_backup.yml
   when:

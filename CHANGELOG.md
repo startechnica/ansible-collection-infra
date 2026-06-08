@@ -23,10 +23,13 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   can't provide. Agents authenticate with a new X.509 client cert
   (`CN=mongodb-pbm`) reusing the existing PKI, and store backups in the shared
   `s3_*` target via PBM's native S3. Engine-dispatched (Quadlet on podman,
-  standalone containers on docker). Day-2: `mongodb_action: pbm-backup|pbm-restore|pbm-status`
-  and `playbooks/mongodb/pbm-{backup,restore,status}.yml`; optional scheduled
-  backup via `mongodb_pbm_schedule`. Logical backups + logical PITR on the
-  Community image (physical needs PSMDB). Design: docs/design/mongodb-pbm.md.
+  standalone containers on docker). Day-2: `mongodb_action: pbm-setup|pbm-backup|pbm-restore|pbm-status`
+  and `playbooks/mongodb/pbm-{setup,backup,restore,status}.yml`; optional
+  scheduled backup via `mongodb_pbm_schedule`. `pbm-setup` retrofits PBM onto
+  an already-running cluster without reprovisioning — it creates the per-RS PBM
+  user via member-cert (`__system`) auth and deploys agents with no container
+  recreation. Logical backups + logical PITR on the Community image (physical
+  needs PSMDB). Design: docs/design/mongodb-pbm.md.
 - **MongoDB scheduled backups** — provisioning now installs a host-level
   systemd timer (`mongodb-backup.timer` → `mongodb-backup.service`) on one
   node that runs the same mongodump → prune → S3-upload flow as
