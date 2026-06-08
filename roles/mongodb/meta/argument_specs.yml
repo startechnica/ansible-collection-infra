@@ -281,6 +281,12 @@ argument_specs:
       s3_region:
         type: str
         default: us-east-1
+      s3_force_path_style:
+        type: str
+        default: "true"
+        description: >-
+          Force path-style S3 addressing (bucket in the URL path, not the
+          hostname). Required by most S3-compatible gateways. Consumed by PBM.
       s3_prefix:
         type: str
         description: Path prefix inside the bucket. Defaults to `mongodb/<mongodb_network>`.

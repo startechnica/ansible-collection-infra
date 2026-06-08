@@ -80,6 +80,17 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   `mongodb_container_engine`). Both now drive container lifecycle through
   `{{ mongodb_container_engine }}` (a single `run`/`exec`/`volume`/`rm` path
   that works on docker and podman), and `pitr.yml`'s S3 fetch likewise.
+- **PBM S3 used virtual-hosted addressing, 403ing on path-style gateways** — the
+  rendered PBM storage config set no addressing style, so the AWS SDK defaulted
+  to virtual-hosted (`<bucket>.<endpoint>`), which most S3-compatible gateways
+  (Ceph RGW, MinIO, custom) reject with `HeadObject … 403 Forbidden` even though
+  wal-g (which forces path-style) works against the same bucket. Added
+  `s3_force_path_style` (default `"true"`, mirroring patroni's
+  `AWS_S3_FORCE_PATH_STYLE`) and wired it to PBM's `storage.s3.forcePathStyle`.
+- **PBM `pbm-status` playbook moved to the playbooks root** —
+  `playbooks/mongodb/pbm-status.yml` → `playbooks/mongodb_pbm_status.yml`, now
+  FQCN-addressable (`startechnica.infra.mongodb_pbm_status`) like
+  `mongodb_pbm_setup`.
 
 ## 1.0.2 (2026-06-08)
 

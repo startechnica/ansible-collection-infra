@@ -8,6 +8,7 @@ storage:
   s3:
     region: "{{ s3_region }}"
     endpointUrl: "{{ s3_endpoint }}"
+    forcePathStyle: {{ 'true' if s3_force_path_style | bool else 'false' }}
     bucket: "{{ s3_bucket }}"
     prefix: "{{ s3_prefix }}/pbm"
     credentials:

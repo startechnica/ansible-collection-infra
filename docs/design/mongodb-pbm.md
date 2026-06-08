@@ -173,7 +173,7 @@ CLI, run once via `_container_exec` against any agent):
 - `pbm-restore.yml` — `-e pbm_target='2026-06-09T12:00:00'` or `-e pbm_backup=<name>`;
   guard-railed (stops balancer is automatic; warns it's cluster-wide and
   disruptive — restore requires no active writes / app downtime).
-- `pbm-status.yml` — show agents, storage, PITR window, backup list.
+- `mongodb_pbm_status.yml` (playbooks root, FQCN-addressable) — show agents, storage, PITR window, backup list.
 
 Unlike the mongodump `pitr.yml` scratch-restore, **PBM restore is whole-cluster
 and in-place** — there's no "inspect in a scratch container" mode. That's a

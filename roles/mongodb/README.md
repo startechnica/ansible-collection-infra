@@ -212,7 +212,7 @@ ansible-playbook startechnica.infra.mongodb_pbm_setup -i inventories/<inv>.yml \
 Day-2:
 
 ```bash
-ansible-playbook playbooks/mongodb/pbm-status.yml  -i inventories/<inv>.yml
+ansible-playbook playbooks/mongodb_pbm_status.yml  -i inventories/<inv>.yml
 ansible-playbook playbooks/mongodb/pbm-backup.yml  -i inventories/<inv>.yml
 ansible-playbook playbooks/mongodb/pbm-restore.yml -i inventories/<inv>.yml -e pbm_target='2026-06-09T12:30:00'
 ```
@@ -235,7 +235,7 @@ cluster. Design notes: [docs/design/mongodb-pbm.md](../../docs/design/mongodb-pb
 | Enable PBM on a running cluster (no reprovision) | `playbooks/mongodb_pbm_setup.yml -e mongodb_pbm_enabled=true` (FQCN: `startechnica.infra.mongodb_pbm_setup`) |
 | PBM backup (sharded-safe, cluster-consistent) | `playbooks/mongodb/pbm-backup.yml` |
 | PBM restore / PITR (sharded) | `playbooks/mongodb/pbm-restore.yml -e pbm_backup=<name>` or `-e pbm_target='YYYY-MM-DDThh:mm:ss'` |
-| PBM status (agents, storage, PITR window, backups) | `playbooks/mongodb/pbm-status.yml` |
+| PBM status (agents, storage, PITR window, backups) | `playbooks/mongodb_pbm_status.yml` (FQCN: `startechnica.infra.mongodb_pbm_status`) |
 | Rolling restart | `playbooks/mongodb/restart.yml` |
 | Renew leaf certificates | `playbooks/mongodb/renew-certs.yml` |
 | Rolling version upgrade | `playbooks/mongodb/upgrade.yml -e mongodb_image_tag_new=8.2.7` |

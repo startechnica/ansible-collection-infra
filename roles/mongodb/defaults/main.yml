@@ -149,6 +149,10 @@ s3_bucket: ""
 s3_access_key: ""
 s3_secret_key: ""
 s3_region: "us-east-1"
+# Force path-style S3 addressing (bucket in the path, not the hostname).
+# Required by most S3-compatible gateways (Ceph RGW, MinIO, custom). Matches
+# patroni's wal-g AWS_S3_FORCE_PATH_STYLE. Consumed by PBM's storage config.
+s3_force_path_style: "true"
 # Path prefix inside the bucket (mongodb only).
 s3_prefix: "mongodb/{{ mongodb_network }}"
 # Docker image used to run the S3 client (mc). No host install needed.
@@ -178,7 +182,7 @@ mongodb_exporter_port: 9216
 # docs/design/mongodb-pbm.md.
 mongodb_pbm_enabled: false
 # Pin the agent image (avoid :latest for reproducible/offline-friendly pulls).
-mongodb_pbm_image: "docker.io/percona/percona-backup-mongodb:2.11.0"
+mongodb_pbm_image: "docker.io/percona/percona-backup-mongodb:2.14.0"
 mongodb_pbm_cn: mongodb-pbm
 mongodb_pbm_mem_limit_mb: 256
 # Continuous oplog slicing → restore to any timestamp in the window.
