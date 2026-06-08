@@ -21,6 +21,16 @@ Image={{ mongodb_pbm_image }}
 User={{ mongodb_uid }}
 Group={{ mongodb_gid }}
 
+# Bypass the image's entrypoint wrapper. That script waits for the replica set
+# using the legacy `mongo` shell, which doesn't honor the URI's tlsCAFile and so
+# fails our self-signed CA with "SSL peer certificate validation failed" — it
+# loops forever and never exec's pbm-agent. Run pbm-agent directly; its Go
+# driver validates against tlsCAFile and retries the connection on its own.
+# `/bin/bash -c 'exec pbm-agent'` replaces both the image ENTRYPOINT and CMD
+# (which is `pbm-agent`), so we don't end up running `pbm-agent pbm-agent`.
+Entrypoint=/bin/bash
+Exec=-c "exec pbm-agent"
+
 Network=host
 
 Environment=PBM_MONGODB_URI=mongodb://localhost:{{ _pbm_agent.port }}/?authMechanism=MONGODB-X509&authSource=$external&tls=true&tlsCertificateKeyFile=/etc/mongo/ssl/pbm-agent.pem&tlsCAFile=/etc/mongo/ssl/ca.pem&directConnection=true

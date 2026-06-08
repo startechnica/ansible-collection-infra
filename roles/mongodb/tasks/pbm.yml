@@ -90,11 +90,13 @@
       --restart unless-stopped \
       --user {{ mongodb_uid }}:{{ mongodb_gid }} \
       --memory {{ mongodb_pbm_mem_limit_mb }}m \
+      --entrypoint /bin/bash \
       -v {{ mongodb_tls_dir }}/pbm-agent.pem:/etc/mongo/ssl/pbm-agent.pem:ro \
       -v {{ mongodb_tls_dir }}/ca.pem:/etc/mongo/ssl/ca.pem:ro \
       -v {{ mongodb_root_dir }}/pbm/pbm-config.yaml:/etc/pbm/pbm-config.yaml:ro \
       -e PBM_MONGODB_URI="$URI" \
-      {{ mongodb_pbm_image }}
+      {{ mongodb_pbm_image }} \
+      -c 'exec pbm-agent'
   loop: "{{ _pbm_agents }}"
   loop_control:
     label: "{{ item.name }}"
