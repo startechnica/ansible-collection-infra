@@ -1,0 +1,85 @@
+---
+# ── Scheduled backup: host-level systemd timer + helper script ──────────────
+# Same pattern as patroni's walg-cron.timer (roles/patroni/tasks/shared/walg.yml)
+# and the local disable-thp.service: a oneshot service driven by a timer, no
+# crond dependency (FCOS doesn't ship one). Persistent=true on the timer means
+# a missed run (host offline at the scheduled time) gets caught up on next boot.
+#
+# run_once so a single node owns the scheduled dump — the mongodump module also
+# runs once against mongos, and a cluster-wide dump from every node would just
+# duplicate work and race on the same S3 prefix.
+#
+# `mongodb_backup_enabled` is the master switch; an empty `mongodb_backup_schedule`
+# also disables. Either being off installs nothing and tears down a prior timer.
+
+- name: Set scheduled-backup desired state
+  ansible.builtin.set_fact:
+    _mongodb_backup_timer: "{{ mongodb_backup_enabled | bool and (mongodb_backup_schedule | length > 0) }}"
+
+- name: Deploy mongodb-backup helper script
+  ansible.builtin.template:
+    src: mongodb-backup.sh.j2
+    dest: "{{ mongodb_root_dir }}/mongodb-backup.sh"
+    owner: root
+    group: root
+    mode: "0700"
+  run_once: true
+  when: _mongodb_backup_timer
+
+- name: Install mongodb-backup.service unit
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/mongodb-backup.service
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=MongoDB scheduled backup (oneshot)
+      Documentation=man:systemd.timer(5)
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      Type=oneshot
+      ExecStart={{ mongodb_root_dir }}/mongodb-backup.sh
+      StandardOutput=append:/var/log/mongodb-backup.log
+      StandardError=append:/var/log/mongodb-backup.log
+  notify: reload systemd
+  run_once: true
+  when: _mongodb_backup_timer
+
+- name: Install mongodb-backup.timer unit
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/mongodb-backup.timer
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Schedule MongoDB backups
+      Documentation=man:systemd.timer(5)
+
+      [Timer]
+      OnCalendar={{ mongodb_backup_schedule }}
+      Persistent=true
+      Unit=mongodb-backup.service
+
+      [Install]
+      WantedBy=timers.target
+  notify: reload systemd
+  run_once: true
+  when: _mongodb_backup_timer
+
+- name: Enable and start mongodb-backup.timer
+  ansible.builtin.systemd:
+    name: mongodb-backup.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+  run_once: true
+  when: _mongodb_backup_timer
+
+- name: Disable mongodb-backup.timer when backups are off
+  ansible.builtin.systemd:
+    name: mongodb-backup.timer
+    enabled: false
+    state: stopped
+  failed_when: false
+  run_once: true
+  when: not _mongodb_backup_timer

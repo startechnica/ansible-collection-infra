@@ -141,8 +141,28 @@ X.509 client auth users (auto-created):
 
 1. `mongodump` runs via the custom `mongodb_backup` module (writes to `{{ mongodb_backup_dir }}`).
 2. Local retention: files older than `{{ mongodb_backup_retain_days }}` pruned.
-3. If `s3_bucket` is set: tar-gzip + upload via containerized `minio/mc`.
+3. If `mongodb_backup_mode: s3`: tar-gzip + upload via containerized `minio/mc`.
+   The object is then re-read and **SHA-256 compared end-to-end** against the
+   local archive; only on a match is the local dump removed (pure-S3 — the
+   bucket is the only copy). A mismatch fails the run and keeps the local copy.
 4. Remote retention: S3 objects older than `{{ s3_retain_days }}` pruned.
+
+`mongodb_backup_mode` selects the destination — `local` (node only, kept under
+`mongodb_backup_retain_days`) or `s3` (dump locally, upload, then delete the
+local copy so the bucket is the system of record). It defaults to `s3` when
+`s3_bucket` is set, else `local`.
+
+**Scheduled backups** — provisioning installs a host-level systemd timer
+(`mongodb-backup.timer` → `mongodb-backup.service`) on one node that runs the
+same dump → prune → S3-upload flow on `mongodb_backup_schedule` (default
+`*-*-* 02:00:00`, i.e. daily at 02:00). This mirrors patroni's
+`walg-cron.timer`. `Persistent=true` catches up a missed run after downtime;
+output is appended to `/var/log/mongodb-backup.log`. Set
+`mongodb_backup_enabled: false` (or `mongodb_backup_schedule: ""`) to disable
+the timer — it's torn down on the next provision run; on-demand
+`playbooks/mongodb/backup.yml` still works. Inspect with
+`systemctl list-timers mongodb-backup.timer` and
+`journalctl -u mongodb-backup.service`.
 
 Verify a backup is restorable:
 ```bash
@@ -165,7 +185,7 @@ scheduler you already use. A reference crontab is at
 | On-demand backup (local + S3 if configured) | `playbooks/mongodb/backup.yml` |
 | Verify the latest backup restores cleanly | `playbooks/mongodb/verify-backup.yml` |
 | Restore from a specific mongodump | `playbooks/mongodb/restore.yml -e restore_path=...` |
-| Point-in-time recovery (oplog replay) | `playbooks/mongodb/pitr.yml -e backup_path=... -e target_time=...` |
+| Point-in-time recovery (oplog replay) | `playbooks/mongodb/pitr.yml -e backup_path=... -e target_time=...` (or `-e backup_source=s3`) |
 | Rolling restart | `playbooks/mongodb/restart.yml` |
 | Renew leaf certificates | `playbooks/mongodb/renew-certs.yml` |
 | Rolling version upgrade | `playbooks/mongodb/upgrade.yml -e mongodb_image_tag_new=8.2.7` |
@@ -184,7 +204,7 @@ Inputs are validated by [meta/argument_specs.yml](meta/argument_specs.yml). High
 | TLS | `tls_key_type`, `tls_key_curve`, `ssl_days`, `ssl_ca_days` |
 | Admin | `mongodb_admin_user`, `mongodb_admin_password` (auto-gen if empty) |
 | App DBs | `mongodb_databases` (list of {name, users[{name, password, roles[]}]}) |
-| Backup local | `mongodb_backup_dir`, `mongodb_backup_retain_days` |
+| Backup local | `mongodb_backup_dir`, `mongodb_backup_retain_days`, `mongodb_backup_oplog`, `mongodb_backup_enabled`, `mongodb_backup_schedule`, `mongodb_backup_mode` |
 | Backup S3 | `s3_bucket`, `s3_endpoint`, `s3_access_key`, `s3_secret_key`, `s3_prefix`, `s3_retain_days` |
 | Monitoring | `mongodb_exporter_enabled`, `mongodb_exporter_port` |
 | Uninstall | `mongodb_destroy_prune`, `mongodb_skip_confirm` |

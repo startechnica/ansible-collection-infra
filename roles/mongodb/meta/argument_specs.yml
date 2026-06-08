@@ -202,6 +202,29 @@ argument_specs:
       mongodb_backup_retain_days:
         type: int
         default: 7
+      mongodb_backup_mode:
+        type: str
+        choices: [local, s3]
+        description: >
+          Backup destination. `local` keeps the mongodump on the node under
+          `mongodb_backup_retain_days`; `s3` tar-gzips and uploads it via
+          containerised mc, then removes the local copy (pure-S3 — the bucket
+          is the only copy). The dump is always written locally first.
+          Defaults to `s3` when `s3_bucket` is set, else `local`.
+      mongodb_backup_enabled:
+        type: bool
+        default: true
+        description: >
+          Master switch for the scheduled-backup timer. False tears down any
+          installed timer/service. On-demand `mongodb_action: backup` is
+          unaffected.
+      mongodb_backup_schedule:
+        type: str
+        default: "*-*-* 02:00:00"
+        description: >
+          systemd OnCalendar expression for the host-level scheduled-backup
+          timer (mongodb-backup.timer). Empty string disables the timer;
+          on-demand `mongodb_action: backup` still works.
 
       # ── S3 (shared with patroni) ──
       s3_endpoint:

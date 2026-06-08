@@ -134,6 +134,22 @@
 
 # ── Shared cleanup (host-level config, regardless of engine) ──────────
 
+- name: Stop and disable mongodb-backup.timer
+  ansible.builtin.systemd:
+    name: mongodb-backup.timer
+    enabled: false
+    state: stopped
+  failed_when: false
+
+- name: Delete mongodb-backup timer + service units and helper script
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/mongodb-backup.timer
+    - /etc/systemd/system/mongodb-backup.service
+    - "{{ mongodb_root_dir }}/mongodb-backup.sh"
+
 - name: Remove THP disable service
   ansible.builtin.systemd:
     name: disable-thp

@@ -121,6 +121,23 @@ mongodb_backup_retain_days: 7
 ## per-db/collection backups (full cluster dump only).
 mongodb_backup_oplog: false
 
+# Scheduled backup — host-level systemd timer + oneshot service, same pattern
+# as patroni's walg-cron.timer (no crond dependency; FCOS doesn't ship it).
+# `mongodb_backup_enabled` is the master switch: false tears down any installed
+# timer/service and skips installation. `mongodb_backup_schedule` is a systemd
+# OnCalendar expression (see `man systemd.time`); Persistent=true catches up a
+# missed run (host offline at the scheduled time) on next boot. On-demand
+# `mongodb_action: backup` works regardless of these knobs.
+mongodb_backup_enabled: true
+mongodb_backup_schedule: "*-*-* 02:00:00"
+
+# Backup destination: 'local' keeps the mongodump on the node only; 's3' also
+# tar-gzips it and uploads via containerised mc (the dump is always written
+# locally first — s3 mode is local-then-push). Applies to both the on-demand
+# `mongodb_action: backup` flow and the scheduled timer. Defaults to 's3' when
+# an s3_bucket is configured, else 'local', preserving prior behaviour.
+mongodb_backup_mode: "{{ 's3' if (s3_bucket | length > 0) else 'local' }}"
+
 # ── S3 remote backup (optional) ──
 # Shared across roles: set these at inventory/group_vars once; mongodb and
 # patroni both consume the same s3_* vars. Leaving s3_bucket empty disables

@@ -181,6 +181,13 @@
   when:
     - mongodb_action | default('provision') in ['provision', 'init']
 
+# Install the scheduled-backup systemd timer once mongos is up and the admin
+# password is resolved. Mirrors patroni's walg-cron.timer.
+- name: Install scheduled backup timer
+  ansible.builtin.include_tasks: backup_schedule.yml
+  when:
+    - mongodb_action | default('provision') == 'provision'
+
 # ── On-demand actions ──
 
 - name: Run backup
