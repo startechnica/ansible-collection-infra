@@ -87,6 +87,39 @@
          | default(instance_cluster_name, true)
          | default('') }}
 
+# Platform slug. Most-specific wins; an empty value at each level falls
+# through (the `, true` makes `default` treat '' as unset):
+#   item.platform             — per-VM override
+#   netbox_device_platform    — explicit inventory mapping
+#   instance_platform_preset  — the OS preset the VM was actually built from
+- name: Resolve NetBox platform slug for this VM
+  ansible.builtin.set_fact:
+    _nb_platform: >-
+      {{ item.platform
+         | default(netbox_device_platform, true)
+         | default(instance_platform_preset, true)
+         | default('') }}
+
+# Role slug.  item.role → netbox_device_role.
+- name: Resolve NetBox device role slug for this VM
+  ansible.builtin.set_fact:
+    _nb_role: >-
+      {{ item.role
+         | default(netbox_device_role, true)
+         | default('') }}
+
+# Cluster-type slug, derived from the (human) `netbox_cluster_type` name.
+- name: Resolve NetBox cluster-type slug
+  ansible.builtin.set_fact:
+    _nb_cluster_type_slug: "{{ netbox_cluster_type | lower | regex_replace('[^a-z0-9]+', '-') | regex_replace('(^-|-$)', '') }}"
+
+# Auto-create referenced objects (platform / role / cluster) when missing, so
+# VM registration below doesn't fail on an unknown slug. Toggle off with
+# `netbox_register_create: false` to require referents to pre-exist.
+- name: Ensure referenced NetBox objects exist
+  ansible.builtin.include_tasks: ensure_references.yml
+  when: netbox_register_create | bool
+
 # (custom fields are created once in main.yml → ensure_custom_fields.yml
 #  before this per-VM loop runs)
 
@@ -117,8 +150,8 @@
                     | default(instance_disks.size_gb | default('')))
                     | string | length > 0 else {})
       | combine({'cluster': _nb_cluster} if _nb_cluster | length > 0 else {})
-      | combine({'platform': item.platform | default(netbox_device_platform)} if (item.platform | default(netbox_device_platform)) | length > 0 else {})
-      | combine({'virtual_machine_role': item.role | default(netbox_device_role)} if (item.role | default(netbox_device_role)) | length > 0 else {})
+      | combine({'platform': _nb_platform} if _nb_platform | length > 0 else {})
+      | combine({'virtual_machine_role': _nb_role} if _nb_role | length > 0 else {})
       | combine({'site': item.site | default(netbox_site_slug)} if (item.site | default(netbox_site_slug)) | length > 0 else {})
       | combine({'tenant': item.tenant | default(netbox_tenant_slug)} if (item.tenant | default(netbox_tenant_slug)) | length > 0 else {})
       | combine({'tags': ((item.tags | default([])) + (instance_tags) | unique)} if ((item.tags | default([])) + (instance_tags) | unique) | length > 0 else {})

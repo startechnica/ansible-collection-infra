@@ -9,7 +9,7 @@
 # Bare invocation runs `status` so a quick `./patroni-ctl.sh` gives operators
 # an at-a-glance health view without having to remember the subcommand.
 #
-# Engine: rendered for {{ container_engine | default('docker') }}.
+# Engine: rendered for {{ patroni_container_engine }}.
 
 set -u
 cd "{{ patroni_dir }}" || exit 1
@@ -22,7 +22,7 @@ else
 fi
 hdr() { printf "\n${c_hdr}── %s ──${c_off}\n" "$1"; }
 
-{% if container_engine | default('docker') == 'docker' %}
+{% if patroni_container_engine == 'docker' %}
 # ── docker / docker-compose backend ──────────────────────────────────────────
 container_running() {
   docker ps --format '{{ '{{' }}.Names{{ '}}' }}' | grep -qx "$1"
@@ -141,7 +141,7 @@ Usage: $0 [start|stop|status]
   start    Bring the stack up.
   stop     Tear the stack down.
 
-Engine: {{ container_engine | default('docker') }}
+Engine: {{ patroni_container_engine }}
 EOF
 }
 

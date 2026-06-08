@@ -18,7 +18,7 @@
 # Caller (main.yml) already gates this include on walg_enabled.
 
 - name: Discover Patroni leader
-  ansible.builtin.include_tasks: "../{{ container_engine | default('docker') }}/_detect_leader.yml"
+  ansible.builtin.include_tasks: "../{{ patroni_container_engine }}/_detect_leader.yml"
 
 - name: Create dedicated WAL-G PG role (LOGIN + REPLICATION)
   community.postgresql.postgresql_user:

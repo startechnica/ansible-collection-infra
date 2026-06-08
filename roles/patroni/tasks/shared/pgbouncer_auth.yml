@@ -21,7 +21,7 @@
 # All operations are idempotent — safe to re-run on every deploy.
 
 - name: Discover Patroni leader
-  ansible.builtin.include_tasks: "../{{ container_engine | default('docker') }}/_detect_leader.yml"
+  ansible.builtin.include_tasks: "../{{ patroni_container_engine }}/_detect_leader.yml"
 
 # ── Provision pgbouncer role + schema + function on the leader ───────────────
 

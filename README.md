@@ -9,6 +9,7 @@ NetBox as source of truth. Ships:
 - **netbox_lookup / netbox_register** — query and register VMs in NetBox
 - **mongodb** — sharded or replica-set MongoDB with TLS (x509 auth), exporter, backups (local + S3), PITR
 - **patroni** — HA PostgreSQL with etcd, HAProxy, PgBouncer, vip-manager, WAL-G backups, PITR
+- **grafana_alloy** — Grafana Alloy collector (logs→Loki, metrics→Prometheus, traces→Tempo); docker or podman
 - **preflight** — shared cluster preflight (venv, Docker, RAM, kernel modules)
 - **common** — reusable utility tasks (SSH probe, host-group build, localhost var inherit, inventory validator)
 - **firewall** — declarative UFW / firewalld policy (opt-in)
@@ -227,7 +228,7 @@ podman_enabled: false             # enable podman + Quadlets (ignition path only
 netbox_enabled: true
 netbox_lookup_enabled: true
 netbox_device_role: database
-netbox_device_platform: ubuntu-24-04-lts
+netbox_device_platform: ubuntu-24-04-lts   # optional; empty → uses instance_platform_preset
 
 # MongoDB (required when instance_tags contains 'mongodb')
 mongodb_admin_password: "..."  # or "{{ vault_mongodb_admin_password }}"
@@ -267,6 +268,14 @@ NetBox connection + vCenter credentials are best kept in
   names the missing or inconsistent variable.
 - **Patroni stage fails on `patroni_vip_address` undefined** — add `patroni_vip_address:` to the inventory's
   Patroni section or set `vip_manager: "none"` to skip.
+- **MongoDB preflight fails on kernel ≥ 6.19** — MongoDB 8 crashes on startup
+  on Linux kernel 6.19+ (a vendored-TCMalloc/rseq bug, unfixed upstream as of
+  June 2026 — newer Mongo releases do NOT escape it). The kernel bump can land
+  *within* a single FCOS major (e.g. FCOS `43.20260217.3.1` = kernel 6.18 OK,
+  `43.20260413.3.2` = kernel 6.19 broken), so pinning the FCOS major is not
+  enough. Pin the host to an FCOS build with kernel `< 6.19`. See the
+  [mongodb role README](roles/mongodb/README.md#gotchas) for the full table and
+  the `mongodb_skip_kernel_check` bypass.
 
 ## License
 

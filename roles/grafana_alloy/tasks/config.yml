@@ -1,0 +1,35 @@
+---
+# Render the secrets EnvironmentFile first, then config.alloy. Keeping
+# passwords in alloy.env (0600) and referencing them with sys.env() in the
+# config means the rendered config.alloy carries no secrets.
+#
+# Both templates notify `restart grafana_alloy`: docker_compose state=present
+# (and podman's daemon-reload) won't bounce the container just because a
+# bind-mounted file changed, so the handler is what makes Alloy pick up a
+# changed config / credentials on a re-run.
+
+- name: Render Alloy env file (backend credentials)
+  ansible.builtin.template:
+    src: alloy.env.j2
+    dest: "{{ grafana_alloy_env_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  when: grafana_alloy_env_has_secrets | bool
+  notify: restart grafana_alloy
+
+- name: Remove Alloy env file when no credentials are set
+  ansible.builtin.file:
+    path: "{{ grafana_alloy_env_file }}"
+    state: absent
+  when: not (grafana_alloy_env_has_secrets | bool)
+
+- name: Render config.alloy
+  ansible.builtin.template:
+    src: config.alloy.j2
+    dest: "{{ grafana_alloy_config_file }}"
+    owner: root
+    group: root
+    mode: "0640"
+  notify: restart grafana_alloy

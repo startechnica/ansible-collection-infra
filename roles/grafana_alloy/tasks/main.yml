@@ -1,0 +1,117 @@
+---
+# ─── Grafana Alloy Role ──────────────────────────────────────────────────────
+#
+# Single-container telemetry collector deployed via docker (compose) or podman
+# (Quadlet), selected by `container_engine`. Assembles config.alloy from
+# per-pipeline toggles (logs→Loki, metrics→Prometheus, traces→Tempo).
+#
+# Actions (grafana_alloy_action, default: provision):
+#   provision  — render config + deploy/start the container
+#   restart    — bounce the running container/service
+#   status     — show container/service state
+#   uninstall  — stop + remove; data kept unless grafana_alloy_destroy_data=true
+#
+# Usage:
+#   ansible-playbook ...                                   # provision
+#   ansible-playbook ... -e grafana_alloy_action=status
+#   ansible-playbook ... -e grafana_alloy_action=uninstall -e grafana_alloy_destroy_data=true
+
+# ── Skip if disabled ──
+
+- name: Skip grafana_alloy role (grafana_alloy_enabled is false)
+  ansible.builtin.debug:
+    msg: "grafana_alloy role is disabled (grafana_alloy_enabled={{ grafana_alloy_enabled }}). Skipping."
+  when: not (grafana_alloy_enabled | bool)
+
+- name: End role if disabled
+  ansible.builtin.meta: end_role
+  when: not (grafana_alloy_enabled | bool)
+
+# ── Skip if the selected container engine isn't actually installed ──
+# `grafana_alloy_container_engine` is the authoritative selector; docker_enabled
+# and podman_enabled are independent install toggles. If the selected engine's
+# toggle is off there's nothing to dispatch against — bail gracefully.
+# Exception: uninstall always runs (engine-specific branches inside
+# uninstall.yml are themselves gated and no-op when the runtime is absent).
+
+- name: Skip grafana_alloy role (selected grafana_alloy_container_engine has no installed runtime)
+  ansible.builtin.debug:
+    msg: >-
+      grafana_alloy_container_engine={{ grafana_alloy_container_engine }} but
+      {{ 'docker_enabled' if grafana_alloy_container_engine == 'docker' else 'podman_enabled' }}=false
+      on this host. Skipping grafana_alloy role.
+  when:
+    - grafana_alloy_action | default('provision') != 'uninstall'
+    - (grafana_alloy_container_engine) == 'docker' and not (docker_enabled | default(false) | bool) or (grafana_alloy_container_engine) == 'podman' and not
+      (podman_enabled | default(false) | bool)
+
+- name: End role if selected container engine is inactive
+  ansible.builtin.meta: end_role
+  when:
+    - grafana_alloy_action | default('provision') != 'uninstall'
+    - (grafana_alloy_container_engine) == 'docker' and not (docker_enabled | default(false) | bool) or (grafana_alloy_container_engine) == 'podman' and not
+      (podman_enabled | default(false) | bool)
+
+# ── Validate backend configuration (provision only) ──
+
+- name: Validate at least one backend is enabled and configured
+  ansible.builtin.assert:
+    that:
+      - (grafana_alloy_logs_enabled | bool) or (grafana_alloy_metrics_enabled | bool) or (grafana_alloy_traces_enabled | bool)
+      - not (grafana_alloy_logs_enabled | bool) or (grafana_alloy_loki_url | length > 0)
+      - not (grafana_alloy_metrics_enabled | bool) or (grafana_alloy_prometheus_url | length > 0)
+      - not (grafana_alloy_traces_enabled | bool) or (grafana_alloy_tempo_url | length > 0)
+    fail_msg: >-
+      grafana_alloy: enable at least one pipeline and set its endpoint URL —
+      logs → grafana_alloy_loki_url, metrics → grafana_alloy_prometheus_url,
+      traces → grafana_alloy_tempo_url. Disable a pipeline with its
+      *_enabled: false flag if you don't want it.
+    success_msg: "grafana_alloy backend configuration OK."
+    quiet: "{{ not (debug | bool) }}"
+  when: grafana_alloy_action | default('provision') == 'provision'
+
+# ── Preflight role (system + container engine + venv) ──
+- name: Run preflight role (system + container engine + venv)
+  ansible.builtin.include_role:
+    name: preflight
+  vars:
+    container_mem_request_mb: "{{ grafana_alloy_mem_limit_mb }}"
+  when: grafana_alloy_action | default('provision') == 'provision'
+
+# ── Provisioning ──
+
+- name: Create directories
+  ansible.builtin.include_tasks: directories.yml
+  when: grafana_alloy_action | default('provision') == 'provision'
+
+- name: Render Alloy configuration
+  ansible.builtin.include_tasks: config.yml
+  when: grafana_alloy_action | default('provision') == 'provision'
+
+# Container runtime dispatch. The skip-all guard above already end_roles when
+# the selected engine's install toggle is off, so by here the engine is active.
+- name: Deploy and start Docker Compose (docker)
+  ansible.builtin.include_tasks: docker_compose.yml
+  when:
+    - grafana_alloy_action | default('provision') == 'provision'
+    - grafana_alloy_container_engine == 'docker'
+
+- name: Render Podman Quadlet and start service (podman)
+  ansible.builtin.include_tasks: quadlet.yml
+  when:
+    - grafana_alloy_action | default('provision') == 'provision'
+    - grafana_alloy_container_engine == 'podman'
+
+# ── On-demand actions ──
+
+- name: Restart Grafana Alloy
+  ansible.builtin.include_tasks: restart.yml
+  when: grafana_alloy_action | default('provision') == 'restart'
+
+- name: Show Grafana Alloy status
+  ansible.builtin.include_tasks: status.yml
+  when: grafana_alloy_action | default('provision') == 'status'
+
+- name: Uninstall Grafana Alloy
+  ansible.builtin.include_tasks: uninstall.yml
+  when: grafana_alloy_action | default('provision') == 'uninstall'

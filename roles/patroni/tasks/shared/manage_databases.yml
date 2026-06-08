@@ -10,7 +10,7 @@
 # preflight.yml).
 
 - name: Discover Patroni leader
-  ansible.builtin.include_tasks: "../{{ container_engine | default('docker') }}/_detect_leader.yml"
+  ansible.builtin.include_tasks: "../{{ patroni_container_engine }}/_detect_leader.yml"
 
 # Order matters: PostgreSQL roles are cluster-wide and must exist before
 # they can own a database. So users → databases → grants, not the other

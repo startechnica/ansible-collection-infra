@@ -30,9 +30,9 @@
     content_library_item_name: "{{ _resolved_content_library_item_name }}"
     ignition_channel: "{{ _resolved_ignition_channel }}"
     # Also publish the raw `_platform_map` and the matched-row helper
-    # `_os_preset` so consumers (Butane templates, render_ignition,
-    # downstream roles) can read `_os_preset.ignition.<field>` directly
+    # `_platform_preset` so consumers (Butane templates, render_ignition,
+    # downstream roles) can read `_platform_preset.ignition.<field>` directly
     # after `include_role: name=common` returns and common's role vars
     # leave scope. Host facts (precedence #18) persist for the play.
     _platform_map: "{{ _platform_map }}"
-    _os_preset: "{{ _os_preset }}"
+    _platform_preset: "{{ _platform_preset }}"

@@ -4,6 +4,96 @@ All notable changes to this collection are documented in this file. The format
 is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this collection adheres to [Semantic Versioning](https://semver.org/).
 
+## 1.0.2 (2026-06-08)
+
+### Breaking changes
+- **`netbox_device_platform` default changed from `ubuntu-24-04-lts` to `""`.**
+  When empty it now falls back to `instance_platform_preset`, so a deployment
+  with no explicit `netbox_device_platform` set will register the VM with
+  `instance_platform_preset` (default `fedora-coreos`) instead of
+  `ubuntu-24-04-lts`. Set `netbox_device_platform: ubuntu-24-04-lts` explicitly
+  to preserve the previous value. Migration: [docs/UPGRADING.md](docs/UPGRADING.md).
+
+### Added
+- **`grafana_alloy` role** — deploys [Grafana Alloy](https://grafana.com/docs/alloy/)
+  as a single container per host to ship logs to Loki (systemd journal),
+  metrics to Prometheus (`remote_write`), and traces to Tempo (OTLP receiver →
+  exporter).
+- `netbox_register_create` (default `true`) — the `netbox_register` role now
+  auto-creates the **platform, device role, and cluster** a VM references when
+  the slug/name doesn't already exist in NetBox, instead of failing
+  registration. Look-up-then-create only: existing objects are never modified.
+  Two supporting vars: `netbox_cluster_type` (default `VMware vSphere`, used
+  when a cluster must be created — NetBox requires a type) and
+  `netbox_register_default_role_color` (default `9e9e9e`). Site and tenant are
+  intentionally NOT auto-created (org-authoritative). Set
+  `netbox_register_create: false` to require all referents to pre-exist.
+- Post-write verification in `roles/netbox_register/tasks/register_services.yml`.
+  After the per-VM service writes complete, re-queries NetBox for the
+  VM's services and asserts every catalog entry's `name` is present.
+  Catches server-side acceptance without persistence, deletions during
+  the write loop, and silent misregistration. One extra GET per VM.
+- `.claude/settings.json` with `permissions.allow: ["Bash"]` for the
+  repo. Project-scoped: applies to anyone who clones and runs Claude
+  Code here.
+
+### Changed
+- `netbox_device_platform` now falls back to `instance_platform_preset` when
+  left empty, so a VM's registered NetBox platform matches the OS preset it was
+  actually built from. Resolution order: per-VM `item.platform` →
+  `netbox_device_platform` → `instance_platform_preset`. (Default change noted
+  under Breaking changes.)
+- Wired up `mongodb_container_engine` and `patroni_container_engine` as
+  the authoritative per-role selectors. Both vars existed in defaults
+  but were never consumed — every task, var, and handler in those roles
+  read `container_engine | default('docker')` directly. Now the global
+  `container_engine` flows through one bridge line in each role's
+  `defaults/main.yml`, and all dispatch / conditions / template paths
+  read the per-role var. Set `mongodb_container_engine` /
+  `patroni_container_engine` explicitly to run one stack on a different
+  engine than other roles on the same host group.
+- Bridged `hostvars['localhost'].artifacts_dir` in mongodb via a single
+  `mongodb_artifacts_dir` var in defaults. Eliminates six scattered
+  `hostvars['localhost'].artifacts_dir` references in `passwords.yml` and
+  `manage_users.yml`; `mongodb_local_certs_dir` now derives from the
+  bridge. Override `mongodb_artifacts_dir` once to relocate every
+  mongodb artifact (creds, certs). Patroni's `patroni_credentials_dir`
+  was already bridged the same way.
+- Moved `mongodb_services` (cluster-type catalog) and `patroni_services`
+  (with/without exporter) from `set_fact` in
+  `netbox_register_services.yml` to declarative entries in each role's
+  `vars/main.yml`. Catalogs are now available from role-load time, not
+  just after the netbox-registration task runs. The firewall role's
+  `mongodb_services | default([])` lookup now returns the real catalog
+  even when NetBox registration is gated off — previously fell back to
+  `[]` and silently omitted service ports.
+- Extracted per-VM service-registration mechanics into
+  `roles/netbox_register/tasks/register_services.yml`. Mongodb /
+  patroni's `netbox_register_services.yml` shrunk to a per-host loop
+  that includes the role with the relevant catalog. IP auto-resolution
+  from `hostvars['localhost'].instances` now lives in `netbox_register`
+  (the role that owns localhost dispatch); callers can override by
+  passing `netbox_vm_service_ips` explicitly.
+- Renamed `_os_preset` → `_platform_preset` across
+  `roles/common/vars/main.yml`, `roles/common/tasks/resolve_platform_preset.yml`,
+  `roles/instance/defaults/main.yml`, and the four
+  `roles/instance_ignition/templates/*.bu.j2` Butane templates. Internal
+  rename only — `_platform_preset` is a private `_`-prefixed var
+  resolved at role-load time; no inventory-visible change.
+
+### Behaviour notes
+- `mongodb_container_engine` and `patroni_container_engine` default to
+  `podman` when neither they nor `container_engine` are set. Inventories
+  that explicitly set `container_engine: docker` are unaffected.
+
+### Docs
+- Documented the **MongoDB 8 ↔ Linux kernel ≥ 6.19 incompatibility** (vendored
+  TCMalloc/rseq bug, unfixed upstream as of 2026-06). Added a gotcha with the
+  FCOS-build/kernel table to the `mongodb` role README and a condensed entry to
+  the top-level README troubleshooting section, cross-referencing the
+  `preflight` kernel assertion and the `mongodb_skip_kernel_check` bypass.
+  Tracked in [#2](https://github.com/startechnica/ansible-collection-infra/issues/2).
+
 ## 1.0.1 (2026-05-25)
 
 ### Breaking changes

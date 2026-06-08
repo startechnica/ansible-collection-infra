@@ -42,7 +42,7 @@
 
 - name: Render Butane config for each VM
   ansible.builtin.template:
-    src: "{{ _os_preset.ignition.butane_template }}"
+    src: "{{ _platform_preset.ignition.butane_template }}"
     dest: "{{ ignition_tmp_dir }}/{{ instance.name }}.bu"
     mode: "0600"
   loop: "{{ instances_to_create }}"

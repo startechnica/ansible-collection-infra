@@ -1,5 +1,5 @@
-variant: {{ _os_preset.ignition.butane_variant }}
-version: {{ _os_preset.ignition.butane_spec_version }}
+variant: {{ _platform_preset.ignition.butane_variant }}
+version: {{ _platform_preset.ignition.butane_spec_version }}
 
 # Drop the FCOS-default serial console karg. Cloud images set
 # `console=ttyS0,115200n8` so kernel logs and a getty land on the
@@ -217,12 +217,13 @@ storage:
           primary-nics={{ _first_nic_ifname }}
           exclude-nics=antrea-*,bpfin.cali*,bpfout.cali*,cali*,cilium*,docker*,flannel*,genev_sys_*,gre_sys_*,lxc*,ovs-system,br*,kube-ipvs*,veth*,virbr*,vxlan_sys_*,stt_sys_*,????????-??????
 
-    # Set SELinux to permissive at first boot. The cluster roles bind
-    # container ports to host IPs, mount data dirs, and rely on inter-node
-    # TCP — the shipped targeted policy regularly produces AVC denials for
-    # these patterns and would need per-deployment tuning. Permissive
-    # keeps labelling and audit logging on but stops blocking. Switch
-    # back with `setenforce 1` for a forensic pass.
+    # Set SELinux mode at first boot (instance_selinux_mode, default
+    # permissive). The cluster roles bind container ports to host IPs, mount
+    # data dirs, and rely on inter-node TCP — the shipped targeted policy
+    # regularly produces AVC denials for these patterns and would need
+    # per-deployment tuning, which is why the default is permissive (labelling
+    # and audit logging stay on, nothing is blocked). Switch back with
+    # `setenforce 1` for a forensic pass.
     # `overwrite: true` because the base FCOS image already ships
     # /etc/selinux/config with SELINUX=enforcing.
     - path: /etc/selinux/config
@@ -235,7 +236,7 @@ storage:
           #     enforcing - SELinux security policy is enforced.
           #     permissive - SELinux prints warnings instead of enforcing.
           #     disabled - No SELinux policy is loaded.
-          SELINUX=permissive
+          SELINUX={{ instance_selinux_mode | default('permissive') }}
           # SELINUXTYPE= can take one of these three values:
           #     targeted - Targeted processes are protected,
           #     minimum - Modification of targeted policy. Only selected processes are protected.

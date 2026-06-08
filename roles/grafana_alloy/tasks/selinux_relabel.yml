@@ -1,0 +1,42 @@
+---
+# Reassert SELinux file contexts on the systemd unit / Quadlet paths the role
+# wrote. Container bind-mount labels are handled by the `:Z`/`:z` flags on the
+# Quadlet / compose volumes — this only covers the unit directories so the
+# daemon can read them under enforcing.
+#
+# Gated on SELinux being enabled; on Debian/Ubuntu the fact is 'disabled'
+# (or absent) and the task short-circuits. `failed_when: false` because
+# /etc/containers/systemd/ is podman-only and absent on docker hosts.
+
+- name: Restore SELinux contexts on systemd unit paths
+  ansible.builtin.command:
+    cmd: restorecon -RF /etc/containers/systemd/ /etc/systemd/system/
+  changed_when: false
+  failed_when: false
+  when: ansible_facts['selinux'].status | default('disabled') == 'enabled'
+
+# Surface AVC denials accumulated since boot so the operator can fix them
+# before flipping to enforcing. ausearch returns rc=1 when there are no
+# matches — the desired silent-success path.
+- name: Check for SELinux AVC denials since boot
+  ansible.builtin.command:
+    cmd: ausearch -m AVC,USER_AVC --start boot
+  register: _selinux_avc
+  changed_when: false
+  failed_when: false
+  when: ansible_facts['selinux'].status | default('disabled') == 'enabled'
+
+- name: Report SELinux AVC denials (if any)
+  ansible.builtin.debug:
+    msg:
+      - "════════════════════════════════════════════════════════════════════"
+      - "  SELinux AVC denials observed since boot — review before enforcing"
+      - "════════════════════════════════════════════════════════════════════"
+      - "{{ _selinux_avc.stdout_lines | default([]) }}"
+      - "════════════════════════════════════════════════════════════════════"
+      - "  Hint: pipe to audit2allow on the host for a candidate policy:"
+      - "    sudo ausearch -m AVC,USER_AVC --start boot | audit2allow -m local_grafana_alloy"
+      - "════════════════════════════════════════════════════════════════════"
+  when:
+    - ansible_facts['selinux'].status | default('disabled') == 'enabled'
+    - _selinux_avc.rc | default(1) == 0

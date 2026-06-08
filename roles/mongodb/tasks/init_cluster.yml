@@ -300,12 +300,12 @@
 # using run_once would only transition node 1 and leave the other replicas
 # stuck in --transitionToAuth.
 #
-# Two paths depending on container_engine:
+# Two paths depending on mongodb_container_engine:
 #   - docker: re-render docker-compose.yml + docker compose recreate
 #   - podman: re-render Quadlets via include + systemctl daemon-reload
 #            + restart (handled inside quadlet.yml)
 
-# ── container_engine=docker / Docker Compose path ──
+# ── mongodb_container_engine=docker / Docker Compose path ──
 - name: Re-render compose with full auth
   ansible.builtin.template:
     src: docker-compose.yml.j2
@@ -314,7 +314,7 @@
   vars:
     mongodb_bootstrap: false
   register: _compose_auth
-  when: container_engine | default('docker') == 'docker'
+  when: mongodb_container_engine == 'docker'
 
 - name: Stop exporter before recreating (shares network namespace)
   community.docker.docker_compose_v2:
@@ -323,7 +323,7 @@
       - mongodb-exporter
     state: stopped
   when:
-    - container_engine | default('docker') == 'docker'
+    - mongodb_container_engine == 'docker'
     - _compose_auth.changed | default(false)
   failed_when: false
 
@@ -332,7 +332,7 @@
     _restart_services: >-
       {{ ['mongod'] +
          (['configsvr', 'mongos'] if _is_sharded | bool else []) }}
-  when: container_engine | default('docker') == 'docker'
+  when: mongodb_container_engine == 'docker'
 
 - name: Restart MongoDB containers in auth mode
   community.docker.docker_compose_v2:
@@ -341,7 +341,7 @@
     services: "{{ _restart_services }}"
     recreate: always
   when:
-    - container_engine | default('docker') == 'docker'
+    - mongodb_container_engine == 'docker'
     - _compose_auth.changed | default(false)
   retries: 3
   delay: 10
@@ -359,17 +359,17 @@
     loop_var: port
     label: "port {{ port }}"
   when:
-    - container_engine | default('docker') == 'docker'
+    - mongodb_container_engine == 'docker'
     - _compose_auth.changed | default(false)
 
-# ── container_engine=podman / Podman Quadlet path ──
+# ── mongodb_container_engine=podman / Podman Quadlet path ──
 # quadlet.yml internally renders + daemon-reloads + restarts the services
 # whose .container files changed, then waits for ports.
 - name: Re-render Quadlets in full auth mode and restart services
   ansible.builtin.include_tasks: quadlet.yml
   vars:
     mongodb_bootstrap: false
-  when: container_engine | default('docker') == 'podman'
+  when: mongodb_container_engine == 'podman'
 
 # wait_for only verifies the TCP port is bound. After the auth-mode restart,
 # mongos can briefly bind 27017, drop it while reconnecting to configsvr
@@ -467,11 +467,11 @@
 # service during the auth-mode re-render above (including the exporter),
 # so this step is a no-op there. Keep the Docker Compose path explicit.
 
-- name: Start all services including exporter (container_engine=docker)
+- name: Start all services including exporter (mongodb_container_engine=docker)
   community.docker.docker_compose_v2:
     project_src: "{{ mongodb_root_dir }}"
     state: present
-  when: container_engine | default('docker') == 'docker'
+  when: mongodb_container_engine == 'docker'
 
 # Touched on every node once bootstrap finishes successfully.
 # docker_compose.yml / quadlet.yml stat this marker on subsequent runs and

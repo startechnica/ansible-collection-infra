@@ -1,0 +1,50 @@
+---
+# Engine-specific teardown branches are each gated on container_engine and
+# tolerate a missing runtime (failed_when: false), so uninstall is safe to run
+# regardless of which engine (if any) is active on the host.
+
+# ── Docker ──
+- name: Stop and remove Grafana Alloy (docker)
+  community.docker.docker_compose_v2:
+    project_src: "{{ grafana_alloy_root_dir }}"
+    state: absent
+    remove_orphans: true
+  failed_when: false
+  when: grafana_alloy_container_engine == 'docker'
+
+# ── Podman / Quadlet ──
+- name: Remove grafana-alloy Quadlet (podman)
+  ansible.builtin.file:
+    path: /etc/containers/systemd/grafana-alloy.container
+    state: absent
+  register: _q_removed
+  when: grafana_alloy_container_engine == 'podman'
+
+- name: Stop and disable grafana-alloy service (podman)
+  ansible.builtin.systemd:
+    name: grafana-alloy.service
+    state: stopped
+    enabled: false
+  failed_when: false
+  when: grafana_alloy_container_engine == 'podman'
+
+- name: Reload systemd after Quadlet removal (podman)
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when:
+    - grafana_alloy_container_engine == 'podman'
+    - _q_removed.changed | default(false)
+
+# ── Data ──
+- name: Remove Grafana Alloy directory (when grafana_alloy_destroy_data)
+  ansible.builtin.file:
+    path: "{{ grafana_alloy_root_dir }}"
+    state: absent
+  when: grafana_alloy_destroy_data | bool
+
+- name: Report retained data directory
+  ansible.builtin.debug:
+    msg: >-
+      Grafana Alloy removed. Data dir {{ grafana_alloy_root_dir }} kept
+      (set grafana_alloy_destroy_data=true to delete it).
+  when: not (grafana_alloy_destroy_data | bool)

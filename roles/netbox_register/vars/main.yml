@@ -75,8 +75,8 @@ _register_input_map:
   netbox_device_platform:
     source: inventory
     type: str
-    default: "ubuntu-24-04-lts"
-    purpose: Default platform slug
+    default: ""
+    purpose: Platform slug (empty → falls back to instance_platform_preset)
   netbox_device_role:
     source: inventory
     type: str
@@ -86,6 +86,21 @@ _register_input_map:
     type: str
     default: "ens192"
     purpose: Default interface name on the NetBox VM
+  netbox_register_create:
+    source: inventory
+    type: bool
+    default: true
+    purpose: Auto-create missing platform/role/cluster referents (look-up-then-create)
+  netbox_cluster_type:
+    source: inventory
+    type: str
+    default: "VMware vSphere"
+    purpose: Cluster type used when auto-creating a missing cluster
+  netbox_register_default_role_color:
+    source: inventory
+    type: str
+    default: "9e9e9e"
+    purpose: Hex color for an auto-created device role
   netbox_cluster_name:
     source: inventory
     type: str

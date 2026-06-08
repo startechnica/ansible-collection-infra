@@ -1,12 +1,14 @@
 ---
-# Set SELinux to permissive on RedHat-family hosts (RHEL, Rocky, Alma,
-# CentOS Stream, Fedora, FCOS, RHCOS).
+# Apply the requested SELinux mode on RedHat-family hosts (RHEL, Rocky,
+# Alma, CentOS Stream, Fedora, FCOS, RHCOS). Mode is driven by
+# `instance_selinux_mode` (default permissive); see instance/defaults.
 #
-# Why: the cluster roles (mongodb, patroni) bind container ports to host
-# IPs, mount data dirs, run as non-root inside containers, and rely on
-# inter-node TCP. The shipped targeted policy is conservative and
-# regularly produces AVC denials for these patterns. Enforcing requires
-# per-deployment policy tuning that is out of scope for this collection.
+# Why permissive by default: the cluster roles (mongodb, patroni) bind
+# container ports to host IPs, mount data dirs, run as non-root inside
+# containers, and rely on inter-node TCP. The shipped targeted policy is
+# conservative and regularly produces AVC denials for these patterns.
+# Enforcing requires per-deployment policy tuning that is out of scope for
+# this collection.
 #
 # Permissive (not disabled): kernel still labels objects, AVC denials
 # still hit the audit log, but nothing is blocked. Easy to switch back
@@ -14,6 +16,14 @@
 #
 # New FCOS provisions get this via fcos.bu.j2 at first boot. This task
 # brings existing hosts (and non-FCOS RedHat-family hosts) up to date.
+#
+# Runtime caveat: `setenforce` only toggles Enforcing<->Permissive. A move
+# to/from `disabled` only takes full effect after a reboot — we persist it
+# in /etc/selinux/config and flag that a reboot is pending.
+
+- name: Resolve desired SELinux mode
+  ansible.builtin.set_fact:
+    _selinux_desired: "{{ instance_selinux_mode | default('permissive') }}"
 
 - name: Probe current SELinux mode
   ansible.builtin.command: getenforce
@@ -21,46 +31,62 @@
   changed_when: false
   failed_when: false
 
-- name: Set SELinux to permissive (runtime)
-  ansible.builtin.command: setenforce 0
+# setenforce can only flip Enforcing<->Permissive at runtime; it cannot
+# load/unload the policy (that's the disabled<->{enforcing,permissive}
+# transition, which needs a reboot). So we only act when the desired mode
+# is enforcing/permissive AND the host is currently in one of those two.
+- name: Set SELinux runtime mode (setenforce)
+  ansible.builtin.command: "setenforce {{ '1' if _selinux_desired == 'enforcing' else '0' }}"
   changed_when: true
-  when: _selinux_current.stdout | default('') == 'Enforcing'
+  when:
+    - _selinux_desired in ['permissive', 'enforcing']
+    - _selinux_current.stdout | default('') in ['Enforcing', 'Permissive']
+    - _selinux_current.stdout | default('') != (_selinux_desired | capitalize)
 
-- name: Persist SELinux=permissive in /etc/selinux/config
+- name: Persist SELinux mode in /etc/selinux/config
   ansible.builtin.lineinfile:
     path: /etc/selinux/config
     regexp: "^SELINUX="
-    line: "SELINUX=permissive"
+    line: "SELINUX={{ _selinux_desired }}"
     state: present
     create: false
   register: _selinux_persisted
   failed_when: false # /etc/selinux/config may be absent on some minimal images
 
-- name: Re-probe SELinux mode after setenforce
+- name: Re-probe SELinux mode after change
   ansible.builtin.command: getenforce
   register: _selinux_after
   changed_when: false
   failed_when: false
 
+# Precompute the report fragments so the assert's success_msg stays short
+# and free of inline {%- if -%} blocks. `_selinux_reboot` flags the
+# disabled<->loaded transition that only fully lands after a reboot.
+- name: Compose SELinux report fragments
+  ansible.builtin.set_fact:
+    _selinux_acceptable: "{{ {'permissive': ['Permissive', 'Disabled', ''], 'enforcing': ['Enforcing', 'Disabled', ''], 'disabled': ['Permissive', 'Enforcing', 'Disabled', '']}[_selinux_desired] }}"
+    _selinux_was_note: "{{ ' (was ' ~ _selinux_current.stdout ~ ')' if _selinux_current.stdout | default('') not in ['', _selinux_after.stdout | default('')] else '' }}"
+    _selinux_reboot: "{{ 'yes — running mode differs from persisted mode' if (_selinux_after.stdout | default('') | lower) not in ['', _selinux_desired] else 'no' }}"
+
 # Verifying the post-state catches the silent-failure case where
-# `setenforce 0` exits 0 but doesn't actually change the mode (locked
-# config, custom kernel, etc.). Acceptable post-states are Permissive,
-# Disabled, or empty (no SELinux on this host) — anything else means our
-# attempted switch didn't land. Doubles as the SELinux state report
-# (success_msg). The previous standalone debug printing the same info is
-# gone; `quiet:` is tied to the global `debug` flag so the output stays
-# opt-in.
-- name: Assert SELinux is no longer enforcing
+# `setenforce` exits 0 but doesn't actually change the mode (locked
+# config, custom kernel, etc.). Acceptable post-states are mode-specific:
+#   - permissive: Permissive / Disabled / '' (no SELinux on this host)
+#   - enforcing:  Enforcing / Disabled (was disabled — reboot pending) / ''
+#   - disabled:   anything (runtime can't unload policy — reboot pending)
+# Doubles as the SELinux state report (success_msg). `quiet:` is tied to
+# the global `debug` flag so the per-condition output stays opt-in.
+- name: Assert SELinux reached an acceptable state
   ansible.builtin.assert:
     that:
-      - _selinux_after.stdout | default('') in ['Permissive', 'Disabled', '']
+      - _selinux_after.stdout | default('') in _selinux_acceptable
     fail_msg: >-
-      Expected SELinux to be Permissive (or Disabled) after this task,
-      got '{{ _selinux_after.stdout | default('?') }}'. setenforce 0 may
-      have failed silently — check `dmesg` / `audit.log` for relevant
-      errors, or whether SELinux is locked at the boot-arg level.
+      Expected SELinux to be '{{ _selinux_desired }}' after this task, got
+      running mode '{{ _selinux_after.stdout | default('?') }}'. setenforce
+      may have failed silently — check `dmesg` / `audit.log`, or whether
+      SELinux is locked at the boot-arg level.
     success_msg:
-      - >-
-        SELinux mode: {{ _selinux_after.stdout | default('unknown') }}{%- if _selinux_current.stdout | default('') == 'Enforcing' %} (was Enforcing, switched at runtime){%- endif %}.
-      - >-
-        Persisted in /etc/selinux/config: {{ 'yes' if not (_selinux_persisted is failed) else 'no (file absent)' }}.
+      - "SELinux desired '{{ _selinux_desired }}', running '{{ _selinux_after.stdout | default('unknown') }}'{{ _selinux_was_note }}."
+      - "Persisted in /etc/selinux/config: {{ 'yes' if not (_selinux_persisted is failed) else 'no (file absent)' }}."
+      - "Reboot pending: {{ _selinux_reboot }}."
+    quiet: "{{ not (debug | bool) }}"

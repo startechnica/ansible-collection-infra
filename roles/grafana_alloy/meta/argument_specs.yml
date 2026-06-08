@@ -1,0 +1,174 @@
+---
+argument_specs:
+  main:
+    short_description: Deploy Grafana Alloy as a container (logs/metrics/traces)
+    description:
+      - Runs one Grafana Alloy container per host via docker (compose) or podman (Quadlet), selected by `container_engine`.
+      - Assembles config.alloy from per-pipeline toggles — logs to Loki, metrics to Prometheus, traces to Tempo. Backend passwords are kept out of config.alloy (written to an
+        EnvironmentFile and read with sys.env()).
+      - Dispatches on `grafana_alloy_action`; default is provision.
+    options:
+      debug:
+        type: bool
+        default: false
+        description: Verbose / introspection output. `| bool` filter still applied in tasks because CLI `-e debug=true` arrives as a string.
+      grafana_alloy_enabled:
+        type: bool
+        default: false
+        description: Master on/off switch. When false the role is a no-op.
+      grafana_alloy_action:
+        type: str
+        default: provision
+        choices: [provision, restart, status, uninstall]
+        description: Which sub-flow to run.
+      grafana_alloy_container_engine:
+        type: str
+        default: "{{ container_engine | default('podman') }}"
+        choices: [docker, podman]
+        description: Authoritative engine selector for this role. Falls back to the host-wide container_engine (podman by default).
+
+      grafana_alloy_version:
+        type: str
+        default: "v1.12.1"
+        description: Alloy image tag.
+      grafana_alloy_image_registry:
+        type: str
+        default: docker.io
+      grafana_alloy_image_repository:
+        type: str
+        default: grafana/alloy
+      grafana_alloy_image_tag:
+        type: str
+        default: "{{ grafana_alloy_version }}"
+        description: Defaults to grafana_alloy_version.
+
+      grafana_alloy_root_dir:
+        type: str
+        default: /opt/grafana-alloy
+        description: Umbrella dir holding config.alloy, alloy.env, the WAL data dir, and (docker) docker-compose.yml.
+      grafana_alloy_data_dir:
+        type: str
+        default: "{{ grafana_alloy_root_dir }}/data"
+      grafana_alloy_config_file:
+        type: str
+        default: "{{ grafana_alloy_root_dir }}/config.alloy"
+      grafana_alloy_env_file:
+        type: str
+        default: "{{ grafana_alloy_root_dir }}/alloy.env"
+        description: Credentials EnvironmentFile (mode 0600). Rendered only when a backend password is set.
+
+      grafana_alloy_mem_limit_mb:
+        type: int
+        default: 256
+        description: Container memory limit (MB). Also passed to preflight as container_mem_request_mb.
+      grafana_alloy_network_mode:
+        type: str
+        default: host
+        description: Docker network_mode / Podman networking. host is required for accurate node metrics and host-bound OTLP receivers.
+
+      grafana_alloy_listen_address:
+        type: str
+        default: "0.0.0.0"
+        description: Bind address for the Alloy HTTP server (web UI + /metrics) and the OTLP receivers.
+      grafana_alloy_listen_port:
+        type: int
+        default: 12345
+        description: Alloy HTTP server port (web UI at http://host:port).
+      grafana_alloy_log_level:
+        type: str
+        default: info
+        choices: [debug, info, warn, error]
+
+      grafana_alloy_cluster_label:
+        type: str
+        default: ""
+        description: Optional `cluster` label stamped on all logs and metrics.
+
+      # ── Logs → Loki ──
+      grafana_alloy_logs_enabled:
+        type: bool
+        default: true
+        description: Ship the systemd journal to Loki.
+      grafana_alloy_loki_url:
+        type: str
+        default: ""
+        description: Loki push endpoint (.../loki/api/v1/push). Required when grafana_alloy_logs_enabled.
+      grafana_alloy_loki_username:
+        type: str
+        default: ""
+        description: Basic-auth username (Grafana Cloud — numeric instance id). Empty = no auth.
+      grafana_alloy_loki_password:
+        type: str
+        default: ""
+        no_log: true
+        description: Basic-auth password / API token. Written to alloy.env, read via sys.env() — never placed in config.alloy.
+      grafana_alloy_loki_tenant_id:
+        type: str
+        default: ""
+        description: X-Scope-OrgID for multi-tenant Loki (optional).
+      grafana_alloy_journal_max_age:
+        type: str
+        default: "12h"
+        description: How far back to read the journal on first start.
+
+      # ── Metrics → Prometheus ──
+      grafana_alloy_metrics_enabled:
+        type: bool
+        default: true
+        description: Scrape host metrics and remote_write to Prometheus.
+      grafana_alloy_prometheus_url:
+        type: str
+        default: ""
+        description: Prometheus remote_write endpoint. Required when grafana_alloy_metrics_enabled.
+      grafana_alloy_prometheus_username:
+        type: str
+        default: ""
+      grafana_alloy_prometheus_password:
+        type: str
+        default: ""
+        no_log: true
+        description: Written to alloy.env, read via sys.env().
+      grafana_alloy_scrape_interval:
+        type: str
+        default: "60s"
+      grafana_alloy_node_exporter_enabled:
+        type: bool
+        default: true
+        description: Enable the built-in unix/node exporter (reads bind-mounted /host/proc, /host/sys, /rootfs).
+
+      # ── Traces → Tempo ──
+      grafana_alloy_traces_enabled:
+        type: bool
+        default: true
+        description: Run an OTLP receiver and forward traces to Tempo.
+      grafana_alloy_tempo_url:
+        type: str
+        default: ""
+        description: Tempo OTLP endpoint (grpc host:port, or http(s) URL). Required when grafana_alloy_traces_enabled.
+      grafana_alloy_tempo_username:
+        type: str
+        default: ""
+      grafana_alloy_tempo_password:
+        type: str
+        default: ""
+        no_log: true
+        description: Written to alloy.env, read via sys.env().
+      grafana_alloy_tempo_protocol:
+        type: str
+        default: grpc
+        choices: [grpc, http]
+        description: OTLP transport to Tempo. grpc → otelcol.exporter.otlp; http → otelcol.exporter.otlphttp.
+      grafana_alloy_otlp_grpc_port:
+        type: int
+        default: 4317
+        description: Local OTLP/gRPC receiver port.
+      grafana_alloy_otlp_http_port:
+        type: int
+        default: 4318
+        description: Local OTLP/HTTP receiver port.
+
+      # ── Uninstall ──
+      grafana_alloy_destroy_data:
+        type: bool
+        default: false
+        description: On uninstall, also delete grafana_alloy_root_dir.

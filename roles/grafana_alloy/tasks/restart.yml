@@ -1,0 +1,12 @@
+---
+- name: Restart Grafana Alloy (docker)
+  community.docker.docker_compose_v2:
+    project_src: "{{ grafana_alloy_root_dir }}"
+    state: restarted
+  when: grafana_alloy_container_engine == 'docker'
+
+- name: Restart Grafana Alloy (podman, systemd-managed)
+  ansible.builtin.systemd:
+    name: grafana-alloy.service
+    state: restarted
+  when: grafana_alloy_container_engine == 'podman'

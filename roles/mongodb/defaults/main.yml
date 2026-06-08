@@ -24,6 +24,13 @@ mongodb_mongod_data_dir: "{{ mongodb_root_dir }}/data/mongod"
 mongodb_configsvr_data_dir: "{{ mongodb_root_dir }}/data/configsvr"
 mongodb_tls_dir: "{{ mongodb_root_dir }}/ssl"
 
+# ── Container engine ──
+# Per-role selector for the container runtime. Falls back to the global
+# `container_engine` (defaults to 'podman' here when neither is set).
+# Set this directly to run mongodb on a different engine than patroni
+# / other roles on the same host group.
+mongodb_container_engine: "{{ container_engine | default('podman') }}"
+
 # ── Container image ──
 mongodb_image_registry: docker.io
 mongodb_image_repository: mongo
@@ -149,9 +156,13 @@ mongodb_sysctl:
 mongodb_ulimit_nofile: 64000
 
 # ── Local artifacts (on the Ansible controller) ──
-# artifacts_dir is set by playbooks/mongodb/_setup.yml on localhost only,
-# because add_host nodes have inventory_file == None.
-mongodb_local_certs_dir: "{{ hostvars['localhost'].artifacts_dir }}/mongodb/certs"
+# Single bridge from the play-level `artifacts_dir` (set on localhost by
+# playbooks/mongodb/_setup.yml — add_host nodes have inventory_file == None,
+# so we can only stash it there). All in-role paths derive from
+# `mongodb_artifacts_dir` so a consumer can override one var to relocate
+# every mongodb artifact (creds, certs, etc.).
+mongodb_artifacts_dir: "{{ hostvars['localhost'].artifacts_dir }}/mongodb"
+mongodb_local_certs_dir: "{{ mongodb_artifacts_dir }}/certs"
 
 # ── Uninstall safety ──
 mongodb_destroy_prune: false

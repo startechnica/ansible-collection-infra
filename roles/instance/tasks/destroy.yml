@@ -43,6 +43,9 @@
 - name: Validate vCenter credentials
   ansible.builtin.include_tasks: validate/vcenter.yml
 
+- name: Validate datacenter exists on vCenter
+  ansible.builtin.include_tasks: validate/datacenter.yml
+
 - name: Validate inventory inputs
   ansible.builtin.include_tasks: validate/input.yml
 

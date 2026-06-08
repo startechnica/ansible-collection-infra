@@ -207,6 +207,22 @@ Written to `playbooks/artifacts/<inventory-stem>/mongodb/`:
 
 ## Gotchas
 
+- **MongoDB 8 breaks on Linux kernel ≥ 6.19** — `mongod` refuses to start
+  (`MongoDB cannot start: Linux kernel versions 6.19 and newer has a known
+  incompatibility...`). The `preflight` task
+  ([tasks/preflight.yml](tasks/preflight.yml)) asserts the kernel is `< 6.19`
+  before install. **The kernel bump lands WITHIN a single FCOS major release**,
+  so pinning FCOS 43 alone is not enough:
+
+  | FCOS build | Kernel | MongoDB 8 |
+  |---|---|---|
+  | `43.20260217.3.1` | 6.18 | ✅ works |
+  | `43.20260413.3.2` | 6.19 | ❌ broken |
+
+  Pin the host to an FCOS build with kernel `< 6.19`, or bypass with
+  `mongodb_skip_kernel_check: true` **only** after verifying mongo actually runs
+  on your kernel — running with the check disabled on an incompatible kernel
+  crashes containers in a tight loop.
 - **FCV (featureCompatibilityVersion)** is NOT auto-bumped on version upgrade. After a major upgrade (6→7, 7→8), run `db.adminCommand({setFeatureCompatibilityVersion: "7.0"})` manually after a soak period.
 - **Auto-generated admin password persists** — once `admin.password` exists in the artifacts dir, it's reused on every run. Delete the file if you want a fresh password.
 - **Cert rotation is zero-downtime** — renew-certs.yml uses a rolling restart, one node at a time. The CA is NOT rotated unless you explicitly do so (breaking change).

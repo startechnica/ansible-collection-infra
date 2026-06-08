@@ -372,6 +372,24 @@ instance_user_password: ""
 ##
 instance_ssh_port: 22
 instance_ssh_configs: {}
+
+## @section SELinux (RedHat / Fedora family)
+## @description SELinux mode applied to RedHat-family guests (RHEL, Rocky, Alma,
+## CentOS Stream, Fedora, FCOS, RHCOS). Set both at FCOS first boot (butane
+## /etc/selinux/config) and reasserted on existing hosts by the preflight role.
+## No-op on non-RedHat families (Debian/Ubuntu/Suse).
+##
+## @param instance_selinux_mode [default: permissive] One of:
+##   - permissive (default): kernel still labels objects and AVC denials still
+##       hit the audit log, but nothing is blocked. The cluster roles (mongodb,
+##       patroni) bind container ports to host IPs, mount data dirs, and rely on
+##       inter-node TCP — the shipped targeted policy regularly produces denials
+##       for these patterns, so enforcing would need per-deployment tuning.
+##   - enforcing: standard targeted policy is enforced. Expect to tune policy.
+##   - disabled: no policy loaded (requires a reboot to fully take effect).
+## The default is the explicit string `permissive` (not empty) so the active
+## mode is always visible in inventory rather than implied.
+instance_selinux_mode: permissive
 # # @section First-Boot Parameters
 # # @description Packages and commands to run on first boot. Used by both cloud-init and ignition.
 # # For cloud-init: packages are installed via apt/dnf, instance_runcmds run as shell commands.
@@ -477,7 +495,7 @@ vcenter_permission_propagate: false
 ## Distro is selected via `instance_platform_preset` (one of fedora-coreos,
 ## flatcar, rhel-coreos, opensuse-microos). Consumers read the matching
 ## row's `ignition:` sub-dict directly via
-## `_os_preset.ignition.<field>` (published as a host fact by
+## `_platform_preset.ignition.<field>` (published as a host fact by
 ## `common/tasks/resolve_platform_preset.yml`). To pin a custom Butane
 ## template / variant / spec version, override the row in inventory via
 ## `instance_netbox_platform_map` rather than threading new flat knobs.

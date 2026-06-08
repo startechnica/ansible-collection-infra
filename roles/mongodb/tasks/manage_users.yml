@@ -35,7 +35,7 @@
 
 - name: Create artifacts directory
   ansible.builtin.file:
-    path: "{{ hostvars['localhost'].artifacts_dir }}/mongodb"
+    path: "{{ mongodb_artifacts_dir }}"
     state: directory
     mode: "0700"
   delegate_to: localhost
@@ -52,7 +52,7 @@
 - name: Save database credentials and URIs
   ansible.builtin.template:
     src: user-credentials.txt.j2
-    dest: "{{ hostvars['localhost'].artifacts_dir }}/mongodb/{{ item.0.name }}-{{ item.1.name }}.txt"
+    dest: "{{ mongodb_artifacts_dir }}/{{ item.0.name }}-{{ item.1.name }}.txt"
     mode: "0600"
   vars:
     _db: "{{ item.0 }}"
@@ -70,7 +70,7 @@
 - name: Save admin credentials to artifacts
   ansible.builtin.template:
     src: admin-credentials-artifact.txt.j2
-    dest: "{{ hostvars['localhost'].artifacts_dir }}/mongodb/admin.txt"
+    dest: "{{ mongodb_artifacts_dir }}/admin.txt"
     mode: "0600"
   delegate_to: localhost
   become: false
@@ -80,6 +80,6 @@
 
 - name: Display artifacts location
   ansible.builtin.debug:
-    msg: "Credentials saved to {{ hostvars['localhost'].artifacts_dir }}/mongodb/"
+    msg: "Credentials saved to {{ mongodb_artifacts_dir }}/"
   run_once: true
   when: mongodb_databases | length > 0

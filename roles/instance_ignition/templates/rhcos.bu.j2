@@ -18,8 +18,8 @@
  # openshift docs for the spec version that matches your cluster's OCP
  # minor (4.16+ typically uses openshift 4.16.0 spec).
  # ─────────────────────────────────────────────────────────────────────── #}
-variant: {{ _os_preset.ignition.butane_variant }}
-version: {{ _os_preset.ignition.butane_spec_version }}
+variant: {{ _platform_preset.ignition.butane_variant }}
+version: {{ _platform_preset.ignition.butane_spec_version }}
 
 passwd:
   users:

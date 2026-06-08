@@ -364,6 +364,20 @@ argument_specs:
           overrides) this role-level one. Do NOT put `Port` here — use
           `instance_ssh_port` above (Port removed from this dict in 1.0.1).
 
+      # ── SELinux (optional, RedHat family) ──
+      instance_selinux_mode:
+        type: str
+        default: permissive
+        choices: [permissive, enforcing, disabled]
+        description: >-
+          SELinux mode for RedHat-family guests (RHEL, Rocky, Alma, CentOS
+          Stream, Fedora, FCOS, RHCOS). Written to /etc/selinux/config at FCOS
+          first boot and reasserted on existing hosts by the preflight role;
+          no-op on non-RedHat families. Defaults to `permissive` because the
+          cluster roles regularly trip the shipped targeted policy; `enforcing`
+          and `disabled` are honoured but `disabled` needs a reboot to fully
+          take effect.
+
       # ── Permissions (optional) ──
       vcenter_principal_user:
         type: str

@@ -8,7 +8,7 @@
     msg:
       - "╔══════════════════════════════════════════════════════════════╗"
       - "║  WARNING: Patroni UNINSTALL on {{ inventory_hostname }}"
-      - "║  Engine:      {{ container_engine | default('docker') }}"
+      - "║  Engine:      {{ patroni_container_engine }}"
       - "║  Patroni dir: {{ patroni_dir }}"
       - "║  Prune data:  {{ patroni_destroy_prune }}"
       - "╚══════════════════════════════════════════════════════════════╝"

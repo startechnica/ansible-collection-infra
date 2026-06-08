@@ -28,6 +28,9 @@
 - name: Validate vCenter credentials
   ansible.builtin.include_tasks: validate/vcenter.yml
 
+- name: Validate datacenter exists on vCenter
+  ansible.builtin.include_tasks: validate/datacenter.yml
+
 - name: Ensure instance folder exists (idempotent)
   ansible.builtin.include_tasks: folder.yml
 

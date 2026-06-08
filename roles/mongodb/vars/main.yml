@@ -20,6 +20,44 @@ mongodb_image: "{{ mongodb_image_registry }}/{{ mongodb_image_repository }}:{{ m
 # and `localhost:27017` always reaches mongos — to talk to mongod or
 # configsvr from inside their own container we have to use the actual
 # port the service is bound to on host.
-mongodb_mongod_exec_port: "{{ 27017 if (container_engine | default('docker')) == 'docker' else mongodb_mongod_node_port }}"
-mongodb_configsvr_exec_port: "{{ 27017 if (container_engine | default('docker')) == 'docker' else mongodb_configsvr_node_port }}"
-mongodb_mongos_exec_port: "{{ 27017 if (container_engine | default('docker')) == 'docker' else mongodb_mongos_node_port }}"
+mongodb_mongod_exec_port: "{{ 27017 if mongodb_container_engine == 'docker' else mongodb_mongod_node_port }}"
+mongodb_configsvr_exec_port: "{{ 27017 if mongodb_container_engine == 'docker' else mongodb_configsvr_node_port }}"
+mongodb_mongos_exec_port: "{{ 27017 if mongodb_container_engine == 'docker' else mongodb_mongos_node_port }}"
+
+# Public service catalog — consumed by:
+#   - roles/mongodb/tasks/netbox_register_services.yml  (NetBox registration)
+#   - roles/firewall/tasks/main.yml                     (auto-include ports)
+# Two underscore-prefixed candidates + one public selector keyed on
+# mongodb_cluster_type. Lazy-evaluated, so changes to port vars in
+# defaults/inventory propagate without re-rendering anything.
+_mongodb_services_sharded:
+  - name: mongos
+    port: "{{ mongodb_mongos_node_port | int }}"
+    protocol: tcp
+    description: "MongoDB query router"
+  - name: mongod
+    port: "{{ mongodb_mongod_node_port | int }}"
+    protocol: tcp
+    description: "MongoDB shard server"
+  - name: configsvr
+    port: "{{ mongodb_configsvr_node_port | int }}"
+    protocol: tcp
+    description: "MongoDB config server"
+  - name: mongodb-exporter
+    port: "{{ mongodb_exporter_port | int }}"
+    protocol: tcp
+    description: "Prometheus MongoDB exporter"
+
+_mongodb_services_replicaset:
+  - name: mongod
+    port: "{{ mongodb_mongod_node_port | int }}"
+    protocol: tcp
+    description: "MongoDB replica set member"
+  - name: mongodb-exporter
+    port: "{{ mongodb_exporter_port | int }}"
+    protocol: tcp
+    description: "Prometheus MongoDB exporter"
+
+mongodb_services: >-
+  {{ _mongodb_services_sharded if mongodb_cluster_type == 'sharded'
+     else _mongodb_services_replicaset }}

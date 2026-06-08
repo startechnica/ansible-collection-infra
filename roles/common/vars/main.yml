@@ -522,7 +522,7 @@ _platform_map:
 # roles/instance/defaults/main.yml so the empty-check at (1) works —
 # non-empty defaults would short-circuit the slug lookup and the preset
 # would never kick in.
-_os_preset: >-
+_platform_preset: >-
   {{ _platform_map[instance_platform_preset]
      if (instance_platform_preset | default('') | length > 0
          and instance_platform_preset in _platform_map)
@@ -530,33 +530,34 @@ _os_preset: >-
 _resolved_content_library_name: >-
   {{ content_library_name
      if (content_library_name | default('') | length > 0)
-     else (_os_preset.content_library_name | default('')) }}
+     else (_platform_preset.content_library_name | default('')) }}
 _resolved_content_library_item_name: >-
   {{ content_library_item_name
      if (content_library_item_name | default('') | length > 0)
-     else (_os_preset.content_library_item_name | default('')) }}
+     else (_platform_preset.content_library_item_name | default('')) }}
 _resolved_instance_user_name: >-
   {{ instance_user_name
      if (instance_user_name | default('') | length > 0)
-     else (_os_preset.username | default('ubuntu')) }}
+     else (_platform_preset.username | default('ubuntu')) }}
 _resolved_instance_init_type: >-
   {{ instance_init_type
      if (instance_init_type | default('') | length > 0)
-     else (_os_preset.init_type | default('ignition')) }}
+     else (_platform_preset.init_type | default('ignition')) }}
 _resolved_container_engine: >-
   {{ container_engine
      if (container_engine | default('') | length > 0)
-     else (_os_preset.container_engine | default('podman')) }}
+     else (_platform_preset.container_engine | default('podman')) }}
 _resolved_ignition_channel: >-
   {{ ignition_channel
      if (ignition_channel | default('') | length > 0)
-     else (_os_preset.ignition.default_channel | default('')) }}
+     else (_platform_preset.ignition.default_channel | default('')) }}
 
 # Inverse lookup: vSphere guestId → NetBox platform slug. Derived from
 # `_platform_map` so there's a single source of truth. Resolution chain
 # at the consumer:
 #   item.netbox_platform                           # explicit per-VM
 #   netbox_device_platform                         # role-level default
+#   instance_platform_preset                       # OS preset (when above empty)
 #   instance_netbox_platform_map[guest_id]         # user-override map
 #   _vsphere_guest_id_platform_map[guest_id]       # canonical (this file)
 #   ''                                             # unmapped → caller decides

@@ -1,0 +1,26 @@
+---
+# Datacenter existence check — runs after vCenter creds and before
+# folder.yml, because the folder and every later vmware module call
+# (datastore/template lookup, deploys) targets `instance_datacenter`.
+# Catching a typo'd/missing datacenter here gives one clear error
+# instead of a confusing failure deep in a downstream module.
+- name: "Look up datacenters on vCenter — {{ vcenter_connect.hostname }}"
+  community.vmware.vmware_datacenter_info:
+    hostname: "{{ vcenter_connect.hostname }}"
+    username: "{{ vcenter_connect.username }}"
+    password: "{{ vcenter_connect.password }}"
+    validate_certs: "{{ vcenter_connect.validate_certs }}"
+  delegate_to: localhost
+  run_once: true
+  register: datacenter_info
+  changed_when: false
+
+- name: "Assert instance_datacenter exists — {{ instance_datacenter }}"
+  ansible.builtin.assert:
+    that: instance_datacenter in (datacenter_info.datacenter_info | default([]) | map(attribute='name') | list)
+    fail_msg:
+      - "Datacenter '{{ instance_datacenter }}' not found on vCenter '{{ vcenter_connect.hostname }}'."
+      - "Available datacenters: {{ datacenter_info.datacenter_info | default([]) | map(attribute='name') | list | join(', ') }}"
+    success_msg: "Datacenter '{{ instance_datacenter }}' found on vCenter '{{ vcenter_connect.hostname }}'."
+    quiet: true
+  run_once: true
