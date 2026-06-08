@@ -92,6 +92,8 @@
       --user {{ mongodb_uid }}:{{ mongodb_gid }} \
       --memory {{ mongodb_pbm_mem_limit_mb }}m \
       --entrypoint /bin/bash \
+      -e AWS_REQUEST_CHECKSUM_CALCULATION=when_required \
+      -e AWS_RESPONSE_CHECKSUM_VALIDATION=when_required \
       -v {{ mongodb_tls_dir }}/pbm-agent.pem:/etc/mongo/ssl/pbm-agent.pem:ro \
       -v {{ mongodb_tls_dir }}/ca.pem:/etc/mongo/ssl/ca.pem:ro \
       -v {{ mongodb_root_dir }}/pbm/pbm-config.yaml:/etc/pbm/pbm-config.yaml:ro \

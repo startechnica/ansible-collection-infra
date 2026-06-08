@@ -37,6 +37,13 @@ Exec=-c "exec pbm-agent"
 Network=host
 
 Environment=PBM_MONGODB_URI=mongodb://localhost:{{ _pbm_agent.port }}/?authMechanism=MONGODB-X509&authSource=$external&tls=true&tlsCertificateKeyFile=/etc/mongo/ssl/pbm-agent.pem&tlsCAFile=/etc/mongo/ssl/ca.pem
+# AWS SDK Go v2 (PBM 2.11) defaults request checksums to "when_supported",
+# adding CRC32 trailing checksums + aws-chunked streaming uploads that many
+# S3-compatible gateways (Ceph RGW, MinIO, custom) reject — surfacing as
+# "XAmzContentSHA256Mismatch" on PutObject. Force "when_required" to send plain
+# SigV4 bodies like wal-g does.
+Environment=AWS_REQUEST_CHECKSUM_CALCULATION=when_required
+Environment=AWS_RESPONSE_CHECKSUM_VALIDATION=when_required
 
 Volume={{ mongodb_tls_dir }}/pbm-agent.pem:/etc/mongo/ssl/pbm-agent.pem:ro,Z
 Volume={{ mongodb_tls_dir }}/ca.pem:/etc/mongo/ssl/ca.pem:ro,z
