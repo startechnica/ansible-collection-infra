@@ -85,6 +85,15 @@
     client_name: exporter
   when: mongodb_exporter_enabled | bool
 
+# ── Generate PBM agent client cert ──
+
+- name: Generate PBM agent certificate
+  ansible.builtin.include_tasks: _generate_client_cert.yml
+  vars:
+    client_cn: "{{ mongodb_pbm_cn }}"
+    client_name: pbm-agent
+  when: mongodb_pbm_enabled | bool
+
 # ── Distribute to remote hosts ──
 
 - name: Create SSL directory on remote hosts
@@ -134,3 +143,16 @@
     - exporter.pem
     - exporter.crt
   when: mongodb_exporter_enabled | bool
+
+- name: Distribute PBM agent cert
+  ansible.builtin.copy:
+    src: "{{ mongodb_local_certs_dir }}/{{ inventory_hostname }}/{{ item }}"
+    dest: "{{ mongodb_tls_dir }}/{{ item }}"
+    owner: "{{ mongodb_uid }}"
+    group: "{{ mongodb_gid }}"
+    mode: "{{ '0400' if item.endswith('.key') or item.endswith('.pem') else '0444' }}"
+  loop:
+    - pbm-agent.key
+    - pbm-agent.pem
+    - pbm-agent.crt
+  when: mongodb_pbm_enabled | bool

@@ -19,7 +19,7 @@ argument_specs:
       mongodb_action:
         type: str
         default: provision
-        choices: [provision, init, backup, restore, status, renew-certs, upgrade, uninstall]
+        choices: [provision, init, backup, restore, status, renew-certs, upgrade, uninstall, pbm-backup, pbm-restore, pbm-status]
         description: Which sub-flow to run. Most day-2 playbooks override this.
 
       mongodb_cluster_type:
@@ -194,6 +194,44 @@ argument_specs:
       mongodb_exporter_port:
         type: int
         default: 9216
+
+      # ── Percona Backup for MongoDB (PBM) ──
+      mongodb_pbm_enabled:
+        type: bool
+        default: false
+        description: >
+          Deploy PBM agents for cluster-consistent backups + PITR. Required for
+          sharded-cluster PITR (mongodump --oplog can't run via mongos). One
+          agent per local mongod (2/host sharded, 1/host replicaset).
+      mongodb_pbm_image:
+        type: str
+        default: "docker.io/percona/percona-backup-mongodb:2.11.0"
+      mongodb_pbm_cn:
+        type: str
+        default: mongodb-pbm
+        description: X.509 CN the PBM agent presents (mapped to a $external user).
+      mongodb_pbm_mem_limit_mb:
+        type: int
+        default: 256
+      mongodb_pbm_pitr:
+        type: bool
+        default: false
+        description: Enable continuous oplog slicing for point-in-time recovery.
+      mongodb_pbm_compression:
+        type: str
+        default: s2
+        choices: [none, gzip, snappy, lz4, s2, zstd]
+      mongodb_pbm_schedule:
+        type: str
+        default: ""
+        description: >
+          Optional systemd OnCalendar for scheduled `pbm backup` (empty =
+          on-demand / PITR-only).
+      mongodb_pbm_x509_subject:
+        type: str
+        description: >
+          Full X.509 subject DN the PBM $external user is created with. Defaults
+          to CN=<mongodb_pbm_cn>,OU=<client OU>,O=<org>.
 
       # ── Backup ──
       mongodb_backup_dir:

@@ -1,0 +1,25 @@
+---
+# Show PBM agent/storage state, the PITR window, and the backup list.
+# Invoked via `mongodb_action: pbm-status` or playbooks/mongodb/pbm-status.yml.
+
+- name: Resolve PBM control container
+  ansible.builtin.set_fact:
+    _pbm_control: "{{ 'mongodb-pbm-config' if mongodb_cluster_type == 'sharded' else 'mongodb-pbm-shard' }}"
+  run_once: true
+
+- name: Query PBM status
+  ansible.builtin.command: "{{ mongodb_container_engine }} exec {{ _pbm_control }} pbm status"
+  register: _pbm_status
+  changed_when: false
+  run_once: true
+
+- name: Query PBM backup list
+  ansible.builtin.command: "{{ mongodb_container_engine }} exec {{ _pbm_control }} pbm list"
+  register: _pbm_list
+  changed_when: false
+  run_once: true
+
+- name: Show PBM status + backups
+  ansible.builtin.debug:
+    msg: "{{ (_pbm_status.stdout_lines | default([])) + ['', '── backups ──'] + (_pbm_list.stdout_lines | default([])) }}"
+  run_once: true

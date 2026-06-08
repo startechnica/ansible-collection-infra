@@ -1,0 +1,22 @@
+---
+# On-demand Percona Backup for MongoDB backup — cluster-consistent logical
+# snapshot to the configured S3 store. `--wait` blocks until it completes.
+# Invoked via `mongodb_action: pbm-backup` or playbooks/mongodb/pbm-backup.yml.
+
+- name: Resolve PBM control container
+  ansible.builtin.set_fact:
+    _pbm_control: "{{ 'mongodb-pbm-config' if mongodb_cluster_type == 'sharded' else 'mongodb-pbm-shard' }}"
+  run_once: true
+
+- name: Run PBM backup (waits for completion)
+  ansible.builtin.command: >
+    {{ mongodb_container_engine }} exec {{ _pbm_control }}
+    pbm backup --compression={{ mongodb_pbm_compression }} --wait
+  register: _pbm_backup
+  changed_when: true
+  run_once: true
+
+- name: Show PBM backup result
+  ansible.builtin.debug:
+    msg: "{{ _pbm_backup.stdout_lines | default([]) }}"
+  run_once: true

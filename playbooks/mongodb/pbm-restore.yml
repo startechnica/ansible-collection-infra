@@ -1,0 +1,35 @@
+---
+# ─── MongoDB: Percona Backup (PBM) — restore / PITR ─────────────────────────
+#
+# WHOLE-CLUSTER, in-place restore. Disruptive: PBM stops the balancer and
+# expects no active application writes during the restore. Requires
+# mongodb_pbm_enabled: true. Specify exactly one target:
+#
+#   # restore a specific snapshot (see `pbm list` / pbm-status.yml)
+#   ansible-playbook playbooks/mongodb/pbm-restore.yml -i inventories/<inv>.yml \
+#     -e pbm_backup=2026-06-09T03:00:05Z
+#
+#   # point-in-time restore (requires mongodb_pbm_pitr: true)
+#   ansible-playbook playbooks/mongodb/pbm-restore.yml -i inventories/<inv>.yml \
+#     -e pbm_target='2026-06-09T12:30:00'
+
+- name: Setup mongodb hosts
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Build host group from instances
+      ansible.builtin.include_tasks: _setup.yml
+
+- name: PBM restore
+  hosts: mongodb_nodes
+  become: true
+  gather_facts: true
+  pre_tasks:
+    - name: Inherit localhost vars
+      ansible.builtin.include_role:
+        name: common
+        tasks_from: inherit_localhost_vars
+  roles:
+    - role: mongodb
+      vars:
+        mongodb_action: pbm-restore

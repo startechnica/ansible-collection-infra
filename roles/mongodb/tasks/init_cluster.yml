@@ -294,6 +294,90 @@
       }"
   when: not _mongodb_init_marker.stat.exists
 
+# ── Create PBM x509 role + user on each replica set (when PBM enabled) ──
+# PBM agents authenticate by client cert (CN=mongodb_pbm_cn) mapped to a
+# $external user holding the PBM role set. The custom `pbmAnyAction` role
+# grants the cluster-wide privileges PBM needs beyond the built-in roles.
+# Created on every RS the agents connect to: the config RS (sharded) and the
+# shard RS. Same transitionToAuth window as the healthcheck users.
+
+- name: Create PBM role + x509 user on configsvr replica set
+  ansible.builtin.include_tasks: _container_exec.yml
+  vars:
+    _ce_purpose: "create PBM role + user on configsvr"
+    _ce_container: mongodb-configsvr
+    _ce_changed_marker: PBM_USER_CREATED
+    _ce_command: >
+      mongosh --port {{ mongodb_configsvr_exec_port }} --tls
+      --tlsCAFile /etc/mongo/ssl/ca.pem
+      --quiet --eval "
+      try {
+        try {
+          db.getSiblingDB('admin').createRole({
+            role: 'pbmAnyAction',
+            privileges: [{ resource: { anyResource: true }, actions: ['anyAction'] }],
+            roles: []
+          });
+        } catch(re) { if (!re.message.includes('already exists')) throw re; }
+        db.getSiblingDB('\$external').createUser({
+          user: '{{ mongodb_pbm_x509_subject }}',
+          roles: [
+            { db: 'admin', role: 'readWrite' },
+            { db: 'admin', role: 'backup' },
+            { db: 'admin', role: 'clusterMonitor' },
+            { db: 'admin', role: 'restore' },
+            { db: 'admin', role: 'pbmAnyAction' }
+          ]
+        });
+        print('PBM_USER_CREATED');
+      } catch(e) {
+        if (e.message.includes('already exists') || e.message.includes('not primary')) {
+          print('PBM_USER_EXISTS');
+        } else { throw e; }
+      }"
+  when:
+    - mongodb_pbm_enabled | bool
+    - _is_sharded | bool
+    - not _mongodb_init_marker.stat.exists
+
+- name: Create PBM role + x509 user on shard replica set
+  ansible.builtin.include_tasks: _container_exec.yml
+  vars:
+    _ce_purpose: "create PBM role + user on shard mongod"
+    _ce_container: mongodb-mongod
+    _ce_changed_marker: PBM_USER_CREATED
+    _ce_command: >
+      mongosh --port {{ mongodb_mongod_exec_port }} --tls
+      --tlsCAFile /etc/mongo/ssl/ca.pem
+      --quiet --eval "
+      try {
+        try {
+          db.getSiblingDB('admin').createRole({
+            role: 'pbmAnyAction',
+            privileges: [{ resource: { anyResource: true }, actions: ['anyAction'] }],
+            roles: []
+          });
+        } catch(re) { if (!re.message.includes('already exists')) throw re; }
+        db.getSiblingDB('\$external').createUser({
+          user: '{{ mongodb_pbm_x509_subject }}',
+          roles: [
+            { db: 'admin', role: 'readWrite' },
+            { db: 'admin', role: 'backup' },
+            { db: 'admin', role: 'clusterMonitor' },
+            { db: 'admin', role: 'restore' },
+            { db: 'admin', role: 'pbmAnyAction' }
+          ]
+        });
+        print('PBM_USER_CREATED');
+      } catch(e) {
+        if (e.message.includes('already exists') || e.message.includes('not primary')) {
+          print('PBM_USER_EXISTS');
+        } else { throw e; }
+      }"
+  when:
+    - mongodb_pbm_enabled | bool
+    - not _mongodb_init_marker.stat.exists
+
 # ── Switch to full auth mode ──
 #
 # Each node owns its own runtime state, so these tasks fan out per-node —

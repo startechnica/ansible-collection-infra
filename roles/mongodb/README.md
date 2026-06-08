@@ -177,6 +177,36 @@ cron, GitLab CI scheduled pipeline, Ansible Tower/AWX template, or any other
 scheduler you already use. A reference crontab is at
 [examples/crontab.example](../../examples/crontab.example).
 
+### Sharded PITR — Percona Backup for MongoDB (PBM)
+
+The `mongodump` path above gives PITR **only on replica-set** deployments —
+`mongodump --oplog` is rejected against a `mongos`, so it can't do
+cluster-consistent PITR on a **sharded** cluster. For that, enable **PBM**:
+
+```yaml
+mongodb_pbm_enabled: true
+mongodb_pbm_pitr: true            # continuous oplog slicing → restore to a timestamp
+# mongodb_pbm_schedule: "*-*-* 02:00:00"   # optional scheduled full backup
+```
+
+On the next provision run the role deploys one `pbm-agent` next to every
+data-bearing `mongod` (two per host on sharded clusters: the shard mongod +
+the configsvr; one per host on replica sets), authenticating with an X.509
+client cert (`CN=mongodb-pbm`) and storing backups in the shared `s3_*` target
+via PBM's native S3 support. Day-2:
+
+```bash
+ansible-playbook playbooks/mongodb/pbm-status.yml  -i inventories/<inv>.yml
+ansible-playbook playbooks/mongodb/pbm-backup.yml  -i inventories/<inv>.yml
+ansible-playbook playbooks/mongodb/pbm-restore.yml -i inventories/<inv>.yml -e pbm_target='2026-06-09T12:30:00'
+```
+
+**Constraints:** on the Community `mongo` image PBM does **logical** backups +
+logical PITR only (physical backups need Percona Server for MongoDB). PBM
+restore is **whole-cluster and in-place** (disruptive — no scratch-inspect
+mode like `pitr.yml`). Don't run PBM PITR and `mongodb_backup_pitr` on the same
+cluster. Design notes: [docs/design/mongodb-pbm.md](../../docs/design/mongodb-pbm.md).
+
 ## Day-2 operations
 
 | Operation | Command |
@@ -185,7 +215,10 @@ scheduler you already use. A reference crontab is at
 | On-demand backup (local + S3 if configured) | `playbooks/mongodb/backup.yml` |
 | Verify the latest backup restores cleanly | `playbooks/mongodb/verify-backup.yml` |
 | Restore from a specific mongodump | `playbooks/mongodb/restore.yml -e restore_path=...` |
-| Point-in-time recovery (oplog replay) | `playbooks/mongodb/pitr.yml -e backup_path=... -e target_time=...` (or `-e backup_source=s3`) |
+| Point-in-time recovery (oplog replay, replica-set only) | `playbooks/mongodb/pitr.yml -e backup_path=... -e target_time=...` (or `-e backup_source=s3`) |
+| PBM backup (sharded-safe, cluster-consistent) | `playbooks/mongodb/pbm-backup.yml` |
+| PBM restore / PITR (sharded) | `playbooks/mongodb/pbm-restore.yml -e pbm_backup=<name>` or `-e pbm_target='YYYY-MM-DDThh:mm:ss'` |
+| PBM status (agents, storage, PITR window, backups) | `playbooks/mongodb/pbm-status.yml` |
 | Rolling restart | `playbooks/mongodb/restart.yml` |
 | Renew leaf certificates | `playbooks/mongodb/renew-certs.yml` |
 | Rolling version upgrade | `playbooks/mongodb/upgrade.yml -e mongodb_image_tag_new=8.2.7` |
@@ -206,6 +239,7 @@ Inputs are validated by [meta/argument_specs.yml](meta/argument_specs.yml). High
 | App DBs | `mongodb_databases` (list of {name, users[{name, password, roles[]}]}) |
 | Backup local | `mongodb_backup_dir`, `mongodb_backup_retain_days`, `mongodb_backup_pitr`, `mongodb_backup_enabled`, `mongodb_backup_schedule`, `mongodb_backup_mode` |
 | Backup S3 | `s3_bucket`, `s3_endpoint`, `s3_access_key`, `s3_secret_key`, `s3_prefix` |
+| PBM (sharded PITR) | `mongodb_pbm_enabled`, `mongodb_pbm_pitr`, `mongodb_pbm_image`, `mongodb_pbm_compression`, `mongodb_pbm_schedule`, `mongodb_pbm_mem_limit_mb` |
 | Monitoring | `mongodb_exporter_enabled`, `mongodb_exporter_port` |
 | Uninstall | `mongodb_destroy_prune`, `mongodb_skip_confirm` |
 

@@ -1,0 +1,192 @@
+---
+# ─── Percona Backup for MongoDB — agent deployment + cluster config ─────────
+#
+# Runs during provisioning AFTER init_cluster.yml, so the PBM $external user +
+# role already exist and the cluster is in --auth mode. Deploys one pbm-agent
+# per local data-bearing mongod (shard mongod always; configsvr when sharded),
+# renders the storage/PITR config, applies it cluster-wide, and waits for the
+# agents to register.
+#
+#   podman → Quadlet units (systemd-managed, per role convention)
+#   docker → standalone `docker run -d` sharing each mongod's network namespace
+#
+# Agents authenticate by X.509 client cert; the connection URI uses
+# directConnection=true so each agent talks to its own node.
+
+# ── Per-node agent inventory (port from the exec_port vars: 27017 for docker's
+#    shared netns, the real host port for podman's Network=host) ──
+- name: Build PBM agent list for this node
+  ansible.builtin.set_fact:
+    _pbm_agents: >-
+      {{ [{'name': 'mongodb-pbm-shard', 'role': 'shard',
+           'svc': 'mongodb-mongod', 'port': mongodb_mongod_exec_port | int}]
+         + ([{'name': 'mongodb-pbm-config', 'role': 'config',
+              'svc': 'mongodb-configsvr', 'port': mongodb_configsvr_exec_port | int}]
+            if mongodb_cluster_type == 'sharded' else []) }}
+    # Control container for cluster-wide `pbm` CLI commands: the config-RS agent
+    # on sharded clusters, else the shard agent.
+    _pbm_control: "{{ 'mongodb-pbm-config' if mongodb_cluster_type == 'sharded' else 'mongodb-pbm-shard' }}"
+
+# ── Render the storage/PITR config on every node (agents mount it) ──
+- name: Ensure PBM config directory
+  ansible.builtin.file:
+    path: "{{ mongodb_root_dir }}/pbm"
+    state: directory
+    owner: "{{ mongodb_uid }}"
+    group: "{{ mongodb_gid }}"
+    mode: "0700"
+
+- name: Render PBM config (storage + PITR)
+  ansible.builtin.template:
+    src: pbm-config.yaml.j2
+    dest: "{{ mongodb_root_dir }}/pbm/pbm-config.yaml"
+    owner: "{{ mongodb_uid }}"
+    group: "{{ mongodb_gid }}"
+    mode: "0600"
+
+# ── Deploy agents: podman / Quadlet ──
+- name: Render PBM agent Quadlet units (podman)
+  ansible.builtin.template:
+    src: quadlets/mongodb-pbm.container.j2
+    dest: "/etc/containers/systemd/{{ item.name }}.container"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ _pbm_agents }}"
+  loop_control:
+    label: "{{ item.name }}"
+  vars:
+    _pbm_agent: "{{ item }}"
+  register: _pbm_quadlets
+  when: mongodb_container_engine == 'podman'
+
+- name: Reload systemd to materialize PBM units (podman)
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when:
+    - mongodb_container_engine == 'podman'
+    - _pbm_quadlets.changed
+
+- name: Enable + start PBM agents (podman)
+  ansible.builtin.systemd:
+    name: "{{ item.name }}.service"
+    enabled: true
+    state: "{{ 'restarted' if _pbm_quadlets.changed else 'started' }}"
+  loop: "{{ _pbm_agents }}"
+  loop_control:
+    label: "{{ item.name }}.service"
+  when: mongodb_container_engine == 'podman'
+
+# ── Deploy agents: docker (standalone, shares the target mongod's netns) ──
+- name: Start PBM agents (docker)
+  ansible.builtin.shell: |
+    URI="mongodb://localhost:{{ item.port }}/?authMechanism=MONGODB-X509"
+    URI="${URI}&authSource=\$external&tls=true"
+    URI="${URI}&tlsCertificateKeyFile=/etc/mongo/ssl/pbm-agent.pem"
+    URI="${URI}&tlsCAFile=/etc/mongo/ssl/ca.pem&directConnection=true"
+    docker rm -f {{ item.name }} 2>/dev/null || true
+    docker run -d --name {{ item.name }} \
+      --network container:{{ item.svc }} \
+      --restart unless-stopped \
+      --user {{ mongodb_uid }}:{{ mongodb_gid }} \
+      --memory {{ mongodb_pbm_mem_limit_mb }}m \
+      -v {{ mongodb_tls_dir }}/pbm-agent.pem:/etc/mongo/ssl/pbm-agent.pem:ro \
+      -v {{ mongodb_tls_dir }}/ca.pem:/etc/mongo/ssl/ca.pem:ro \
+      -v {{ mongodb_root_dir }}/pbm/pbm-config.yaml:/etc/pbm/pbm-config.yaml:ro \
+      -e PBM_MONGODB_URI="$URI" \
+      {{ mongodb_pbm_image }}
+  loop: "{{ _pbm_agents }}"
+  loop_control:
+    label: "{{ item.name }}"
+  changed_when: true
+  when: mongodb_container_engine == 'docker'
+
+# ── Apply cluster-wide PBM config once, then wait for agents to register ──
+# Retried: the agents need a few seconds to connect after start, and the CLI
+# write goes through the control node's PBM collections.
+- name: Apply PBM storage + PITR config (cluster-wide)
+  ansible.builtin.command: >
+    {{ mongodb_container_engine }} exec {{ _pbm_control }}
+    pbm config --file /etc/pbm/pbm-config.yaml
+  register: _pbm_config_apply
+  changed_when: "'OK' in (_pbm_config_apply.stdout | default('')) or _pbm_config_apply.rc == 0"
+  retries: 12
+  delay: 5
+  until: _pbm_config_apply.rc == 0
+  run_once: true
+
+- name: Wait for PBM agents to register
+  ansible.builtin.command: "{{ mongodb_container_engine }} exec {{ _pbm_control }} pbm status"
+  register: _pbm_status
+  changed_when: false
+  retries: 12
+  delay: 5
+  until: _pbm_status.rc == 0
+  run_once: true
+
+- name: Show PBM status
+  ansible.builtin.debug:
+    msg: "{{ _pbm_status.stdout_lines | default(['(pbm status unavailable)']) }}"
+  run_once: true
+
+# ── Optional scheduled `pbm backup` (host-level systemd timer, one node) ──
+# Same pattern as backup_schedule.yml. PBM backup is a cluster operation, so a
+# single node owns the timer (run_once). PITR (continuous oplog slicing) is
+# independent of this and runs on every agent when mongodb_pbm_pitr is true.
+- name: Install pbm-backup.service unit
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/pbm-backup.service
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Percona Backup for MongoDB scheduled backup (oneshot)
+      Documentation=man:systemd.timer(5)
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/bin/{{ mongodb_container_engine }} exec {{ _pbm_control }} pbm backup --compression={{ mongodb_pbm_compression }} --wait
+      StandardOutput=append:/var/log/pbm-backup.log
+      StandardError=append:/var/log/pbm-backup.log
+  notify: reload systemd
+  run_once: true
+  when: mongodb_pbm_schedule | length > 0
+
+- name: Install pbm-backup.timer unit
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/pbm-backup.timer
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Schedule Percona Backup for MongoDB backups
+      Documentation=man:systemd.timer(5)
+
+      [Timer]
+      OnCalendar={{ mongodb_pbm_schedule }}
+      Persistent=true
+      Unit=pbm-backup.service
+
+      [Install]
+      WantedBy=timers.target
+  notify: reload systemd
+  run_once: true
+  when: mongodb_pbm_schedule | length > 0
+
+- name: Enable and start pbm-backup.timer
+  ansible.builtin.systemd:
+    name: pbm-backup.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+  run_once: true
+  when: mongodb_pbm_schedule | length > 0
+
+- name: Disable pbm-backup.timer when no schedule
+  ansible.builtin.systemd:
+    name: pbm-backup.timer
+    enabled: false
+    state: stopped
+  failed_when: false
+  run_once: true
+  when: mongodb_pbm_schedule | length == 0

@@ -1,8 +1,17 @@
 # Design: Percona Backup for MongoDB (PBM) — sharded-cluster PITR
 
-Status: **proposal** (no code yet)
-Target: a future minor release (post-1.0.3)
+Status: **implemented** (Phases 1–3 landed in 1.0.3 / `fix/walg`) — **needs
+validation against a live sharded cluster** before it's declared production-ready.
+Target: 1.0.3
 Author: scoped during 1.0.3 prep
+
+> Implementation notes vs. this design: agents are managed entirely in
+> `roles/mongodb/tasks/pbm.yml` (runs after `init_cluster.yml`) rather than woven
+> into the main stack templates — Quadlet units on podman, standalone
+> `docker run` containers on docker — so auth/user creation is sequenced before
+> the agents start. NetBox registration (O2) was skipped: agents expose no
+> listening port. A single parameterized Quadlet template
+> (`quadlets/mongodb-pbm.container.j2`) covers both the shard and config agents.
 
 ## Why
 

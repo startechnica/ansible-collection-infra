@@ -165,6 +165,33 @@ mongodb_exporter_enabled: true
 mongodb_exporter_image: "docker.io/percona/mongodb_exporter:0.51.0"
 mongodb_exporter_port: 9216
 
+# ── Percona Backup for MongoDB (PBM) ──
+# Cluster-consistent backups + point-in-time recovery for SHARDED clusters
+# (where mongodump --oplog can't run via mongos). One pbm-agent runs next to
+# every data-bearing mongod: in sharded mode that's two agents per host (the
+# shard mongod + the configsvr); in replicaset mode it's one (the mongod).
+# Agents authenticate via X.509 client cert (CN=mongodb_pbm_cn) and store
+# backups in the shared s3_* target using PBM's native S3 support.
+#
+# NOTE: on the Community `mongo` image PBM does LOGICAL backups + logical PITR
+# only — physical backups need Percona Server for MongoDB. See
+# docs/design/mongodb-pbm.md.
+mongodb_pbm_enabled: false
+# Pin the agent image (avoid :latest for reproducible/offline-friendly pulls).
+mongodb_pbm_image: "docker.io/percona/percona-backup-mongodb:2.11.0"
+mongodb_pbm_cn: mongodb-pbm
+mongodb_pbm_mem_limit_mb: 256
+# Continuous oplog slicing → restore to any timestamp in the window.
+mongodb_pbm_pitr: false
+# Backup compression for `pbm backup`: none|gzip|snappy|lz4|s2|zstd.
+mongodb_pbm_compression: s2
+# Optional systemd OnCalendar for scheduled `pbm backup` (empty = on-demand /
+# PITR-only). Same timer pattern as mongodb_backup_schedule.
+mongodb_pbm_schedule: ""
+# X.509 subject the PBM agent presents (mapped to a $external user with the
+# PBM role set). Mirrors mongodb_healthcheck_x509_subject / _exporter_.
+mongodb_pbm_x509_subject: "CN={{ mongodb_pbm_cn }},OU={{ mongodb_pki_client_ou }},O={{ mongodb_pki_o }}"
+
 # ── Kernel tuning ──
 mongodb_sysctl:
   vm.swappiness: 1

@@ -15,6 +15,18 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   [docs/UPGRADING.md](docs/UPGRADING.md).
 
 ### Added
+- **Percona Backup for MongoDB (PBM) — sharded-cluster PITR.** New opt-in
+  (`mongodb_pbm_enabled: true`) that deploys one `pbm-agent` next to every
+  data-bearing `mongod` (two per host on sharded clusters: shard + configsvr;
+  one per host on replica sets), reading each replica set's oplog directly —
+  the cluster-consistent backup + PITR that `mongodump --oplog` via `mongos`
+  can't provide. Agents authenticate with a new X.509 client cert
+  (`CN=mongodb-pbm`) reusing the existing PKI, and store backups in the shared
+  `s3_*` target via PBM's native S3. Engine-dispatched (Quadlet on podman,
+  standalone containers on docker). Day-2: `mongodb_action: pbm-backup|pbm-restore|pbm-status`
+  and `playbooks/mongodb/pbm-{backup,restore,status}.yml`; optional scheduled
+  backup via `mongodb_pbm_schedule`. Logical backups + logical PITR on the
+  Community image (physical needs PSMDB). Design: docs/design/mongodb-pbm.md.
 - **MongoDB scheduled backups** — provisioning now installs a host-level
   systemd timer (`mongodb-backup.timer` → `mongodb-backup.service`) on one
   node that runs the same mongodump → prune → S3-upload flow as
