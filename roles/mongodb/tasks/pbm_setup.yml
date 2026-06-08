@@ -75,7 +75,7 @@
       --tlsCertificateKeyFile /etc/mongo/ssl/mongodb-configsvr.pem
       --tlsCAFile /etc/mongo/ssl/ca.pem
       --authenticationMechanism MONGODB-X509
-      --authenticationDatabase '\$external'
+      --authenticationDatabase '$external'
       --quiet --eval "{{ _pbm_create_user_js }}"
   when: mongodb_cluster_type == 'sharded'
 
@@ -93,7 +93,7 @@
       --tlsCertificateKeyFile /etc/mongo/ssl/mongodb-mongod.pem
       --tlsCAFile /etc/mongo/ssl/ca.pem
       --authenticationMechanism MONGODB-X509
-      --authenticationDatabase '\$external'
+      --authenticationDatabase '$external'
       --quiet --eval "{{ _pbm_create_user_js }}"
 
 # ── 3. Deploy agents + apply config (no mongod/mongos recreation) ──
