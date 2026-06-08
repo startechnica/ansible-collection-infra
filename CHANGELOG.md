@@ -15,6 +15,10 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   to preserve the previous value. Migration: [docs/UPGRADING.md](docs/UPGRADING.md).
 
 ### Added
+- **`grafana_alloy` role** — deploys [Grafana Alloy](https://grafana.com/docs/alloy/)
+  as a single container per host to ship logs to Loki (systemd journal),
+  metrics to Prometheus (`remote_write`), and traces to Tempo (OTLP receiver →
+  exporter).
 - `netbox_register_create` (default `true`) — the `netbox_register` role now
   auto-creates the **platform, device role, and cluster** a VM references when
   the slug/name doesn't already exist in NetBox, instead of failing
