@@ -63,13 +63,13 @@ mongodb_services: >-
      else _mongodb_services_replicaset }}
 
 # Connection string for PBM CLI control commands (pbm config/status/backup/
-# restore). Unlike the per-agent URI (directConnection, pinned to one node),
-# the CLI must reach the replica set that holds PBM's control data — the config
-# RS on sharded clusters, the shard RS on replica sets — so it uses replicaSet
-# discovery. directConnection is intentionally absent: with it, enumerating the
-# RS errors "a direct connection cannot be made if multiple hosts are
-# specified". The `$external` is literal (these are passed to `<engine> exec -e`
-# without a shell, so no $-expansion).
+# restore). The CLI must reach the replica set that holds PBM's control data —
+# the config RS on sharded clusters, the shard RS on replica sets — so it pins
+# the replicaSet explicitly. The per-agent URI omits replicaSet (plain localhost
+# seed); both deliberately avoid directConnection, which PBM rejects once it
+# enumerates the RS ("a direct connection cannot be made if multiple hosts are
+# specified"). The `$external` is literal (passed to `<engine> exec -e` without
+# a shell, so no $-expansion).
 _pbm_control_uri: >-
   {{ 'mongodb://localhost:'
      ~ (mongodb_configsvr_exec_port if mongodb_cluster_type == 'sharded' else mongodb_mongod_exec_port)

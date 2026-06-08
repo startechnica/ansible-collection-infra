@@ -10,8 +10,9 @@
 #   podman → Quadlet units (systemd-managed, per role convention)
 #   docker → standalone `docker run -d` sharing each mongod's network namespace
 #
-# Agents authenticate by X.509 client cert; the connection URI uses
-# directConnection=true so each agent talks to its own node.
+# Agents authenticate by X.509 client cert via a plain localhost URI (no
+# directConnection — PBM reuses URI options for its multi-host config-RS
+# connection, where directConnection is rejected).
 
 # ── Per-node agent inventory (port from the exec_port vars: 27017 for docker's
 #    shared netns, the real host port for podman's Network=host) ──
@@ -83,7 +84,7 @@
     URI="mongodb://localhost:{{ item.port }}/?authMechanism=MONGODB-X509"
     URI="${URI}&authSource=\$external&tls=true"
     URI="${URI}&tlsCertificateKeyFile=/etc/mongo/ssl/pbm-agent.pem"
-    URI="${URI}&tlsCAFile=/etc/mongo/ssl/ca.pem&directConnection=true"
+    URI="${URI}&tlsCAFile=/etc/mongo/ssl/ca.pem"
     docker rm -f {{ item.name }} 2>/dev/null || true
     docker run -d --name {{ item.name }} \
       --network container:{{ item.svc }} \
@@ -112,8 +113,8 @@
     {{ _pbm_control }} pbm config --file /etc/pbm/pbm-config.yaml
   register: _pbm_config_apply
   changed_when: "'OK' in (_pbm_config_apply.stdout | default('')) or _pbm_config_apply.rc == 0"
-  retries: 12
-  delay: 5
+  retries: 15
+  delay: 10
   until: _pbm_config_apply.rc == 0
   run_once: true
 
@@ -123,8 +124,8 @@
     {{ _pbm_control }} pbm status
   register: _pbm_status
   changed_when: false
-  retries: 12
-  delay: 5
+  retries: 15
+  delay: 10
   until: _pbm_status.rc == 0
   run_once: true
 

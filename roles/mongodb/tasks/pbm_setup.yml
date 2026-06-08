@@ -11,7 +11,7 @@
 # user creation is gated behind the one-time bootstrap marker, so it's skipped
 # on an already-initialized cluster. And the cluster admin user is cluster-
 # level (created via mongos), so it CAN'T createUser directly on a shard's
-# mongod — which is what PBM's directConnection agents authenticate against.
+# mongod — which is the per-replica-set user PBM's agents authenticate as.
 #
 # We therefore create the shard-local / configsvr-local PBM user by connecting
 # DIRECTLY to each node with its MEMBER certificate via MONGODB-X509. The

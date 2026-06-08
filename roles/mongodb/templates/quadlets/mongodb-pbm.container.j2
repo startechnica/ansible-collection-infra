@@ -2,10 +2,13 @@
 # Rendered once per data-bearing mongod (parameterized by `_pbm_agent`):
 #   - shard agent  → manages local mongod   (replSet {{ mongodb_shard_replset }})
 #   - config agent → manages local configsvr (replSet {{ mongodb_config_replset }})
-# Network=host like the rest of the stack; the agent connects to ITS node only
-# (directConnection=true) on the node's host port, authenticating by X.509
-# client cert (CN={{ mongodb_pbm_cn }}). State lives in the cluster + S3, so no
-# data volume.
+# Network=host like the rest of the stack; the agent connects to its local node
+# on the node's host port, authenticating by X.509 client cert
+# (CN={{ mongodb_pbm_cn }}). State lives in the cluster + S3, so no data volume.
+# NOTE: no directConnection — PBM reuses the URI options when building its
+# internal connection to the config replica set (multiple hosts), and
+# directConnection there errors "a direct connection cannot be made if multiple
+# hosts are specified". Plain localhost seed is Percona's documented form.
 #
 # systemd Environment= values are literal (no `$` expansion), so the bare
 # `$external` auth source is passed through to the container unmodified.
@@ -33,7 +36,7 @@ Exec=-c "exec pbm-agent"
 
 Network=host
 
-Environment=PBM_MONGODB_URI=mongodb://localhost:{{ _pbm_agent.port }}/?authMechanism=MONGODB-X509&authSource=$external&tls=true&tlsCertificateKeyFile=/etc/mongo/ssl/pbm-agent.pem&tlsCAFile=/etc/mongo/ssl/ca.pem&directConnection=true
+Environment=PBM_MONGODB_URI=mongodb://localhost:{{ _pbm_agent.port }}/?authMechanism=MONGODB-X509&authSource=$external&tls=true&tlsCertificateKeyFile=/etc/mongo/ssl/pbm-agent.pem&tlsCAFile=/etc/mongo/ssl/ca.pem
 
 Volume={{ mongodb_tls_dir }}/pbm-agent.pem:/etc/mongo/ssl/pbm-agent.pem:ro,Z
 Volume={{ mongodb_tls_dir }}/ca.pem:/etc/mongo/ssl/ca.pem:ro,z
