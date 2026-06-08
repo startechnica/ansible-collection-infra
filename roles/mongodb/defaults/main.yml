@@ -115,6 +115,11 @@ mongodb_databases: []
 # ── Backup ──
 mongodb_backup_dir: "{{ mongodb_root_dir }}/backups"
 mongodb_backup_retain_days: 7
+## @param mongodb_backup_oplog [default: false] Pass --oplog to mongodump so
+## the backup captures oplog entries for the dump window. Required for
+## point-in-time recovery via playbooks/mongodb/pitr.yml. Incompatible with
+## per-db/collection backups (full cluster dump only).
+mongodb_backup_oplog: false
 
 # ── S3 remote backup (optional) ──
 # Shared across roles: set these at inventory/group_vars once; mongodb and
