@@ -4,10 +4,20 @@
 # leader's loopback (bypassing PgBouncer/HAProxy), create an idempotent
 # LOGIN + REPLICATION role, persist password locally on the controller.
 #
-# Why REPLICATION (not superuser): WAL-G's backup-push calls
-# pg_backup_start() / pg_backup_stop(), which require either superuser or
-# REPLICATION. REPLICATION grants the backup-control bits without the
-# pg_shadow / data-read access a superuser carries.
+# Non-superuser WAL-G needs a COMPLETE privilege set on PG15+ (pg18 here).
+# All three are required — each was historically (pre-PG15) implied by
+# REPLICATION or superuser, but PG15 split them apart:
+#
+#   1. LOGIN + REPLICATION — connect, and the replication-protocol bits
+#      backup-push relies on.
+#   2. pg_monitor membership — read superuser-only GUCs (notably
+#      `data_directory`) via SHOW/current_setting. Without it:
+#      "permission denied to examine data_directory" (SQLSTATE 42501).
+#      pg_monitor bundles pg_read_all_settings (+ stats); minimal grant.
+#   3. EXECUTE on pg_backup_start()/pg_backup_stop() — in PG15+ these are
+#      renamed from pg_start_backup/pg_stop_backup and are superuser-only
+#      by DEFAULT; REPLICATION no longer implies them. Without the grant:
+#      "permission denied for function pg_backup_start" (SQLSTATE 42501).
 #
 # pg_hba: wal-g runs inside the patroni container (both archive_command
 # and the host-side walg-cron timer exec into it), and the patroni
@@ -26,6 +36,38 @@
     password: "{{ walg_auth_password }}"
     role_attr_flags: "LOGIN,REPLICATION"
     state: present
+    login_host: 127.0.0.1
+    login_port: "{{ postgresql_port }}"
+    login_user: postgres
+    login_password: "{{ postgresql_postgres_password }}"
+    login_db: postgres
+    ssl_mode: disable
+  delegate_to: "{{ _patroni_leader_host }}"
+  run_once: true
+  no_log: true
+
+- name: Grant pg_monitor to the WAL-G role (read data_directory + stats)
+  community.postgresql.postgresql_membership:
+    group: pg_monitor
+    target_roles: "{{ walg_auth_user }}"
+    state: present
+    login_host: 127.0.0.1
+    login_port: "{{ postgresql_port }}"
+    login_user: postgres
+    login_password: "{{ postgresql_postgres_password }}"
+    login_db: postgres
+    ssl_mode: disable
+  delegate_to: "{{ _patroni_leader_host }}"
+  run_once: true
+  no_log: true
+
+- name: Grant EXECUTE on backup-control functions to the WAL-G role
+  community.postgresql.postgresql_query:
+    query: >-
+      GRANT EXECUTE ON FUNCTION
+        pg_backup_start(text, boolean),
+        pg_backup_stop(boolean)
+      TO {{ walg_auth_user }}
     login_host: 127.0.0.1
     login_port: "{{ postgresql_port }}"
     login_user: postgres

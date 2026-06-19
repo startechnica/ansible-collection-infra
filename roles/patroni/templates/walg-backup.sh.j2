@@ -14,7 +14,23 @@ set -eu
 
 ENGINE={{ patroni_container_engine }}
 RETAIN={{ walg_retention }}
+MEMBER={{ inventory_hostname_short }}
 TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+# Only the Patroni leader can run backup-push — pg_backup_start() is
+# rejected on a standby ("recovery is in progress"). The timer fires on
+# every node, so non-leaders must no-op cleanly instead of exiting 1.
+# Resolve the leader's Member name from patronictl (same mechanism as
+# the on-demand backup flow) and compare against this node's member.
+LEADER=$($ENGINE exec patroni sh -c \
+  "patronictl -c /etc/patroni/patroni.yml list --format json \
+   | python3 -c 'import sys,json; print(next((m[\"Member\"] for m in json.load(sys.stdin) if m[\"Role\"]==\"Leader\"), \"\"))'" \
+  2>/dev/null) || true
+
+if [ "$LEADER" != "$MEMBER" ]; then
+  echo "[$TS] $MEMBER is not the leader (leader=${LEADER:-unknown}) — skipping backup"
+  exit 0
+fi
 
 echo "[$TS] WAL-G backup starting"
 $ENGINE exec patroni /opt/walg/wal-g backup-push /var/lib/postgresql/pg_data
