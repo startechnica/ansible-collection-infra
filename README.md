@@ -166,6 +166,31 @@ ansible-playbook playbooks/patroni/pitr.yml           -i inventories/<inv>.yml \
 ansible-playbook playbooks/patroni/uninstall.yml      -i inventories/<inv>.yml -e prune=true
 ```
 
+### Patroni connection topology
+
+Clients connect to the cluster VIP, never to a node directly. The request path is:
+
+```
+client
+  │
+  ▼
+vip-manager        (floats the VIP to whichever node Patroni reports as leader)
+  │
+  ▼
+HAProxy            (:5432 primary / :5433 replicas — health-checks Patroni's
+  │                 REST API GET /primary | /replica to route to the live role)
+  ▼
+PgBouncer          (:6543 — connection pooling, session mode)
+  │
+  ▼
+Patroni → PostgreSQL  (:55432 — managed Postgres + streaming replication)
+```
+
+Because HAProxy uses `on-marked-down shutdown-sessions`, a leader change (or a
+health-check flap) force-closes live sessions, so clients must tolerate a
+dropped connection and reconnect. etcd is the DCS backing Patroni's leader
+election; vip-manager watches the same etcd leader key to move the VIP.
+
 ## Inventory shape
 
 See [inventories/](inventories/) for working examples. Minimum keys per inventory
