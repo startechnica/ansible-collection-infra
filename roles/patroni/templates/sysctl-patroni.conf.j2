@@ -11,7 +11,17 @@ vm.overcommit_memory = 2
 kernel.shmmax = {{ (ansible_facts['memtotal_mb'] * 1024 * 1024 * 0.75) | int }}
 kernel.shmall = {{ ((ansible_facts['memtotal_mb'] * 1024 * 1024 * 0.75) / 4096) | int }}
 
-net.core.somaxconn = 4096
+net.core.somaxconn = 65535
+# SYN (half-open) queue — paired with somaxconn so connection bursts aren't
+# dropped at the handshake under load (intermittent client EOF/reset).
+net.ipv4.tcp_max_syn_backlog = 65535
+# Per-CPU ingress packet queue — absorb inbound bursts before the stack drains.
+net.core.netdev_max_backlog = 16384
+# Reuse TIME_WAIT sockets for outbound connections — the HAProxy → PgBouncer →
+# Postgres path churns short-lived server-side conns; prevents ephemeral-port
+# exhaustion. (Not tcp_tw_recycle, which is unsafe/removed.)
+net.ipv4.tcp_tw_reuse = 1
+
 net.ipv4.tcp_keepalive_time = 60
 net.ipv4.tcp_keepalive_intvl = 10
 net.ipv4.tcp_keepalive_probes = 6

@@ -61,3 +61,53 @@ _mongodb_services_replicaset:
 mongodb_services: >-
   {{ _mongodb_services_sharded if mongodb_cluster_type == 'sharded'
      else _mongodb_services_replicaset }}
+
+# Connection string for PBM CLI control commands (pbm config/status/backup/
+# restore). The CLI must reach the replica set that holds PBM's control data —
+# the config RS on sharded clusters, the shard RS on replica sets — so it pins
+# the replicaSet explicitly. The per-agent URI omits replicaSet (plain localhost
+# seed); both deliberately avoid directConnection, which PBM rejects once it
+# enumerates the RS ("a direct connection cannot be made if multiple hosts are
+# specified"). The `$external` is literal (passed to `<engine> exec -e` without
+# a shell, so no $-expansion).
+_pbm_control_uri: >-
+  {{ 'mongodb://localhost:'
+     ~ (mongodb_configsvr_exec_port if mongodb_cluster_type == 'sharded' else mongodb_mongod_exec_port)
+     ~ '/?replicaSet='
+     ~ (mongodb_config_replset if mongodb_cluster_type == 'sharded' else mongodb_shard_replset)
+     ~ '&authMechanism=MONGODB-X509&authSource=$external&tls=true'
+     ~ '&tlsCertificateKeyFile=/etc/mongo/ssl/pbm-agent.pem'
+     ~ '&tlsCAFile=/etc/mongo/ssl/ca.pem' }}
+
+# Shared mongosh script that (idempotently) creates the custom `pbmAnyAction`
+# role and the $external PBM user with the role set PBM needs. Used by both the
+# cold-init path (init_cluster.yml, transitionToAuth window) and the retrofit
+# path (pbm_setup.yml, member-cert auth). The `\$external` backslash is a
+# JavaScript string escape so the literal `$external` survives any `$`
+# substitution along the exec path. Folded to one line; JS tolerates the
+# spaces. Catches "already exists"/"not primary" so re-runs are no-ops.
+_pbm_create_user_js: >-
+  try {
+    try {
+      db.getSiblingDB('admin').createRole({
+        role: 'pbmAnyAction',
+        privileges: [{ resource: { anyResource: true }, actions: ['anyAction'] }],
+        roles: []
+      });
+    } catch(re) { if (!re.message.includes('already exists')) throw re; }
+    db.getSiblingDB('\$external').createUser({
+      user: '{{ mongodb_pbm_x509_subject }}',
+      roles: [
+        { db: 'admin', role: 'readWrite' },
+        { db: 'admin', role: 'backup' },
+        { db: 'admin', role: 'clusterMonitor' },
+        { db: 'admin', role: 'restore' },
+        { db: 'admin', role: 'pbmAnyAction' }
+      ]
+    });
+    print('PBM_USER_CREATED');
+  } catch(e) {
+    if (e.message.includes('already exists') || e.message.includes('not primary')) {
+      print('PBM_USER_EXISTS');
+    } else { throw e; }
+  }

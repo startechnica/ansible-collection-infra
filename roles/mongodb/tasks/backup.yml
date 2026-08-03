@@ -9,6 +9,9 @@
     uid: "{{ mongodb_uid }}"
     gid: "{{ mongodb_gid }}"
     retain_days: "{{ mongodb_backup_retain_days }}"
+    oplog: "{{ mongodb_backup_pitr }}"
+    tls: "{{ mongos_tls_mode == 'requireTLS' }}"
+    tls_host_ca_file: "{{ mongodb_tls_dir }}/ca.pem"
   register: _backup
   run_once: true
 
@@ -17,19 +20,21 @@
     msg: "{{ _backup.msg }} (pruned {{ _backup.pruned }} old backups)"
   run_once: true
 
-# ── S3 upload (optional — runs when s3_bucket is set) ────────────────────────
+# ── S3 upload (runs when mongodb_backup_mode == 's3') ────────────────────────
 
 - name: Validate S3 upload configuration
   ansible.builtin.assert:
     that:
+      - s3_bucket | length > 0
       - s3_endpoint | length > 0
       - s3_access_key | length > 0
       - s3_secret_key | length > 0
     fail_msg: >
-      s3_bucket is set but one of {s3_endpoint, s3_access_key, s3_secret_key} is empty.
-      Either fill all four, or unset s3_bucket to keep backups local only.
+      mongodb_backup_mode is 's3' but one of {s3_bucket, s3_endpoint,
+      s3_access_key, s3_secret_key} is empty. Fill all four, or set
+      mongodb_backup_mode: local to keep backups on the node only.
     success_msg: "S3 upload target: {{ s3_endpoint }} bucket={{ s3_bucket }}"
-  when: s3_bucket | length > 0
+  when: mongodb_backup_mode == 's3'
   run_once: true
 
 - name: Render S3 upload script
@@ -37,24 +42,24 @@
     src: backup-s3-upload.sh.j2
     dest: /tmp/mongodb-s3-upload.sh
     mode: "0700"
-  when: s3_bucket | length > 0
+  when: mongodb_backup_mode == 's3'
   run_once: true
 
 - name: Upload to S3
   ansible.builtin.command: /tmp/mongodb-s3-upload.sh
   register: _s3_upload
   changed_when: "'S3 upload complete' in _s3_upload.stdout"
-  when: s3_bucket | length > 0
+  when: mongodb_backup_mode == 's3'
   run_once: true
 
 - name: Show S3 upload result
   ansible.builtin.debug:
-    msg: "{{ _s3_upload.stdout_lines | default(['(skipped — no S3 bucket configured)']) }}"
+    msg: "{{ _s3_upload.stdout_lines | default(['(skipped — mongodb_backup_mode is local)']) }}"
   run_once: true
 
 - name: Clean up S3 upload script
   ansible.builtin.file:
     path: /tmp/mongodb-s3-upload.sh
     state: absent
-  when: s3_bucket | length > 0
+  when: mongodb_backup_mode == 's3'
   run_once: true

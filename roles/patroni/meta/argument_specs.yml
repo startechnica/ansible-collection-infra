@@ -153,6 +153,22 @@ argument_specs:
       haproxy_stats_port:
         type: int
         default: 7000
+      haproxy_check_inter:
+        type: str
+        default: "3s"
+        description: Seconds between HAProxy health checks of the Patroni REST API.
+      haproxy_check_fall:
+        type: int
+        default: 5
+        description: Consecutive failed checks before a backend is marked down (detection latency ≈ inter × fall).
+      haproxy_check_rise:
+        type: int
+        default: 2
+        description: Consecutive successful checks before a backend is marked up again.
+      haproxy_check_timeout:
+        type: str
+        default: "10s"
+        description: Per-check timeout; a Patroni REST API response slower than this counts as a failed check.
       postgresql_port:
         type: int
         default: 55432

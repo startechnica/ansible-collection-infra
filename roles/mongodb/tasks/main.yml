@@ -181,7 +181,42 @@
   when:
     - mongodb_action | default('provision') in ['provision', 'init']
 
+# Install the scheduled-backup systemd timer once mongos is up and the admin
+# password is resolved. Mirrors patroni's walg-cron.timer.
+- name: Install scheduled backup timer
+  ansible.builtin.include_tasks: backup_schedule.yml
+  when:
+    - mongodb_action | default('provision') == 'provision'
+
+# Deploy PBM agents + apply config. After init_cluster so the PBM $external
+# user/role exist and the cluster is in auth mode.
+- name: Deploy Percona Backup for MongoDB
+  ansible.builtin.include_tasks: pbm.yml
+  when:
+    - mongodb_action | default('provision') == 'provision'
+    - mongodb_pbm_enabled | bool
+
 # ── On-demand actions ──
+
+- name: PBM setup (retrofit onto an already-running cluster)
+  ansible.builtin.include_tasks: pbm_setup.yml
+  when:
+    - mongodb_action | default('provision') == 'pbm-setup'
+
+- name: PBM backup
+  ansible.builtin.include_tasks: pbm_backup.yml
+  when:
+    - mongodb_action | default('provision') == 'pbm-backup'
+
+- name: PBM restore
+  ansible.builtin.include_tasks: pbm_restore.yml
+  when:
+    - mongodb_action | default('provision') == 'pbm-restore'
+
+- name: PBM status
+  ansible.builtin.include_tasks: pbm_status.yml
+  when:
+    - mongodb_action | default('provision') == 'pbm-status'
 
 - name: Run backup
   ansible.builtin.include_tasks: backup.yml

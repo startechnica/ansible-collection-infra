@@ -7,8 +7,10 @@
 # This playbook deliberately does NOT overwrite the live cluster.
 #
 # Prerequisites:
-#   - The backup in `backup_path` must have been taken with `--oplog` (or you
-#     have a separate oplog.bson).
+#   - The base backup must have been taken with `--oplog` (mongodb_backup_pitr:
+#     true), so it contains oplog.bson — or you have a separate oplog.bson.
+#     Note: --oplog backups only work on replica-set deployments, not sharded
+#     clusters dumped via mongos.
 #   - The oplog window between the backup and `target_time` must still be
 #     available in the live cluster's local.oplog.rs.
 #
@@ -17,6 +19,10 @@
 #     -i inventories/<your-inventory>.yml \
 #     -e backup_path=/opt/mongodb/backups/mongodump_20260422_120000 \
 #     -e target_time='2026-04-22T14:30:00Z'
+#
+#   # Pull the base backup from S3 instead of a local path (latest, or a
+#   # specific archive via -e backup_name=mongodump_YYYYMMDD_HHMMSS):
+#   -e backup_source=s3 [-e backup_name=mongodump_20260422_120000]
 #
 #   # Skip oplog replay (point-in-backup recovery only):
 #   -e target_time=none
@@ -44,13 +50,16 @@
     - name: Ensure required variables are set
       ansible.builtin.assert:
         that:
-          - backup_path is defined
-          - backup_path | length > 0
           - target_time is defined
+          - (backup_path is defined and backup_path | length > 0) or (backup_source | default('local')) == 's3'
         fail_msg: >
-          Required: -e backup_path=/opt/mongodb/backups/mongodump_YYYYMMDD_HHMMSS
-                     -e target_time='YYYY-MM-DDTHH:MM:SSZ'  (or 'none')
-        success_msg: "PITR inputs OK (backup_path={{ backup_path }}, target_time={{ target_time }})."
+          Required: -e target_time='YYYY-MM-DDTHH:MM:SSZ' (or 'none'), plus a
+          backup source — either -e backup_path=/opt/mongodb/backups/mongodump_YYYYMMDD_HHMMSS
+          (local) or -e backup_source=s3 [-e backup_name=mongodump_YYYYMMDD_HHMMSS] (from S3).
+        success_msg: >-
+          PITR inputs OK (source={{ backup_source | default('local') }},
+          backup_path={{ backup_path | default('(resolved from S3)') }},
+          target_time={{ target_time }}).
 
 - name: Restore to scratch with oplog replay
   hosts: mongodb_nodes[0]
@@ -62,6 +71,61 @@
         name: common
         tasks_from: inherit_localhost_vars
   tasks:
+    # ── S3 source: pull + extract the base backup, then point backup_path at
+    # the extracted directory. Mirrors verify-backup.yml's fetch path. No-op
+    # for local source.
+    - name: Fetch base backup from S3
+      when: (backup_source | default('local')) == 's3'
+      block:
+        - name: Ensure PITR S3 download directory
+          ansible.builtin.file:
+            path: /opt/mongodb/backups/_pitr
+            state: directory
+            owner: "{{ mongodb_uid }}"
+            group: "{{ mongodb_gid }}"
+            mode: "0700"
+
+        - name: Download base mongodump archive from S3
+          ansible.builtin.shell: |
+            set -euo pipefail
+            TMPDIR=/opt/mongodb/backups/_pitr
+            NAME="{{ backup_name | default('') }}"
+            MC="{{ mongodb_container_engine }} run --rm -v $TMPDIR:/out \
+              -e MC_HOST_s3={{ s3_endpoint | regex_replace('^(https?://)', '\\g<1>' ~ s3_access_key ~ ':' ~ s3_secret_key ~ '@') }} \
+              {{ s3_client_image }}"
+            if [ -n "$NAME" ]; then
+              $MC mc cp "s3/{{ s3_bucket }}/{{ s3_prefix }}/${NAME}.tar.gz" /out/
+            else
+              $MC sh -c "mc find s3/{{ s3_bucket }}/{{ s3_prefix }}/ --name '*.tar.gz' \
+                         | sort -r | head -n1 \
+                         | xargs -I{} mc cp {} /out/"
+            fi
+            ls -t "$TMPDIR"/*.tar.gz | head -n1
+          register: _s3_fetch
+          changed_when: false
+
+        - name: Extract archive into _pitr/
+          ansible.builtin.unarchive:
+            src: "{{ _s3_fetch.stdout_lines | last }}"
+            dest: /opt/mongodb/backups/_pitr/
+            remote_src: true
+            owner: "{{ mongodb_uid }}"
+            group: "{{ mongodb_gid }}"
+
+        - name: Resolve extracted backup path
+          ansible.builtin.shell: ls -dt /opt/mongodb/backups/_pitr/mongodump_* 2>/dev/null | head -n1
+          register: _extracted_path
+          changed_when: false
+
+        - name: Fail if S3 archive yielded no backup
+          ansible.builtin.fail:
+            msg: "No mongodump_* directory extracted from S3. Check s3_prefix / backup_name."
+          when: _extracted_path.stdout | trim | length == 0
+
+        - name: Point backup_path at the extracted backup
+          ansible.builtin.set_fact:
+            backup_path: "{{ _extracted_path.stdout | trim }}"
+
     - name: Confirm backup contains oplog.bson
       ansible.builtin.stat:
         path: "{{ backup_path }}/oplog.bson"
@@ -73,17 +137,16 @@
       when: target_time != 'none'
 
     - name: Dump current oplog tail (if we need to replay beyond the backup)
-      community.docker.docker_container_exec:
-        container: mongodb-mongod
-        command: >
-          mongodump --port 27017 --quiet --tls
-          --tlsCertificateKeyFile /etc/mongo/ssl/healthcheck.pem
-          --tlsCAFile /etc/mongo/ssl/ca.pem
-          --authenticationMechanism MONGODB-X509
-          --authenticationDatabase '$external'
-          --db local --collection oplog.rs
-          --query '{ "ts": { "$lte": { "$timestamp": { "t": {{ _target_epoch }}, "i": 9999 } } } }'
-          --out /data/db/pitr-oplog
+      ansible.builtin.command: >
+        {{ mongodb_container_engine }} exec mongodb-mongod
+        mongodump --port 27017 --quiet --tls
+        --tlsCertificateKeyFile /etc/mongo/ssl/healthcheck.pem
+        --tlsCAFile /etc/mongo/ssl/ca.pem
+        --authenticationMechanism MONGODB-X509
+        --authenticationDatabase '$external'
+        --db local --collection oplog.rs
+        --query '{ "ts": { "$lte": { "$timestamp": { "t": {{ _target_epoch }}, "i": 9999 } } } }'
+        --out /data/db/pitr-oplog
       when:
         - target_time != 'none'
         - not _oplog_in_backup.stat.exists
@@ -106,30 +169,27 @@
         group: "{{ mongodb_gid }}"
         mode: preserve
 
-    - name: Create scratch volume
-      community.docker.docker_volume:
-        name: mongodb-pitr-scratch
-        state: present
-
+    # Disposable PITR mongod. Driven through `{{ mongodb_container_engine }}`
+    # rather than the docker-only Ansible modules so it works on both docker
+    # and podman (the default engine). The named volume is auto-created by
+    # `run -v`; `rm -f` first makes the start idempotent (replaces a stale
+    # scratch container from a previous run). Default bridge network is fine —
+    # the container only serves localhost on 47017.
     - name: Start disposable mongod for PITR
-      community.docker.docker_container:
-        name: mongodb-pitr
-        image: "{{ mongodb_image_registry }}/{{ mongodb_image_repository }}:{{ mongodb_image_tag }}"
-        state: started
-        recreate: true
-        command: mongod --port 47017 --bind_ip 127.0.0.1 --dbpath /data/db --replSet pitrrs --nojournal
-        volumes:
-          - "mongodb-pitr-scratch:/data/db"
-          - "/opt/mongodb/pitr-stage:/stage:ro"
-        user: "{{ mongodb_uid }}:{{ mongodb_gid }}"
-        network_mode: bridge
-        detach: true
-        cleanup: false
+      ansible.builtin.shell: |
+        {{ mongodb_container_engine }} rm -f mongodb-pitr 2>/dev/null || true
+        {{ mongodb_container_engine }} run -d --name mongodb-pitr \
+          -v mongodb-pitr-scratch:/data/db \
+          -v /opt/mongodb/pitr-stage:/stage:ro \
+          --user {{ mongodb_uid }}:{{ mongodb_gid }} \
+          {{ mongodb_image_registry }}/{{ mongodb_image_repository }}:{{ mongodb_image_tag }} \
+          mongod --port 47017 --bind_ip 127.0.0.1 --dbpath /data/db --replSet pitrrs --nojournal
+      changed_when: true
 
     - name: Wait for scratch mongod
-      community.docker.docker_container_exec:
-        container: mongodb-pitr
-        command: mongosh --port 47017 --quiet --eval "db.adminCommand('ping').ok"
+      ansible.builtin.command: >
+        {{ mongodb_container_engine }} exec mongodb-pitr
+        mongosh --port 47017 --quiet --eval "db.adminCommand('ping').ok"
       register: _ping
       until: _ping.stdout | default('0') | trim == '1'
       retries: 20
@@ -138,25 +198,24 @@
 
     - name: Initiate single-node replset (needed for oplog replay)
       ansible.builtin.shell: |
-        docker exec mongodb-pitr mongosh --port 47017 --quiet --eval '
+        {{ mongodb_container_engine }} exec mongodb-pitr mongosh --port 47017 --quiet --eval '
           rs.initiate({_id: "pitrrs", members: [{_id: 0, host: "127.0.0.1:47017"}]})
         '
       changed_when: false
 
     - name: Restore backup + replay oplog up to target_time
-      community.docker.docker_container_exec:
-        container: mongodb-pitr
-        command: >
-          mongorestore --port 47017 --quiet --drop --oplogReplay
-          {% if target_time != 'none' %}--oplogLimit '{{ _target_epoch }}:0'{% endif %}
-          /stage
+      ansible.builtin.command: >
+        {{ mongodb_container_engine }} exec mongodb-pitr
+        mongorestore --port 47017 --quiet --drop --oplogReplay
+        {% if target_time != 'none' %}--oplogLimit '{{ _target_epoch }}:0'{% endif %}
+        /stage
       register: _restore
       changed_when: false
 
     - name: Smoke check — database count
-      community.docker.docker_container_exec:
-        container: mongodb-pitr
-        command: "mongosh --port 47017 --quiet --eval \"print('dbs=' + db.adminCommand('listDatabases').databases.length)\""
+      ansible.builtin.command: >
+        {{ mongodb_container_engine }} exec mongodb-pitr
+        mongosh --port 47017 --quiet --eval "print('dbs=' + db.adminCommand('listDatabases').databases.length)"
       register: _summary
       changed_when: false
 
@@ -169,7 +228,7 @@
           - "Summary: {{ _summary.stdout }}"
           - ""
           - "Next steps:"
-          - "  - Inspect: docker exec -it mongodb-pitr mongosh --port 47017"
+          - "  - Inspect: {{ mongodb_container_engine }} exec -it mongodb-pitr mongosh --port 47017"
           - "  - Extract: mongodump --port 47017 --db <name> --out /stage/out"
-          - "  - Clean up: docker rm -f mongodb-pitr && docker volume rm mongodb-pitr-scratch"
-          - "  - rm -rf /opt/mongodb/pitr-stage"
+          - "  - Clean up: {{ mongodb_container_engine }} rm -f mongodb-pitr && {{ mongodb_container_engine }} volume rm mongodb-pitr-scratch"
+          - "  - rm -rf /opt/mongodb/pitr-stage /opt/mongodb/backups/_pitr"

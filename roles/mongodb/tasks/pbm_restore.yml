@@ -1,0 +1,34 @@
+---
+# Percona Backup for MongoDB restore — WHOLE-CLUSTER and in-place. This is a
+# disruptive recovery operation: PBM stops the balancer and expects no active
+# application writes during the restore. Specify exactly one of:
+#   -e pbm_backup=<backup name>          restore a specific snapshot
+#   -e pbm_target='2026-06-09T12:00:00'  point-in-time restore (requires PITR)
+# Invoked via `mongodb_action: pbm-restore` or playbooks/mongodb/pbm-restore.yml.
+
+- name: Validate restore target
+  ansible.builtin.assert:
+    that:
+      - (pbm_backup is defined and pbm_backup | length > 0) or (pbm_target is defined and pbm_target | length > 0)
+    fail_msg: >
+      Specify -e pbm_backup=<name> (see `pbm list`) or
+      -e pbm_target='YYYY-MM-DDThh:mm:ss' for point-in-time recovery.
+  run_once: true
+
+- name: Resolve PBM control container
+  ansible.builtin.set_fact:
+    _pbm_control: "{{ 'mongodb-pbm-config' if mongodb_cluster_type == 'sharded' else 'mongodb-pbm-shard' }}"
+  run_once: true
+
+- name: Run PBM restore (waits for completion)
+  ansible.builtin.command: >
+    {{ mongodb_container_engine }} exec -e PBM_MONGODB_URI={{ _pbm_control_uri }}
+    {{ _pbm_control }} pbm restore {{ ('--time=' ~ pbm_target) if (pbm_target is defined and pbm_target | length > 0) else pbm_backup }} --wait
+  register: _pbm_restore
+  changed_when: true
+  run_once: true
+
+- name: Show PBM restore result
+  ansible.builtin.debug:
+    msg: "{{ _pbm_restore.stdout_lines | default([]) }}"
+  run_once: true

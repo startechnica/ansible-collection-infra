@@ -1,0 +1,104 @@
+#!/bin/sh
+# {{ ansible_managed }}
+# Scheduled MongoDB backup — mongodump into a throwaway container sharing the
+# mongos network, prune old local backups, then optionally upload to S3.
+# Invoked by mongodb-backup.service (oneshot), scheduled by
+# mongodb-backup.timer. Mirrors the on-demand `mongodb_action: backup` flow
+# (plugins/modules/mongodb_backup.py + backup-s3-upload.sh.j2), reimplemented
+# as a plain script so the scheduled run needs no Ansible/Python on the host.
+#
+# We dump through a `{{ mongodb_container_engine }} run --rm` container rather
+# than `exec` into mongos because the mongo image's mongodump lives there and
+# the throwaway container shares the mongos network namespace
+# (--network container:mongodb-mongos) — the same context the module uses.
+
+set -eu
+
+ENGINE={{ mongodb_container_engine }}
+IMAGE={{ mongodb_image }}
+BACKUP_DIR={{ mongodb_backup_dir }}
+RETAIN_DAYS={{ mongodb_backup_retain_days }}
+MONGO_PW='{{ mongodb_admin_password | replace("'", "'\\''") }}'
+TS=$(date -u +%Y%m%d_%H%M%S)
+NAME="mongodump_${TS}"
+
+echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] mongodump starting -> ${BACKUP_DIR}/${NAME}"
+
+mkdir -p "$BACKUP_DIR"
+chown {{ mongodb_uid }}:{{ mongodb_gid }} "$BACKUP_DIR"
+
+# Optional flags assembled as words so empty values vanish under word-splitting.
+TLS_MOUNT=""
+TLS_ARGS=""
+{% if mongos_tls_mode == 'requireTLS' %}
+TLS_MOUNT="-v {{ mongodb_tls_dir }}/ca.pem:/tls/ca.pem:ro"
+TLS_ARGS="--tls --tlsCAFile /tls/ca.pem"
+{% endif %}
+OPLOG_ARG=""
+{% if mongodb_backup_pitr %}
+OPLOG_ARG="--oplog"
+{% endif %}
+
+# shellcheck disable=SC2086  # intentional word-splitting of optional flag vars
+$ENGINE run --rm \
+  --network container:mongodb-mongos \
+  -v "${BACKUP_DIR}:/backup" \
+  --user {{ mongodb_uid }}:{{ mongodb_gid }} \
+  $TLS_MOUNT \
+  "$IMAGE" \
+  mongodump \
+  --host 127.0.0.1 --port 27017 \
+  --username {{ mongodb_admin_user }} --password "$MONGO_PW" \
+  --authenticationDatabase admin \
+  --out "/backup/${NAME}" \
+  --gzip $OPLOG_ARG $TLS_ARGS
+
+{% if (mongodb_backup_retain_days | int) > 0 %}
+# Prune local backups older than the retention window.
+find "$BACKUP_DIR" -maxdepth 1 -type d -name 'mongodump_*' -mtime +{{ mongodb_backup_retain_days }} -exec rm -rf {} +
+{% endif %}
+
+echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] mongodump done: ${BACKUP_DIR}/${NAME}"
+
+{% if mongodb_backup_mode == 's3' %}
+# ── S3 upload (containerised mc — no host mc dependency) ──────────────────
+ARCHIVE="${BACKUP_DIR}/${NAME}.tar.gz"
+tar -czf "$ARCHIVE" -C "$BACKUP_DIR" "$NAME"
+
+$ENGINE run --rm \
+  -v "$ARCHIVE:/backup/${NAME}.tar.gz:ro" \
+  -e MC_HOST_s3="{{ s3_endpoint | regex_replace('^(https?://)', '\\g<1>' ~ s3_access_key ~ ':' ~ s3_secret_key ~ '@') }}" \
+  {{ s3_client_image }} \
+  cp "/backup/${NAME}.tar.gz" "s3/{{ s3_bucket }}/{{ s3_prefix }}/${NAME}.tar.gz"
+
+# Verify the object end-to-end (SHA-256 round-trip) before deleting the local
+# dump — pure-S3 mode leaves no other copy. mc's PUT checksum already fails a
+# corrupted transfer, this proves the stored bytes equal the dumped bytes.
+LOCAL_SHA="$(sha256sum "$ARCHIVE" | awk '{print $1}')"
+REMOTE_SHA="$($ENGINE run --rm \
+  -e MC_HOST_s3="{{ s3_endpoint | regex_replace('^(https?://)', '\\g<1>' ~ s3_access_key ~ ':' ~ s3_secret_key ~ '@') }}" \
+  {{ s3_client_image }} \
+  cat "s3/{{ s3_bucket }}/{{ s3_prefix }}/${NAME}.tar.gz" | sha256sum | awk '{print $1}')"
+if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
+  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] ERROR: S3 checksum mismatch for ${NAME}.tar.gz (local=$LOCAL_SHA remote=$REMOTE_SHA) — keeping local copy" >&2
+  rm -f "$ARCHIVE"
+  exit 1
+fi
+echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Integrity verified: ${NAME}.tar.gz sha256=$LOCAL_SHA"
+
+{% if (mongodb_backup_retain_days | int) > 0 %}
+$ENGINE run --rm \
+  -e MC_HOST_s3="{{ s3_endpoint | regex_replace('^(https?://)', '\\g<1>' ~ s3_access_key ~ ':' ~ s3_secret_key ~ '@') }}" \
+  {{ s3_client_image }} \
+  rm --recursive --force --older-than "{{ mongodb_backup_retain_days }}d" \
+  "s3/{{ s3_bucket }}/{{ s3_prefix }}/"
+{% endif %}
+
+rm -f "$ARCHIVE"
+
+# Pure-S3 mode: the upload is checksum-verified end-to-end above, so drop the
+# local dump now that the bucket holds an identical object.
+rm -rf "${BACKUP_DIR}/${NAME}"
+
+echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] S3 upload complete: s3://{{ s3_bucket }}/{{ s3_prefix }}/${NAME}.tar.gz"
+{% endif %}

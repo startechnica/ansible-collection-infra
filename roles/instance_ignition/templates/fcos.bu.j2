@@ -418,6 +418,15 @@ systemd:
         [Install]
         WantedBy=multi-user.target
 
+{% if (docker_enabled | default(false) | bool) or (podman_enabled | default(false) | bool) %}
+    # Only layer python3 when this host will actually run a service stage.
+    # python3 is the Ansible RUNTIME for the mongodb/patroni/docker roles
+    # (Stage 3.6 waits on it) — NOT tied to the docker engine specifically:
+    # Patroni runs on podman, so gate on docker_enabled OR podman_enabled,
+    # not docker_enabled alone. A provision-only host (both flags false, e.g.
+    # a bare k8s worker) stays python-free; if you later run a service stage
+    # against it, preflight/venv.yml layers python3-pip on demand as a
+    # fallback. Front-loading here just saves that rpm-ostree cost at boot.
     - name: rpm-ostree-install-python3.service
       enabled: true
       contents: |
@@ -455,6 +464,7 @@ systemd:
 
         [Install]
         WantedBy=multi-user.target
+{% endif %}
 {% if container_engine | default('docker') == 'docker' and (docker_enabled | default(false) | bool) %}
 
     # Replace FCOS's moby-engine with upstream Docker CE.
@@ -508,7 +518,10 @@ systemd:
       contents: |
         [Unit]
         Description=Publish startechnica bootstrap-ready phase via vmtools
-        After=multi-user.target rpm-ostree-install-open-vm-tools.service rpm-ostree-install-python3.service
+        After=multi-user.target rpm-ostree-install-open-vm-tools.service
+{% if (docker_enabled | default(false) | bool) or (podman_enabled | default(false) | bool) %}
+        After=rpm-ostree-install-python3.service
+{% endif %}
 {% if container_engine | default('docker') == 'docker' and (docker_enabled | default(false) | bool) %}
         After=docker.service rpm-ostree-install-docker-ce.service
         Wants=docker.service

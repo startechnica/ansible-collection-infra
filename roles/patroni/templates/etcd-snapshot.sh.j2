@@ -1,5 +1,6 @@
 #!/bin/bash
 set -u
+ENGINE={{ patroni_container_engine }}
 SNAPSHOT_DIR="{{ etcd_snapshot_dir }}"
 RETAIN={{ etcd_snapshot_retain }}
 {% if s3_enabled %}
@@ -15,13 +16,20 @@ SNAPSHOT_FILE="${SNAPSHOT_DIR}/etcd-snapshot-${STAMP}.db"
 
 mkdir -p "${SNAPSHOT_DIR}"
 
-docker exec etcd etcdctl snapshot save "/tmp/snap-${STAMP}.db" \
+# Write the snapshot into the bind-mounted data dir (/etcd-data maps to
+# {{ etcd_data_dir }} on the host). The etcd image is distroless — it has no
+# `rm`/shell — so we never `exec` cleanup inside it: the temp file lives on the
+# host volume and is moved into place from here.
+CONTAINER_TMP="/etcd-data/.snap-${STAMP}.db"
+HOST_TMP="{{ etcd_data_dir }}/.snap-${STAMP}.db"
+
+${ENGINE} exec etcd etcdctl snapshot save "${CONTAINER_TMP}" \
   --cacert=/etc/certs/ca.crt \
   --cert=/etc/certs/etcd-server.crt \
   --key=/etc/certs/etcd-server.key 2>/dev/null
 
-docker cp "etcd:/tmp/snap-${STAMP}.db" "${SNAPSHOT_FILE}" 2>/dev/null
-docker exec etcd rm -f "/tmp/snap-${STAMP}.db" 2>/dev/null
+mv -f "${HOST_TMP}" "${SNAPSHOT_FILE}" 2>/dev/null
+rm -f "${HOST_TMP}" 2>/dev/null
 
 if [[ -f "${SNAPSHOT_FILE}" ]]; then
   SIZE=$(du -sh "${SNAPSHOT_FILE}" | cut -f1)

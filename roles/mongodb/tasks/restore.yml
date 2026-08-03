@@ -26,6 +26,8 @@
     drop: "{{ restore_drop | default(false) | bool }}"
     db: "{{ restore_db | default('') }}"
     collection: "{{ restore_collection | default('') }}"
+    tls: "{{ mongos_tls_mode == 'requireTLS' }}"
+    tls_host_ca_file: "{{ mongodb_tls_dir }}/ca.pem"
   register: _restore
   run_once: true
 

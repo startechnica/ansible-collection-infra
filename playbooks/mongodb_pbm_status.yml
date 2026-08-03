@@ -1,0 +1,30 @@
+---
+# ─── MongoDB: Percona Backup (PBM) — status ─────────────────────────────────
+#
+# Show PBM agents, storage target, the PITR window, and the backup list.
+# Requires mongodb_pbm_enabled: true.
+#
+# Usage (file path, or FQCN since this playbook lives at the playbooks/ root):
+#   ansible-playbook playbooks/mongodb_pbm_status.yml -i inventories/<inv>.yml
+#   ansible-playbook startechnica.infra.mongodb_pbm_status -i inventories/<inv>.yml
+
+- name: Setup mongodb hosts
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Build host group from instances
+      ansible.builtin.include_tasks: mongodb/_setup.yml
+
+- name: PBM status
+  hosts: mongodb_nodes
+  become: true
+  gather_facts: true
+  pre_tasks:
+    - name: Inherit localhost vars
+      ansible.builtin.include_role:
+        name: common
+        tasks_from: inherit_localhost_vars
+  roles:
+    - role: mongodb
+      vars:
+        mongodb_action: pbm-status

@@ -3,36 +3,44 @@
 # Common checks (root, docker, compose, RAM) + target Python venv with pymongo
 # are handled by the preflight role dependency.
 
-# Linux kernel ≥ 6.19 has a known incompatibility with current MongoDB
-# releases — mongod refuses to start (and earlier in our experience also
-# segfaults under the sharded TLS path). Upstream tracking ticket:
-# https://jira.mongodb.org/browse/SERVER-121912
+# A TCMalloc/rseq ABI violation makes mongod refuse to start on a BOUNDED
+# range of Linux kernels: 6.19 through 7.0.13 inclusive (and earlier in our
+# experience it also segfaulted under the sharded TLS path). Linux 7.0.14+
+# resolves it kernel-side, so kernels at/above `mongodb_fixed_kernel` are
+# compatible again — the gate is a range, not an open-ended floor.
+# Upstream tracking: https://jira.mongodb.org/browse/SERVER-121912
 #
-# Override `mongodb_skip_kernel_check: true` in inventory to bypass once
-# upstream ships a fix and you've verified it works on your kernel.
+# Compatible when: kernel < 6.19  OR  kernel >= 7.0.14.
+# Broken when:     6.19 <= kernel < 7.0.14.
+#
+# Override `mongodb_skip_kernel_check: true` in inventory to bypass.
 - name: Assert kernel is compatible with MongoDB
   ansible.builtin.assert:
     that:
-      - ansible_facts['kernel'] is version(mongodb_unsupported_kernel, '<')
+      - >-
+        (ansible_facts['kernel'] is version(mongodb_unsupported_kernel, '<'))
+        or (ansible_facts['kernel'] is version(mongodb_fixed_kernel, '>='))
     fail_msg: |
       Kernel {{ ansible_facts['kernel'] }} on {{ inventory_hostname }} is not compatible
       with MongoDB.
 
-      Linux kernel >= 6.19 has a known incompatibility with current MongoDB
-      releases — mongod refuses to start (`MongoDB cannot start: Linux kernel
-      versions 6.19 and newer has a known incompatibility...`).
+      Linux kernels {{ mongodb_unsupported_kernel }} through 7.0.13 have a
+      known incompatibility with current MongoDB releases — mongod refuses to
+      start (`MongoDB cannot start: Linux kernel versions 6.19 and newer has a
+      known incompatibility...`). Linux {{ mongodb_fixed_kernel }} and later
+      fixes it kernel-side.
       Tracking: https://jira.mongodb.org/browse/SERVER-121912
 
       Resolution options:
-        1. Pin the host OS to a release with kernel < 6.19. Note the kernel
-           bump can land WITHIN a single FCOS major release: e.g. FCOS
-           43.20260217.3.1 shipped kernel 6.18 (works), FCOS 43.20260413.3.2
-           shipped kernel 6.19 (broken). Pinning the FCOS major isn't enough
-           — pin the specific stream build via `content_library_item_name`
-           in inventory.
-        2. Move MongoDB nodes to a different OS (Ubuntu 24.04 ships 6.8).
-        3. Wait for an upstream MongoDB patch that supports 6.19, then bump
-           `mongodb_image_tag` in inventory.
+        1. Upgrade the host to kernel >= {{ mongodb_fixed_kernel }} (the
+           incompatibility is resolved kernel-side from 7.0.14 on).
+        2. Pin the host OS to a release with kernel < {{ mongodb_unsupported_kernel }}.
+           Note the kernel bump can land WITHIN a single FCOS major release:
+           e.g. FCOS 43.20260217.3.1 shipped kernel 6.18 (works), FCOS
+           43.20260413.3.2 shipped kernel 6.19 (broken). Pinning the FCOS
+           major isn't enough — pin the specific stream build via
+           `content_library_item_name` in inventory.
+        3. Move MongoDB nodes to a different OS (Ubuntu 24.04 ships 6.8).
         4. Bypass with `mongodb_skip_kernel_check: true` (use only after
            verifying mongo runs on your kernel — running with this set on
            an incompatible kernel crashes containers in a tight loop).

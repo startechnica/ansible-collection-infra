@@ -52,6 +52,17 @@
 # tasks/main.yml). Only the connection-shape fields are set here (portgroup,
 # NIC type, state, optional pinned MAC); the L3 config (ipv4/ipv6/gateway)
 # is injected later via cloud-init / ignition reading the same `networks:`.
+#
+# `dvswitch_name` is what makes vmware_guest attach a DISTRIBUTED-vSwitch
+# backing (DistributedVirtualPortBackingInfo) instead of a standard-vSwitch
+# one (NetworkBackingInfo). Content-library OVFs deploy with a default
+# standard backing; without dvswitch_name here, the reconfigure only renames
+# the portgroup on that wrong backing type and the NIC lands in
+# status=unrecoverableError, portgroupKey=None — it shows "(disconnected)"
+# and the guest never gets an IP even though `connected: true` is set. Pass
+# it only when a DVS is configured (per-NIC `dvswitch`, else the role-level
+# `portgroup_dvswitch_name`); omit for pure standard-vSwitch setups so those
+# still resolve by portgroup name alone.
 - name: "Reset vSphere NIC accumulator for {{ item.name }}"
   ansible.builtin.set_fact:
     _vsphere_networks: []
@@ -59,8 +70,11 @@
 - name: "Build vSphere NIC entry — {{ 'vm=' ~ item.name ~ ', nic=' ~ (nic.name | default(portgroup_name)) }}"
   ansible.builtin.set_fact:
     _vsphere_networks: >-
-      {{ _vsphere_networks + [_entry | combine({'mac': nic.mac} if nic.mac is defined else {})] }}
+      {{ _vsphere_networks + [_entry
+         | combine({'dvswitch_name': _nic_dvswitch} if (_nic_dvswitch | length > 0) else {})
+         | combine({'mac': nic.mac} if nic.mac is defined else {})] }}
   vars:
+    _nic_dvswitch: "{{ nic.dvswitch | default(portgroup_dvswitch_name) | default('') }}"
     _entry:
       name: "{{ nic.name | default(portgroup_name) }}"
       device_type: vmxnet3
@@ -133,6 +147,94 @@
     disk: "{{ _vsphere_disks }}"
     networks: "{{ _vsphere_networks }}"
   delegate_to: localhost
+
+# Rebind DVS NICs with the purpose-built vmware_guest_network module.
+#
+# WHY THIS EXISTS: content-library OVFs deploy the NIC with a standard-vSwitch
+# backing (NetworkBackingInfo). vmware_guest's `networks:` above CANNOT convert
+# that to a distributed-vSwitch backing — even with dvswitch_name it only
+# renames the portgroup on the wrong backing type, leaving the NIC in
+# status=unrecoverableError / portgroup_key=None ("(disconnected)", no guest
+# IP). vmware_guest_network reliably replaces the backing (verified: it binds
+# where vmware_guest silently fails). Runs once per DVS NIC, matched by its
+# device label (Network adapter 1, 2, …). Standard-vSwitch NICs are handled by
+# vmware_guest above and skip this. `_vsphere_networks` preserves NIC order, so
+# index i → "Network adapter {{ i + 1 }}".
+- name: "Rebind DVS NIC to its distributed portgroup — {{ item.name }}"
+  community.vmware.vmware_guest_network:
+    hostname: "{{ vcenter_connect.hostname }}"
+    username: "{{ vcenter_connect.username }}"
+    password: "{{ vcenter_connect.password }}"
+    validate_certs: "{{ vcenter_connect.validate_certs }}"
+    datacenter: "{{ instance_datacenter }}"
+    name: "{{ item.name }}"
+    label: "Network adapter {{ _idx + 1 }}"
+    network_name: "{{ _dvs_entry.name }}"
+    switch: "{{ _dvs_entry.dvswitch_name }}"
+    device_type: "{{ _dvs_entry.device_type | default('vmxnet3') }}"
+    connected: true
+    start_connected: true
+    state: present
+  delegate_to: localhost
+  loop: "{{ _vsphere_networks }}"
+  loop_control:
+    loop_var: _dvs_entry
+    index_var: _idx
+    label: "Network adapter {{ _idx + 1 }} -> {{ _dvs_entry.name }}"
+  when: _dvs_entry.dvswitch_name is defined
+
+# Guard against the SILENT NIC-binding failure. Even with the rebind above, a
+# wrong portgroup/switch name, a host that isn't a DVS member, etc. can leave
+# the NIC unbound — and vmware_guest/vmware_guest_network can report changed
+# without the cable actually connecting. The VM would then power on with a dead
+# adapter that shows "(disconnected)" and gets no guest IP, with no error at
+# provision time (surfacing days later as "why is this box offline?"). Re-probe
+# and assert every NIC we put on a DISTRIBUTED switch actually bound
+# (portgroup_key populated). Standard-vSwitch NICs legitimately have a null
+# portgroup_key, so only enforce this for entries that carried a dvswitch_name.
+- name: "Re-probe NIC binding after network reconfigure — {{ item.name }}"
+  community.vmware.vmware_guest_info:
+    hostname: "{{ vcenter_connect.hostname }}"
+    username: "{{ vcenter_connect.username }}"
+    password: "{{ vcenter_connect.password }}"
+    validate_certs: "{{ vcenter_connect.validate_certs }}"
+    datacenter: "{{ instance_datacenter }}"
+    folder: "{{ instance_folder_path }}"
+    name: "{{ item.name }}"
+  delegate_to: localhost
+  register: _nic_verify_info
+  when: _vsphere_networks | selectattr('dvswitch_name', 'defined') | list | length > 0
+
+- name: "Assert every DVS NIC bound to a portgroup — {{ item.name }}"
+  ansible.builtin.assert:
+    that:
+      - _nic_verify_info.instance['hw_eth' ~ _idx] is defined
+      # default('', true) also replaces an explicit null (the broken state
+      # reports portgroup_key: null, which a bare default() would NOT catch —
+      # it only fills undefined — so `| length` would crash on NoneType).
+      - (_nic_verify_info.instance['hw_eth' ~ _idx].portgroup_key | default('', true) | length) > 0
+    fail_msg: >-
+      NIC hw_eth{{ _idx }} on '{{ item.name }}' did NOT bind to distributed
+      portgroup '{{ _dvs_entry.name }}' (switch '{{ _dvs_entry.dvswitch_name }}')
+      — portgroup_key is
+      '{{ (_nic_verify_info.instance['hw_eth' ~ _idx] | default({})).portgroup_key | default('(null)', true) }}'.
+      The adapter is in an unbound/unrecoverable state and will show
+      "(disconnected)" with no guest IP. Common causes: the portgroup name or
+      dvswitch name is wrong (both are CASE-SENSITIVE), the VM's ESXi host is
+      not a member of that DVS, or the OVF's default standard-vSwitch backing
+      wasn't converted. Verify names in vCenter (Menu -> Networking).
+    success_msg: >-
+      NIC hw_eth{{ _idx }} on '{{ item.name }}' bound to
+      '{{ _dvs_entry.name }}' (key {{ (_nic_verify_info.instance['hw_eth' ~ _idx]).portgroup_key }}).
+    quiet: "{{ not (debug | bool) }}"
+  loop: "{{ _vsphere_networks }}"
+  loop_control:
+    loop_var: _dvs_entry
+    index_var: _idx
+    label: "hw_eth{{ _idx }} -> {{ _dvs_entry.name }}"
+  when:
+    - not (_nic_verify_info.skipped | default(false))
+    - _dvs_entry.dvswitch_name is defined
 
 - name: "Ensure VM is powered off before boot config — {{ item.name }}"
   community.vmware.vmware_guest:

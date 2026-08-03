@@ -19,7 +19,7 @@ argument_specs:
       mongodb_action:
         type: str
         default: provision
-        choices: [provision, init, backup, restore, status, renew-certs, upgrade, uninstall]
+        choices: [provision, init, backup, restore, status, renew-certs, upgrade, uninstall, pbm-setup, pbm-backup, pbm-restore, pbm-status]
         description: Which sub-flow to run. Most day-2 playbooks override this.
 
       mongodb_cluster_type:
@@ -37,8 +37,17 @@ argument_specs:
         type: str
         default: "6.19"
         description:
-          - Kernel version string at-or-above which MongoDB is known to be incompatible. Preflight refuses to install when the host kernel is >= this value.
-          - Bump only after verifying a later MongoDB release supports your kernel (see https://jira.mongodb.org/browse/SERVER-121912).
+          - Lower bound (inclusive) of the kernel range where MongoDB is known to be incompatible due to a TCMalloc/rseq ABI violation.
+          - Preflight refuses to install when `mongodb_unsupported_kernel <= host kernel < mongodb_fixed_kernel`. Kernels below this value are compatible.
+          - See https://jira.mongodb.org/browse/SERVER-121912.
+
+      mongodb_fixed_kernel:
+        type: str
+        default: "7.0.14"
+        description:
+          - Upper bound (inclusive) at/above which the incompatibility is resolved kernel-side. Kernels >= this value pass preflight. The broken window is therefore 6.19 through 7.0.13.
+          - The fix is in the Linux kernel, not MongoDB — Mongo's vendored TCMalloc is still unpatched through 8.2, so upgrading MongoDB alone does not escape the range.
+          - See https://jira.mongodb.org/browse/SERVER-121912.
 
       mongodb_skip_kernel_check:
         type: bool
@@ -195,6 +204,47 @@ argument_specs:
         type: int
         default: 9216
 
+      # ── Percona Backup for MongoDB (PBM) ──
+      mongodb_pbm_enabled:
+        type: bool
+        default: false
+        description: >
+          Deploy PBM agents for cluster-consistent backups + PITR. Required for
+          sharded-cluster PITR (mongodump --oplog can't run via mongos). One
+          agent per local mongod (2/host sharded, 1/host replicaset).
+      mongodb_pbm_image:
+        type: str
+        default: "docker.io/percona/percona-backup-mongodb:2.11.0"
+      mongodb_pbm_cn:
+        type: str
+        default: mongodb-pbm
+        description: X.509 CN the PBM agent presents (mapped to a $external user).
+      mongodb_pbm_mem_limit_mb:
+        type: int
+        default: 256
+      mongodb_pbm_init_backup:
+        type: bool
+        default: true
+        description: >-
+          Force a storage resync and take a base backup (if none exists) during
+          provision/setup, so storage is initialized and PITR has an anchor.
+          Idempotent — skipped when a backup already exists.
+      mongodb_pbm_compression:
+        type: str
+        default: zstd
+        choices: [none, gzip, snappy, lz4, s2, zstd]
+      mongodb_pbm_compression_level:
+        type: str
+        default: ""
+        description: >-
+          Optional codec-specific compression level (e.g. zstd 1–22, gzip 1–9).
+          Empty uses the codec default. Applies to base backups and PITR slices.
+      mongodb_pbm_x509_subject:
+        type: str
+        description: >
+          Full X.509 subject DN the PBM $external user is created with. Defaults
+          to CN=<mongodb_pbm_cn>,OU=<client OU>,O=<org>.
+
       # ── Backup ──
       mongodb_backup_dir:
         type: str
@@ -202,6 +252,29 @@ argument_specs:
       mongodb_backup_retain_days:
         type: int
         default: 7
+      mongodb_backup_mode:
+        type: str
+        choices: [local, s3]
+        description: >
+          Backup destination. `local` keeps the mongodump on the node under
+          `mongodb_backup_retain_days`; `s3` tar-gzips and uploads it via
+          containerised mc, then removes the local copy (pure-S3 — the bucket
+          is the only copy). The dump is always written locally first.
+          Defaults to `s3` when `s3_bucket` is set, else `local`.
+      mongodb_backup_enabled:
+        type: bool
+        default: true
+        description: >
+          Master switch for the scheduled-backup timer. False tears down any
+          installed timer/service. On-demand `mongodb_action: backup` is
+          unaffected.
+      mongodb_backup_schedule:
+        type: str
+        default: "*-*-* 02:00:00"
+        description: >
+          systemd OnCalendar expression for the host-level scheduled-backup
+          timer (mongodb-backup.timer). Empty string disables the timer;
+          on-demand `mongodb_action: backup` still works.
 
       # ── S3 (shared with patroni) ──
       s3_endpoint:
@@ -220,12 +293,15 @@ argument_specs:
       s3_region:
         type: str
         default: us-east-1
+      s3_force_path_style:
+        type: str
+        default: "true"
+        description: >-
+          Force path-style S3 addressing (bucket in the URL path, not the
+          hostname). Required by most S3-compatible gateways. Consumed by PBM.
       s3_prefix:
         type: str
         description: Path prefix inside the bucket. Defaults to `mongodb/<mongodb_network>`.
-      s3_retain_days:
-        type: str
-        description: Retention for S3 objects. Defaults to `mongodb_backup_retain_days`. Set `0` to disable prune.
       s3_client_image:
         type: str
         default: "minio/mc:latest"

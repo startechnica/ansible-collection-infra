@@ -5,7 +5,28 @@ caveat: **pre-1.0 minor bumps may contain breaking changes**. Read the release
 notes in [../CHANGELOG.md](../CHANGELOG.md) before upgrading; this file
 documents the migration steps for breaking changes.
 
-## Unreleased
+## 1.0.3 (unreleased)
+
+### Breaking — `s3_retain_days` removed
+
+The `s3_retain_days` variable is gone. S3 backup retention now always follows
+`mongodb_backup_retain_days`, removing a redundant second knob (its default was
+already `{{ mongodb_backup_retain_days }}`).
+
+**What you'll see:** if you never set `s3_retain_days`, nothing changes —
+behaviour is identical. If you set it to a value *different* from
+`mongodb_backup_retain_days`, remote objects are now pruned on the
+`mongodb_backup_retain_days` window instead.
+
+**Action:** set `mongodb_backup_retain_days` to your desired retention (it
+governs both local and S3 pruning) and remove any `s3_retain_days` from
+inventory.
+
+```yaml
+mongodb_backup_retain_days: 14   # applies to local dumps and S3 objects
+```
+
+## 1.0.2 (2026-06-08)
 
 ### Potentially breaking — `netbox_device_platform` default is now empty
 

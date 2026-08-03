@@ -45,6 +45,19 @@
 # can still be torn down without the playbook erroring on missing
 # containers/units/files.
 
+# PBM agents on docker are standalone containers (not in the compose project),
+# so remove them explicitly before tearing down the compose stack.
+- name: Remove PBM agent containers (docker)
+  ansible.builtin.command: "docker rm -f {{ item }}"
+  loop:
+    - mongodb-pbm-shard
+    - mongodb-pbm-config
+  loop_control:
+    label: "{{ item }}"
+  changed_when: false
+  failed_when: false
+  when: mongodb_container_engine == 'docker'
+
 - name: Stop and remove containers (docker)
   community.docker.docker_compose_v2:
     project_src: "{{ mongodb_root_dir }}"
@@ -76,6 +89,8 @@
         state: stopped
         enabled: false
       loop:
+        - mongodb-pbm-shard.service
+        - mongodb-pbm-config.service
         - mongodb-mongod.service
         - mongodb-configsvr.service
         - mongodb-mongos.service
@@ -89,6 +104,8 @@
         path: "/etc/containers/systemd/{{ item }}"
         state: absent
       loop:
+        - mongodb-pbm-shard.container
+        - mongodb-pbm-config.container
         - mongodb-mongod.container
         - mongodb-configsvr.container
         - mongodb-mongos.container
@@ -106,6 +123,8 @@
     - name: Reset failed state for removed units
       ansible.builtin.command: systemctl reset-failed {{ item }}
       loop:
+        - mongodb-pbm-shard.service
+        - mongodb-pbm-config.service
         - mongodb-mongod.service
         - mongodb-configsvr.service
         - mongodb-mongos.service
@@ -124,6 +143,8 @@
         state: absent
         force: true
       loop:
+        - mongodb-pbm-shard
+        - mongodb-pbm-config
         - mongodb-mongod
         - mongodb-configsvr
         - mongodb-mongos
@@ -133,6 +154,28 @@
       failed_when: false
 
 # ── Shared cleanup (host-level config, regardless of engine) ──────────
+
+- name: Stop and disable scheduled-backup timers
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    enabled: false
+    state: stopped
+  loop:
+    - mongodb-backup.timer
+    - pbm-backup.timer
+  failed_when: false
+
+- name: Delete scheduled-backup units, helper script, and PBM config
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/mongodb-backup.timer
+    - /etc/systemd/system/mongodb-backup.service
+    - "{{ mongodb_root_dir }}/mongodb-backup.sh"
+    - /etc/systemd/system/pbm-backup.timer
+    - /etc/systemd/system/pbm-backup.service
+    - "{{ mongodb_root_dir }}/pbm"
 
 - name: Remove THP disable service
   ansible.builtin.systemd:

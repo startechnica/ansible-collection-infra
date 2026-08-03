@@ -73,6 +73,36 @@ options:
     description: Delete backups older than this many days. 0 to disable pruning.
     default: 0
     type: int
+  oplog:
+    description: >
+      Capture the oplog during the dump (mongodump --oplog). Required for
+      point-in-time recovery via pitr.yml. Only valid for replica set /
+      sharded cluster dumps (not single-db --db dumps).
+    default: false
+    type: bool
+  tls:
+    description: Connect with TLS (mongodump --tls).
+    default: false
+    type: bool
+  tls_ca_file:
+    description: >
+      Path to the CA certificate **inside the container** for TLS verification.
+      Mount the host file via tls_host_ca_file.
+    default: ""
+    type: str
+  tls_host_ca_file:
+    description: >
+      Path to the CA certificate on the **host** — mounted read-only into
+      /tls/ca.pem inside the container.  Takes precedence over tls_ca_file
+      when set.
+    default: ""
+    type: str
+  tls_cert_file:
+    description: >
+      Path to the client certificate (PEM) on the **host** for
+      mutual-TLS authentication.  Mounted read-only into /tls/client.pem.
+    default: ""
+    type: str
 '''
 
 EXAMPLES = r'''
@@ -145,6 +175,11 @@ def main():
             db=dict(type='str', default=''),
             collection=dict(type='str', default=''),
             retain_days=dict(type='int', default=0),
+            oplog=dict(type='bool', default=False),
+            tls=dict(type='bool', default=False),
+            tls_ca_file=dict(type='str', default=''),
+            tls_host_ca_file=dict(type='str', default=''),
+            tls_cert_file=dict(type='str', default=''),
         ),
         supports_check_mode=True,
     )
@@ -163,6 +198,11 @@ def main():
     db = module.params['db']
     collection = module.params['collection']
     retain_days = module.params['retain_days']
+    use_oplog = module.params['oplog']
+    use_tls = module.params['tls']
+    tls_ca_file = module.params['tls_ca_file']
+    tls_host_ca_file = module.params['tls_host_ca_file']
+    tls_cert_file = module.params['tls_cert_file']
 
     backup_name = "mongodump_%s" % time.strftime("%Y%m%d_%H%M%S")
     backup_path = os.path.join(mongodb_backup_dir, backup_name)
@@ -176,6 +216,8 @@ def main():
 
     if collection and not db:
         module.fail_json(msg="'db' is required when 'collection' is specified")
+    if use_oplog and db:
+        module.fail_json(msg="'oplog' and 'db' are mutually exclusive — oplog requires a full cluster dump")
 
     # Ensure backup directory exists
     if not os.path.isdir(mongodb_backup_dir):
@@ -190,12 +232,22 @@ def main():
         result['msg'] = "Would create backup: %s" % backup_path
         module.exit_json(**result)
 
+    # Resolve TLS paths: host-side file overrides the in-container path.
+    effective_ca = "/tls/ca.pem" if tls_host_ca_file else tls_ca_file
+    effective_cert = "/tls/client.pem" if tls_cert_file else ""
+
     # Build mongodump command
     dump_cmd = [
         "docker", "run", "--rm",
         "--network", "container:%s" % container,
         "-v", "%s:/backup" % mongodb_backup_dir,
         "--user", "%d:%d" % (uid, gid),
+    ]
+    if tls_host_ca_file:
+        dump_cmd.extend(["-v", "%s:/tls/ca.pem:ro" % tls_host_ca_file])
+    if tls_cert_file:
+        dump_cmd.extend(["-v", "%s:/tls/client.pem:ro" % tls_cert_file])
+    dump_cmd.extend([
         image,
         "mongodump",
         "--host", host,
@@ -204,10 +256,18 @@ def main():
         "--password", password,
         "--authenticationDatabase", auth_database,
         "--out", "/backup/%s" % backup_name,
-    ]
+    ])
 
     if use_gzip:
         dump_cmd.append("--gzip")
+    if use_oplog:
+        dump_cmd.append("--oplog")
+    if use_tls:
+        dump_cmd.append("--tls")
+        if effective_ca:
+            dump_cmd.extend(["--tlsCAFile", effective_ca])
+        if effective_cert:
+            dump_cmd.extend(["--tlsCertificateKeyFile", effective_cert])
     if db:
         dump_cmd.extend(["--db", db])
     if collection:

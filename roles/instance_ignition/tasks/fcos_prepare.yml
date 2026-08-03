@@ -13,6 +13,21 @@
       content_library_auto_import=false.
   when: instance_platform_preset != 'fedora-coreos'
 
+- name: Assert an ignition channel is resolvable before building the URL
+  ansible.builtin.assert:
+    that:
+      - (ignition_metadata_url | default('') | length > 0)
+        or (ignition_channel | default('') | length > 0)
+    fail_msg: >-
+      Cannot build the FCOS stream metadata URL: both `ignition_metadata_url`
+      and `ignition_channel` are empty. This almost always means
+      `instance_platform_preset` is unset (or set to a non-FCOS preset with no
+      `ignition.default_channel`) while `instance_init_type=ignition` forced
+      this task to run. Set `instance_platform_preset: fedora-coreos` (or the
+      correct ignition preset) in your inventory, or set `ignition_channel`
+      explicitly. Without this, the URL collapses to `streams/.json` → 404.
+    quiet: true
+
 - name: Resolve FCOS stream metadata URL
   ansible.builtin.set_fact:
     _fcos_metadata_url: >-

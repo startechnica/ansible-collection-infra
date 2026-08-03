@@ -10,7 +10,7 @@ defaults
     timeout client 300s
     timeout connect 10s
     timeout server 300s
-    timeout check 5s
+    timeout check {{ haproxy_check_timeout }}
 
     # Cap half-closed (FIN sent, peer hasn't closed back) connections so
     # FDs from abrupt client/PgBouncer disconnects free quickly instead
@@ -39,7 +39,7 @@ listen pg-primary
     bind *:{{ haproxy_primary_port }}
     option httpchk GET /primary
     http-check expect status 200
-    default-server inter 3s fall 3 rise 2 on-marked-down shutdown-sessions
+    default-server inter {{ haproxy_check_inter }} fall {{ haproxy_check_fall }} rise {{ haproxy_check_rise }} on-marked-down shutdown-sessions
 
 {% for ip in node_ips %}
     server {{ ip }} {{ ip }}:{{ pgbouncer_port }} maxconn 100 check port {{ patroni_api_port }} check-ssl ca-file /etc/certs/ca.crt crt /etc/certs/haproxy-client.pem verify required
@@ -50,7 +50,7 @@ listen pg-replicas
     balance roundrobin
     option httpchk GET /replica
     http-check expect status 200
-    default-server inter 3s fall 3 rise 2 on-marked-down shutdown-sessions
+    default-server inter {{ haproxy_check_inter }} fall {{ haproxy_check_fall }} rise {{ haproxy_check_rise }} on-marked-down shutdown-sessions
 
 {% for ip in node_ips %}
     server {{ ip }} {{ ip }}:{{ pgbouncer_port }} maxconn 100 check port {{ patroni_api_port }} check-ssl ca-file /etc/certs/ca.crt crt /etc/certs/haproxy-client.pem verify required

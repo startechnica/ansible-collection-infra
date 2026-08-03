@@ -8,12 +8,15 @@ mongodb_version: "8.2.7"
 mongodb_cluster_type: sharded
 mongodb_cluster_name: "MongoDB Cluster"
 
-# Kernel-compatibility gate. mongod refuses to start on Linux 6.19+ —
-# https://jira.mongodb.org/browse/SERVER-121912 — so the role's preflight
-# fails fast on incompatible kernels rather than letting containers crash
-# in a restart loop. Bump `mongodb_unsupported_kernel` once upstream
-# publishes a fix; flip `mongodb_skip_kernel_check` to bypass entirely.
-mongodb_unsupported_kernel: "6.19"
+# Kernel-compatibility gate. Due to a TCMalloc/rseq ABI violation, mongod
+# refuses to start on a BOUNDED range of Linux kernels: 6.19 through 7.0.13
+# inclusive. Linux 7.0.14+ resolves the incompatibility kernel-side, so the
+# gate is a range, not an open-ended floor — a host on 7.0.14+ (or < 6.19)
+# passes. Tracking: https://jira.mongodb.org/browse/SERVER-121912 (Mongo's
+# own vendored TCMalloc is still unpatched through 8.2, so the escape is the
+# kernel, not a Mongo bump). Flip `mongodb_skip_kernel_check` to bypass.
+mongodb_unsupported_kernel: "6.19"        # broken range starts here (inclusive)
+mongodb_fixed_kernel: "7.0.14"            # fixed at/after here (inclusive)
 mongodb_skip_kernel_check: false
 
 # ── System user ──
@@ -115,6 +118,30 @@ mongodb_databases: []
 # ── Backup ──
 mongodb_backup_dir: "{{ mongodb_root_dir }}/backups"
 mongodb_backup_retain_days: 7
+## @param mongodb_backup_pitr [default: false] Pass --oplog to mongodump so the
+## backup captures oplog entries for the dump window, making it usable for
+## point-in-time recovery via playbooks/mongodb/pitr.yml. Only valid for
+## replica-set deployments dumped from a mongod — mongodump --oplog is rejected
+## against a mongos, so leave this false on sharded clusters. Also incompatible
+## with per-db/collection backups (full cluster dump only).
+mongodb_backup_pitr: false
+
+# Scheduled backup — host-level systemd timer + oneshot service, same pattern
+# as patroni's walg-cron.timer (no crond dependency; FCOS doesn't ship it).
+# `mongodb_backup_enabled` is the master switch: false tears down any installed
+# timer/service and skips installation. `mongodb_backup_schedule` is a systemd
+# OnCalendar expression (see `man systemd.time`); Persistent=true catches up a
+# missed run (host offline at the scheduled time) on next boot. On-demand
+# `mongodb_action: backup` works regardless of these knobs.
+mongodb_backup_enabled: true
+mongodb_backup_schedule: "*-*-* 02:00:00"
+
+# Backup destination: 'local' keeps the mongodump on the node only; 's3' also
+# tar-gzips it and uploads via containerised mc (the dump is always written
+# locally first — s3 mode is local-then-push). Applies to both the on-demand
+# `mongodb_action: backup` flow and the scheduled timer. Defaults to 's3' when
+# an s3_bucket is configured, else 'local', preserving prior behaviour.
+mongodb_backup_mode: "{{ 's3' if (s3_bucket | length > 0) else 'local' }}"
 
 # ── S3 remote backup (optional) ──
 # Shared across roles: set these at inventory/group_vars once; mongodb and
@@ -125,10 +152,12 @@ s3_bucket: ""
 s3_access_key: ""
 s3_secret_key: ""
 s3_region: "us-east-1"
+# Force path-style S3 addressing (bucket in the path, not the hostname).
+# Required by most S3-compatible gateways (Ceph RGW, MinIO, custom). Matches
+# patroni's wal-g AWS_S3_FORCE_PATH_STYLE. Consumed by PBM's storage config.
+s3_force_path_style: "true"
 # Path prefix inside the bucket (mongodb only).
 s3_prefix: "mongodb/{{ mongodb_network }}"
-# Retention for objects in S3 (days). 0 = never prune.
-s3_retain_days: "{{ mongodb_backup_retain_days }}"
 # Docker image used to run the S3 client (mc). No host install needed.
 s3_client_image: "minio/mc:latest"
 
@@ -142,6 +171,46 @@ mongodb_exporter_enabled: true
 # than implicit.
 mongodb_exporter_image: "docker.io/percona/mongodb_exporter:0.51.0"
 mongodb_exporter_port: 9216
+
+# ── Percona Backup for MongoDB (PBM) ──
+# Cluster-consistent backups + point-in-time recovery for SHARDED clusters
+# (where mongodump --oplog can't run via mongos). One pbm-agent runs next to
+# every data-bearing mongod: in sharded mode that's two agents per host (the
+# shard mongod + the configsvr); in replicaset mode it's one (the mongod).
+# Agents authenticate via X.509 client cert (CN=mongodb_pbm_cn) and store
+# backups in the shared s3_* target using PBM's native S3 support.
+#
+# NOTE: on the Community `mongo` image PBM does LOGICAL backups + logical PITR
+# only — physical backups need Percona Server for MongoDB. See
+# docs/design/mongodb-pbm.md.
+mongodb_pbm_enabled: false
+# Pin the agent image (avoid :latest for reproducible/offline-friendly pulls).
+mongodb_pbm_image: "docker.io/percona/percona-backup-mongodb:2.14.0"
+mongodb_pbm_cn: mongodb-pbm
+mongodb_pbm_mem_limit_mb: 256
+# PBM continuous oplog slicing (restore to any timestamp in the window) is
+# gated on the shared mongodb_backup_pitr knob — the same switch that enables
+# mongodump --oplog for replica-set backups. One PITR intent, one knob.
+# On provision/setup, force a storage resync (clears "storage is not
+# initialized") and lay down a base backup if none exists yet — PBM needs one
+# before PITR can start slicing. Idempotent: skipped when a backup already
+# exists. Set false to manage the first backup yourself.
+mongodb_pbm_init_backup: true
+# Backup compression for `pbm backup`: none|gzip|snappy|lz4|s2|zstd.
+mongodb_pbm_compression: zstd
+# Optional compression level (codec-specific, e.g. zstd 1–22, gzip 1–9). Empty
+# uses the codec's default. Applies to both base backups and PITR oplog slices.
+mongodb_pbm_compression_level: 3
+# Scheduled `pbm backup` reuses the shared backup knobs rather than PBM-specific
+# ones: the timer fires on `mongodb_backup_schedule` (empty disables it) and a
+# post-backup `pbm cleanup` prunes base backups + their oplog chunks older than
+# `mongodb_backup_retain_days`. One schedule + one retention window for both the
+# mongodump path and PBM. Enabling PITR (mongodb_backup_pitr) without a schedule
+# leaves you a single base-backup anchor that never rotates — set a schedule so
+# the PITR window keeps a fresh floor and the bucket doesn't grow unbounded.
+# X.509 subject the PBM agent presents (mapped to a $external user with the
+# PBM role set). Mirrors mongodb_healthcheck_x509_subject / _exporter_.
+mongodb_pbm_x509_subject: "CN={{ mongodb_pbm_cn }},OU={{ mongodb_pki_client_ou }},O={{ mongodb_pki_o }}"
 
 # ── Kernel tuning ──
 mongodb_sysctl:

@@ -12,18 +12,43 @@ tar -czf "$ARCHIVE" -C "{{ mongodb_backup_dir }}" "{{ _backup.backup_name }}"
 # Run mc in a throwaway container. Mount the archive read-only; pass creds via env.
 docker run --rm \
   -v "$ARCHIVE:/backup/${OBJECT_NAME}:ro" \
-  -e MC_HOST_s3="{{ s3_endpoint | regex_replace('^(https?://)', '\\1' ~ s3_access_key ~ ':' ~ s3_secret_key ~ '@') }}" \
+  -e MC_HOST_s3="{{ s3_endpoint | regex_replace('^(https?://)', '\\g<1>' ~ s3_access_key ~ ':' ~ s3_secret_key ~ '@') }}" \
   {{ s3_client_image }} \
   cp "/backup/${OBJECT_NAME}" "s3/{{ s3_bucket }}/{{ s3_prefix }}/${OBJECT_NAME}"
 
-{% if (s3_retain_days | int) > 0 %}
+# ── Integrity verification ───────────────────────────────────────────────────
+# mc's PUT already sends a Content-MD5/checksum the server validates, so a
+# corrupted transfer fails the cp above. But before we delete the local copy
+# (pure-S3 mode) we additionally re-read the object back and compare SHA-256
+# end-to-end — proving the bytes in the bucket equal the bytes we dumped, not
+# just that the server stored what mc claimed to send. Streamed via `mc cat`
+# so there's no temp file; works for both single- and multipart objects.
+LOCAL_SHA="$(sha256sum "$ARCHIVE" | awk '{print $1}')"
+REMOTE_SHA="$(docker run --rm \
+  -e MC_HOST_s3="{{ s3_endpoint | regex_replace('^(https?://)', '\\g<1>' ~ s3_access_key ~ ':' ~ s3_secret_key ~ '@') }}" \
+  {{ s3_client_image }} \
+  cat "s3/{{ s3_bucket }}/{{ s3_prefix }}/${OBJECT_NAME}" | sha256sum | awk '{print $1}')"
+if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
+  echo "ERROR: S3 object checksum mismatch for ${OBJECT_NAME}" >&2
+  echo "       local=$LOCAL_SHA remote=$REMOTE_SHA — keeping local copy" >&2
+  rm -f "$ARCHIVE"
+  exit 1
+fi
+echo "Integrity verified: ${OBJECT_NAME} sha256=$LOCAL_SHA"
+
+{% if (mongodb_backup_retain_days | int) > 0 %}
 # Prune remote objects older than retention window
 docker run --rm \
-  -e MC_HOST_s3="{{ s3_endpoint | regex_replace('^(https?://)', '\\1' ~ s3_access_key ~ ':' ~ s3_secret_key ~ '@') }}" \
+  -e MC_HOST_s3="{{ s3_endpoint | regex_replace('^(https?://)', '\\g<1>' ~ s3_access_key ~ ':' ~ s3_secret_key ~ '@') }}" \
   {{ s3_client_image }} \
-  rm --recursive --force --older-than "{{ s3_retain_days }}d" \
+  rm --recursive --force --older-than "{{ mongodb_backup_retain_days }}d" \
   "s3/{{ s3_bucket }}/{{ s3_prefix }}/"
 {% endif %}
 
 rm -f "$ARCHIVE"
+
+# Pure-S3 mode: the upload is checksum-verified end-to-end above, so it's safe
+# to drop the local copy now that the bucket holds an identical object.
+rm -rf "{{ mongodb_backup_dir }}/{{ _backup.backup_name }}"
+
 echo "S3 upload complete: s3://{{ s3_bucket }}/{{ s3_prefix }}/${OBJECT_NAME}"

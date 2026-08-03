@@ -4,6 +4,174 @@ All notable changes to this collection are documented in this file. The format
 is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this collection adheres to [Semantic Versioning](https://semver.org/).
 
+## 1.0.3 (unreleased)
+
+### Breaking changes
+- **Removed `s3_retain_days`.** Remote (S3) backup retention now always follows
+  `mongodb_backup_retain_days` — the var was a needless second knob (its default
+  was already `{{ mongodb_backup_retain_days }}`). Only affects deployments that
+  set `s3_retain_days` to a value *different* from `mongodb_backup_retain_days`;
+  set `mongodb_backup_retain_days` to the desired window instead. Migration:
+  [docs/UPGRADING.md](docs/UPGRADING.md).
+
+### Added
+- **Percona Backup for MongoDB (PBM) — sharded-cluster PITR.** New opt-in
+  (`mongodb_pbm_enabled: true`) that deploys one `pbm-agent` next to every
+  data-bearing `mongod` (two per host on sharded clusters: shard + configsvr;
+  one per host on replica sets), reading each replica set's oplog directly —
+  the cluster-consistent backup + PITR that `mongodump --oplog` via `mongos`
+  can't provide. Agents authenticate with a new X.509 client cert
+  (`CN=mongodb-pbm`) reusing the existing PKI, and store backups in the shared
+  `s3_*` target via PBM's native S3. Engine-dispatched (Quadlet on podman,
+  standalone containers on docker). Day-2: `mongodb_action: pbm-setup|pbm-backup|pbm-restore|pbm-status`,
+  `playbooks/mongodb_pbm_setup.yml` (FQCN-addressable) +
+  `playbooks/mongodb/pbm-{backup,restore,status}.yml`. Scheduled base backups +
+  retention reuse the **shared** backup knobs — the timer fires on
+  `mongodb_backup_schedule` and a post-backup `pbm cleanup` prunes base backups
+  + oplog chunks older than `mongodb_backup_retain_days` (one schedule + one
+  retention window for both the mongodump path and PBM). Backup compression is
+  tunable via `mongodb_pbm_compression` (default `zstd`) + optional
+  `mongodb_pbm_compression_level` (applied to base backups and PITR slices).
+  `pbm-setup` retrofits PBM onto
+  an already-running cluster without reprovisioning — it creates the per-RS PBM
+  user via member-cert (`__system`) auth and deploys agents with no container
+  recreation. Logical backups + logical PITR on the Community image (physical
+  needs PSMDB). Design: docs/design/mongodb-pbm.md.
+- **PBM storage init + base backup on provision** — after deploying agents and
+  applying config, the role now force-resyncs PBM storage (clearing *"storage is
+  not initialized"*) and lays down a base backup when none exists, so PITR has
+  the anchor it requires to start slicing (*"no backup found. full backup is
+  required to start PITR"*). Idempotent via `mongodb_pbm_init_backup` (default
+  `true`) — re-runs never create extra backups. Also fixes PBM S3 against
+  path-style-only / strict-checksum gateways: `forcePathStyle` (new
+  `s3_force_path_style`, default `true`) avoids `HeadObject 403`, and
+  `AWS_REQUEST/RESPONSE_CHECKSUM_*=when_required` on the agents avoids
+  `XAmzContentSHA256Mismatch` from the AWS SDK v2 default checksums.
+- **MongoDB scheduled backups** — provisioning now installs a host-level
+  systemd timer (`mongodb-backup.timer` → `mongodb-backup.service`) on one
+  node that runs the same mongodump → prune → S3-upload flow as
+  `playbooks/mongodb/backup.yml`, on `mongodb_backup_schedule` (default
+  `*-*-* 02:00:00`). Mirrors patroni's `walg-cron.timer`; `Persistent=true`
+  catches up missed runs, output goes to `/var/log/mongodb-backup.log`. Master
+  switch `mongodb_backup_enabled` (default `true`) or an empty
+  `mongodb_backup_schedule` tears down the timer. `mongodb_backup_mode`
+  (`local`/`s3`, defaults to `s3` when `s3_bucket` is set) selects the
+  destination: `local` keeps the dump on the node under retention, `s3`
+  uploads then deletes the local copy (pure-S3). Before deleting, the uploaded
+  object is re-read and SHA-256 compared end-to-end against the local archive;
+  a mismatch fails the run and keeps the local copy. Applies to both the
+  on-demand and scheduled flows.
+- **PITR from S3** — `playbooks/mongodb/pitr.yml` gained `backup_source: s3`
+  (mirroring `verify-backup.yml`): it downloads + extracts the base mongodump
+  from the bucket before replaying, so point-in-time recovery works when the
+  local copy is gone (e.g. `mongodb_backup_mode: s3`). Defaults to latest
+  archive; `-e backup_name=mongodump_…` selects a specific one. `backup_path`
+  is no longer required when `backup_source=s3`.
+- **MongoDB backup PITR + TLS support** — `mongodb_backup` gained an `oplog`
+  param (wired via `mongodb_backup_pitr`, default `false`) that passes
+  `--oplog` so dumps are usable by `playbooks/mongodb/pitr.yml`. Only valid
+  for replica-set deployments — `mongodump --oplog` is rejected against a
+  mongos, so keep it off on sharded clusters. Both
+  `mongodb_backup` and `mongodb_restore` gained `tls`/`tls_host_ca_file`/
+  `tls_cert_file` params; the backup/restore tasks now auto-pass TLS when
+  `mongos_tls_mode` is `requireTLS`/`preferTLS`, so backups keep working if
+  mongos is hardened to `requireTLS`.
+
+- **Content-library OVA import is now retried** — the auto-import path wraps the
+  `import_content_library_ovf` call in a bounded retry loop
+  (`content_library_import_retries`, default `3`; `content_library_import_retry_delay`,
+  default `30`s; `content_library_import_timeout`, default `3600`s). vCenter
+  streams the OVA host→datastore over NFC, and that transfer fails transiently
+  mid-flight (*"IO error during transfer of …vmdk: Pipe closed"*) on network /
+  NFC / vSAN blips; a single blip no longer aborts the whole provision. Each
+  attempt deletes any partial item first — the module won't overwrite an
+  existing item, so without the pre-clean a retry would silently "succeed"
+  against a corrupt OVA. If all attempts fail the run stops loudly with a
+  transfer-vs-config diagnostic.
+- **DVS NIC binding is verified after provision** — a post-configure assert
+  re-probes each NIC placed on a *distributed* switch and fails loudly if it
+  didn't bind (`portgroup_key` null). Previously `vmware_guest` reported
+  `changed=true` even when a DVS NIC landed in `unrecoverableError` /
+  `portgroup_key=None`, so the VM powered on with a dead adapter showing
+  "(disconnected)" and no guest IP — with no error at provision time, surfacing
+  days later. Standard-vSwitch NICs (which legitimately have a null
+  `portgroup_key`) are exempt.
+
+### Fixed
+- **Distributed-portgroup NICs deployed disconnected** — content-library OVFs
+  create the NIC with a standard-vSwitch backing (`NetworkBackingInfo`), and
+  `vmware_guest`'s `networks:` can't convert that to a distributed-vSwitch
+  backing — even with `dvswitch_name` it only renames the portgroup on the wrong
+  backing type, leaving the NIC in `unrecoverableError` / `portgroup_key=None`
+  ("(disconnected)", no guest IP). `configure_hardware` now rebinds every DVS NIC
+  with the purpose-built `community.vmware.vmware_guest_network` (matched by
+  device label), which reliably replaces the backing. Per-NIC `dvswitch` or the
+  role-level `portgroup_dvswitch_name` selects the switch; standard-vSwitch NICs
+  are unaffected.
+- **FCOS auto-import never ran (dead since it was added)** — the gate required
+  `content_library_item_name` to be empty, but `resolve_platform_preset`
+  backfills it from the platform preset (`fedora-coreos`) before the gate is
+  reached, so its length was never 0 and the import was silently skipped for
+  every un-pinned inventory. The resolver now captures the *explicit-pin* intent
+  in `_content_library_item_pinned` before the backfill, and the gate keys off
+  that. Pinned inventories still skip auto-import and use their exact OVA.
+- **FCOS metadata fetch built `streams/.json` (404) when the preset was unset** —
+  `ignition_channel` is resolved inside the `common` role, which didn't inherit
+  the `instance` role's `fedora-coreos` default, so an inventory that set
+  `instance_init_type: ignition` without `instance_platform_preset` resolved the
+  channel to empty and fetched `https://…/streams/.json`. `common` now carries
+  its own `instance_platform_preset` default, and `fcos_prepare` asserts a
+  channel is resolvable before building the URL (clear error instead of a 404).
+- **MongoDB kernel gate rejected fixed kernels ≥ 7.0.14** — the preflight check
+  refused any kernel `≥ 6.19`, an open-ended floor. The TCMalloc/rseq
+  incompatibility is a *bounded* range (6.19 through 7.0.13); Linux 7.0.14+
+  resolves it kernel-side. The gate is now a range (`< 6.19` **or** `≥ 7.0.14`
+  via the new `mongodb_fixed_kernel`, default `7.0.14`), so hosts on a fixed
+  kernel 7 pass. See [SERVER-121912](https://jira.mongodb.org/browse/SERVER-121912).
+- **FCOS layered python3 on provision-only VMs** — the Ignition config layered
+  `python3` at first boot unconditionally, even on hosts that run no service
+  stage. python3 is the Ansible runtime for the mongodb/patroni/docker roles
+  (Patroni runs on podman, so it's not docker-specific), so the layer is now
+  gated on `docker_enabled or podman_enabled`. Provision-only hosts (both flags
+  false) stay python-free; if a service stage later runs against one,
+  `preflight/venv.yml` layers python on demand as before.
+- **etcd snapshot cleanup failed on the distroless etcd image** — the snapshot
+  script ran `${ENGINE} exec etcd rm …` to delete its in-container temp file,
+  but the etcd 3.6 image ships no shell/coreutils (`exec: "rm": executable file
+  not found`). Every run logged the error and leaked a 1+ GB temp file into the
+  container's writable layer. The snapshot now writes into the bind-mounted data
+  dir and all cleanup happens host-side — no `exec`, no dependency on any
+  in-container binary.
+- **Backups passed `--tls` for `preferTLS`, breaking on older mongodump** — the
+  backup/restore TLS auto-gate fired for both `requireTLS` and `preferTLS`, but
+  the dump connects over loopback inside the mongos netns where `preferTLS`
+  accepts plaintext. Passing `--tls` there is unnecessary and fails outright on
+  mongo images whose `mongodump` predates the `--tls` flag (*"unknown option
+  tls"*). TLS is now forced only for `requireTLS`.
+- **S3 credential injection broke on keys starting with a digit** — the
+  `MC_HOST_s3` URL was built with `regex_replace('^(https?://)', '\1' ~
+  s3_access_key ~ …)`; when `s3_access_key` began with a digit, `\1` + digit
+  parsed as backreference group 1N (e.g. `\19`), failing with *"invalid group
+  reference"*. Switched to the unambiguous `\g<1>` group syntax across all
+  backup/verify/PITR S3 templates. (Pre-existing since 1.0.2.)
+- **MongoDB day-2 backup playbooks were docker-only** — `pitr.yml` and
+  `verify-backup.yml` hardcoded `docker`/`community.docker.*` for their
+  disposable scratch containers, so they failed on podman hosts (the default
+  `mongodb_container_engine`). Both now drive container lifecycle through
+  `{{ mongodb_container_engine }}` (a single `run`/`exec`/`volume`/`rm` path
+  that works on docker and podman), and `pitr.yml`'s S3 fetch likewise.
+- **PBM S3 used virtual-hosted addressing, 403ing on path-style gateways** — the
+  rendered PBM storage config set no addressing style, so the AWS SDK defaulted
+  to virtual-hosted (`<bucket>.<endpoint>`), which most S3-compatible gateways
+  (Ceph RGW, MinIO, custom) reject with `HeadObject … 403 Forbidden` even though
+  wal-g (which forces path-style) works against the same bucket. Added
+  `s3_force_path_style` (default `"true"`, mirroring patroni's
+  `AWS_S3_FORCE_PATH_STYLE`) and wired it to PBM's `storage.s3.forcePathStyle`.
+- **PBM `pbm-status` playbook moved to the playbooks root** —
+  `playbooks/mongodb/pbm-status.yml` → `playbooks/mongodb_pbm_status.yml`, now
+  FQCN-addressable (`startechnica.infra.mongodb_pbm_status`) like
+  `mongodb_pbm_setup`.
+
 ## 1.0.2 (2026-06-08)
 
 ### Breaking changes

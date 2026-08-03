@@ -140,11 +140,24 @@ instance_platform_preset: fedora-coreos
 ## content library item names. Item will be named "{{ template_prefix }}-{{ version }}".
 ## Only used when auto_import is true.
 ##
+## @param content_library_import_retries [default: 3] Number of import attempts
+## when vCenter's OVA transfer fails transiently ("IO error during transfer ...
+## Pipe closed" — a network/NFC/vSAN blip mid-pull). Each retry first deletes
+## the partial item so the re-import is clean, not a silent no-op.
+## @param content_library_import_retry_delay [default: 30] Seconds to wait
+## between import attempts (backoff).
+## @param content_library_import_timeout [default: 3600] Per-attempt upload
+## timeout in seconds passed to the import module; raise for slow links or
+## very large OVAs.
+##
 content_library_name: ""
 content_library_item_name: ""
 content_library_type: "ovf"
 content_library_auto_import: true
 content_library_template_prefix: "fedora-coreos"
+content_library_import_retries: 3
+content_library_import_retry_delay: 30
+content_library_import_timeout: 3600
 
 ## @section Network Parameters
 ## @description Port group configuration for VM networking.

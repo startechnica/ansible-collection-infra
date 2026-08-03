@@ -45,9 +45,9 @@
           ansible.builtin.shell: |
             set -euo pipefail
             TMPDIR=/opt/mongodb/backups/_verify
-            docker run --rm \
+            {{ mongodb_container_engine }} run --rm \
               -v "$TMPDIR:/out" \
-              -e MC_HOST_s3="{{ s3_endpoint | regex_replace('^(https?://)', '\\1' ~ s3_access_key ~ ':' ~ s3_secret_key ~ '@') }}" \
+              -e MC_HOST_s3="{{ s3_endpoint | regex_replace('^(https?://)', '\\g<1>' ~ s3_access_key ~ ':' ~ s3_secret_key ~ '@') }}" \
               {{ s3_client_image }} \
               sh -c "mc find s3/{{ s3_bucket }}/{{ s3_prefix }}/ --name '*.tar.gz' \
                      | sort -r | head -n1 \
@@ -91,30 +91,26 @@
       ansible.builtin.debug:
         msg: "Restoring and verifying {{ _backup_path.stdout }}"
 
-    - name: Create scratch data volume
-      community.docker.docker_volume:
-        name: mongodb-verify-scratch
-        state: present
-
+    # Disposable verification mongod. Driven through
+    # `{{ mongodb_container_engine }}` rather than the docker-only Ansible
+    # modules so it works on both docker and podman (the default engine). The
+    # named volume is auto-created by `run -v`; `rm -f` first makes the start
+    # idempotent. Default bridge network is fine — localhost-only on 37017.
     - name: Start disposable mongod for verification
-      community.docker.docker_container:
-        name: mongodb-verify
-        image: "{{ mongodb_image_registry }}/{{ mongodb_image_repository }}:{{ mongodb_image_tag }}"
-        state: started
-        recreate: true
-        command: mongod --port 37017 --bind_ip 127.0.0.1 --dbpath /data/db --nojournal
-        volumes:
-          - "mongodb-verify-scratch:/data/db"
-          - "{{ _backup_path.stdout }}:/backup:ro"
-        user: "{{ mongodb_uid }}:{{ mongodb_gid }}"
-        network_mode: bridge
-        detach: true
-        cleanup: false
+      ansible.builtin.shell: |
+        {{ mongodb_container_engine }} rm -f mongodb-verify 2>/dev/null || true
+        {{ mongodb_container_engine }} run -d --name mongodb-verify \
+          -v mongodb-verify-scratch:/data/db \
+          -v "{{ _backup_path.stdout }}:/backup:ro" \
+          --user {{ mongodb_uid }}:{{ mongodb_gid }} \
+          {{ mongodb_image_registry }}/{{ mongodb_image_repository }}:{{ mongodb_image_tag }} \
+          mongod --port 37017 --bind_ip 127.0.0.1 --dbpath /data/db --nojournal
+      changed_when: true
 
     - name: Wait for scratch mongod to accept connections
-      community.docker.docker_container_exec:
-        container: mongodb-verify
-        command: mongosh --port 37017 --quiet --eval "db.adminCommand('ping').ok"
+      ansible.builtin.command: >
+        {{ mongodb_container_engine }} exec mongodb-verify
+        mongosh --port 37017 --quiet --eval "db.adminCommand('ping').ok"
       register: _ping
       until: _ping.stdout | default('0') | trim == '1'
       retries: 20
@@ -122,29 +118,27 @@
       changed_when: false
 
     - name: Restore backup into scratch mongod
-      community.docker.docker_container_exec:
-        container: mongodb-verify
-        command: mongorestore --port 37017 --quiet --drop /backup
+      ansible.builtin.command: >
+        {{ mongodb_container_engine }} exec mongodb-verify
+        mongorestore --port 37017 --quiet --drop /backup
       register: _restore
       changed_when: false
 
     - name: Smoke check — list databases
-      community.docker.docker_container_exec:
-        container: mongodb-verify
-        command: >-
-          mongosh --port 37017 --quiet --eval
-          "JSON.stringify(db.adminCommand('listDatabases').databases)"
+      ansible.builtin.command: >-
+        {{ mongodb_container_engine }} exec mongodb-verify
+        mongosh --port 37017 --quiet --eval
+        "JSON.stringify(db.adminCommand('listDatabases').databases)"
       register: _dbs
       changed_when: false
 
     - name: Smoke check — total collection count
-      community.docker.docker_container_exec:
-        container: mongodb-verify
-        command: >
-          mongosh --port 37017 --quiet --eval
-          "db.adminCommand('listDatabases').databases
-            .filter(d => !['admin','config','local'].includes(d.name))
-            .reduce((acc, d) => acc + db.getSiblingDB(d.name).getCollectionNames().length, 0)"
+      ansible.builtin.command: >
+        {{ mongodb_container_engine }} exec mongodb-verify
+        mongosh --port 37017 --quiet --eval
+        "db.adminCommand('listDatabases').databases
+          .filter(d => !['admin','config','local'].includes(d.name))
+          .reduce((acc, d) => acc + db.getSiblingDB(d.name).getCollectionNames().length, 0)"
       register: _colls
       changed_when: false
 
@@ -157,14 +151,9 @@
           - "Status: PASS"
 
   post_tasks:
-    - name: Tear down scratch container
-      community.docker.docker_container:
-        name: mongodb-verify
-        state: absent
-      failed_when: false
-
-    - name: Remove scratch volume
-      community.docker.docker_volume:
-        name: mongodb-verify-scratch
-        state: absent
+    - name: Tear down scratch container and volume
+      ansible.builtin.shell: |
+        {{ mongodb_container_engine }} rm -f mongodb-verify 2>/dev/null || true
+        {{ mongodb_container_engine }} volume rm -f mongodb-verify-scratch 2>/dev/null || true
+      changed_when: false
       failed_when: false
