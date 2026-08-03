@@ -291,16 +291,38 @@ NetBox connection + vCenter credentials are best kept in
   venv first.
 - **Deploy fails at Stage 0 (validate)** — check the fail message; it
   names the missing or inconsistent variable.
+- **NIC shows "(disconnected)" / VM gets no IP on a distributed switch** — the
+  role auto-corrects this: content-library OVFs create the NIC with a
+  standard-vSwitch backing, and the provision rebinds it to the distributed
+  portgroup via `vmware_guest_network`, then asserts it bound. If the assert
+  *fails* (`portgroup_key … (null)`), the portgroup or dvswitch name is wrong
+  (both are **case-sensitive**), or the VM's ESXi host isn't a member of that
+  DVS — verify names in vCenter → Networking against `portgroup_name` /
+  `portgroup_dvswitch_name`.
+- **OVA import fails with "IO error during transfer … Pipe closed"** — a
+  transient vCenter host→datastore (NFC) transfer drop, not a config error. The
+  import auto-retries (`content_library_import_retries`, default 3) and cleans
+  the partial item between attempts. If it fails *all* attempts, the cause is
+  structural (firewall/proxy closing long HTTPS transfers, or a datastore issue)
+  — raise `content_library_import_timeout`, or pin an already-imported OVA via
+  `content_library_item_name` to skip the transfer.
+- **FCOS metadata fetch 404s on `streams/.json`** — `instance_platform_preset`
+  is unset (or a non-FCOS preset) while ignition auto-import is on, so the stream
+  channel resolved empty. Set `instance_platform_preset: fedora-coreos` (or the
+  correct preset) in the inventory.
 - **Patroni stage fails on `patroni_vip_address` undefined** — add `patroni_vip_address:` to the inventory's
   Patroni section or set `vip_manager: "none"` to skip.
-- **MongoDB preflight fails on kernel ≥ 6.19** — MongoDB 8 crashes on startup
-  on Linux kernel 6.19+ (a vendored-TCMalloc/rseq bug, unfixed upstream as of
-  June 2026 — newer Mongo releases do NOT escape it). The kernel bump can land
+- **MongoDB preflight fails on kernel 6.19–7.0.13** — MongoDB 8 crashes on
+  startup on a *bounded range* of Linux kernels, **6.19 through 7.0.13**, from a
+  vendored-TCMalloc/rseq ABI bug. Linux **7.0.14+ resolves it kernel-side**, so
+  a host on 7.0.14+ (or `< 6.19`) passes preflight. The fix is in the kernel,
+  not MongoDB — Mongo's vendored TCMalloc is still unpatched through 8.2, so
+  upgrading Mongo alone does NOT escape the range. The kernel bump can land
   *within* a single FCOS major (e.g. FCOS `43.20260217.3.1` = kernel 6.18 OK,
   `43.20260413.3.2` = kernel 6.19 broken), so pinning the FCOS major is not
-  enough. Pin the host to an FCOS build with kernel `< 6.19`. See the
-  [mongodb role README](roles/mongodb/README.md#gotchas) for the full table and
-  the `mongodb_skip_kernel_check` bypass.
+  enough. Either upgrade to a build with kernel `>= 7.0.14`, or pin one with
+  kernel `< 6.19`. See the [mongodb role README](roles/mongodb/README.md#gotchas)
+  for the full table and the `mongodb_skip_kernel_check` bypass.
 
 ## License
 

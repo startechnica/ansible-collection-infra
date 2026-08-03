@@ -281,22 +281,27 @@ Written to `playbooks/artifacts/<inventory-stem>/mongodb/`:
 
 ## Gotchas
 
-- **MongoDB 8 breaks on Linux kernel ≥ 6.19** — `mongod` refuses to start
+- **MongoDB 8 breaks on Linux kernel 6.19–7.0.13** — `mongod` refuses to start
   (`MongoDB cannot start: Linux kernel versions 6.19 and newer has a known
-  incompatibility...`). The `preflight` task
-  ([tasks/preflight.yml](tasks/preflight.yml)) asserts the kernel is `< 6.19`
-  before install. **The kernel bump lands WITHIN a single FCOS major release**,
-  so pinning FCOS 43 alone is not enough:
+  incompatibility...`) from a TCMalloc/rseq ABI bug. This is a **bounded range**,
+  not an open-ended floor: **Linux 7.0.14+ resolves it kernel-side**. The
+  `preflight` task ([tasks/preflight.yml](tasks/preflight.yml)) passes when the
+  kernel is `< 6.19` **or** `>= 7.0.14` (bounds are `mongodb_unsupported_kernel`
+  / `mongodb_fixed_kernel`). The fix is in the kernel, not MongoDB — Mongo's
+  vendored TCMalloc is still unpatched through 8.2, so upgrading Mongo alone does
+  NOT escape the range. **The kernel bump lands WITHIN a single FCOS major
+  release**, so pinning FCOS 43 alone is not enough:
 
-  | FCOS build | Kernel | MongoDB 8 |
-  |---|---|---|
-  | `43.20260217.3.1` | 6.18 | ✅ works |
-  | `43.20260413.3.2` | 6.19 | ❌ broken |
+  | Kernel | MongoDB 8 |
+  |---|---|
+  | `< 6.19` (e.g. FCOS `43.20260217.3.1` = 6.18) | ✅ works |
+  | `6.19` – `7.0.13` (e.g. FCOS `43.20260413.3.2` = 6.19) | ❌ broken |
+  | `>= 7.0.14` | ✅ works (fixed kernel-side) |
 
-  Pin the host to an FCOS build with kernel `< 6.19`, or bypass with
-  `mongodb_skip_kernel_check: true` **only** after verifying mongo actually runs
-  on your kernel — running with the check disabled on an incompatible kernel
-  crashes containers in a tight loop.
+  Upgrade the host to kernel `>= 7.0.14`, or pin an FCOS build with kernel
+  `< 6.19`. Bypass with `mongodb_skip_kernel_check: true` **only** after
+  verifying mongo actually runs on your kernel — running with the check disabled
+  on an incompatible kernel crashes containers in a tight loop.
 - **FCV (featureCompatibilityVersion)** is NOT auto-bumped on version upgrade. After a major upgrade (6→7, 7→8), run `db.adminCommand({setFeatureCompatibilityVersion: "7.0"})` manually after a soak period.
 - **Auto-generated admin password persists** — once `admin.password` exists in the artifacts dir, it's reused on every run. Delete the file if you want a fresh password.
 - **Cert rotation is zero-downtime** — renew-certs.yml uses a rolling restart, one node at a time. The CA is NOT rotated unless you explicitly do so (breaking change).

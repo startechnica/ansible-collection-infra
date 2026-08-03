@@ -77,7 +77,71 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   `mongos_tls_mode` is `requireTLS`/`preferTLS`, so backups keep working if
   mongos is hardened to `requireTLS`.
 
+- **Content-library OVA import is now retried** — the auto-import path wraps the
+  `import_content_library_ovf` call in a bounded retry loop
+  (`content_library_import_retries`, default `3`; `content_library_import_retry_delay`,
+  default `30`s; `content_library_import_timeout`, default `3600`s). vCenter
+  streams the OVA host→datastore over NFC, and that transfer fails transiently
+  mid-flight (*"IO error during transfer of …vmdk: Pipe closed"*) on network /
+  NFC / vSAN blips; a single blip no longer aborts the whole provision. Each
+  attempt deletes any partial item first — the module won't overwrite an
+  existing item, so without the pre-clean a retry would silently "succeed"
+  against a corrupt OVA. If all attempts fail the run stops loudly with a
+  transfer-vs-config diagnostic.
+- **DVS NIC binding is verified after provision** — a post-configure assert
+  re-probes each NIC placed on a *distributed* switch and fails loudly if it
+  didn't bind (`portgroup_key` null). Previously `vmware_guest` reported
+  `changed=true` even when a DVS NIC landed in `unrecoverableError` /
+  `portgroup_key=None`, so the VM powered on with a dead adapter showing
+  "(disconnected)" and no guest IP — with no error at provision time, surfacing
+  days later. Standard-vSwitch NICs (which legitimately have a null
+  `portgroup_key`) are exempt.
+
 ### Fixed
+- **Distributed-portgroup NICs deployed disconnected** — content-library OVFs
+  create the NIC with a standard-vSwitch backing (`NetworkBackingInfo`), and
+  `vmware_guest`'s `networks:` can't convert that to a distributed-vSwitch
+  backing — even with `dvswitch_name` it only renames the portgroup on the wrong
+  backing type, leaving the NIC in `unrecoverableError` / `portgroup_key=None`
+  ("(disconnected)", no guest IP). `configure_hardware` now rebinds every DVS NIC
+  with the purpose-built `community.vmware.vmware_guest_network` (matched by
+  device label), which reliably replaces the backing. Per-NIC `dvswitch` or the
+  role-level `portgroup_dvswitch_name` selects the switch; standard-vSwitch NICs
+  are unaffected.
+- **FCOS auto-import never ran (dead since it was added)** — the gate required
+  `content_library_item_name` to be empty, but `resolve_platform_preset`
+  backfills it from the platform preset (`fedora-coreos`) before the gate is
+  reached, so its length was never 0 and the import was silently skipped for
+  every un-pinned inventory. The resolver now captures the *explicit-pin* intent
+  in `_content_library_item_pinned` before the backfill, and the gate keys off
+  that. Pinned inventories still skip auto-import and use their exact OVA.
+- **FCOS metadata fetch built `streams/.json` (404) when the preset was unset** —
+  `ignition_channel` is resolved inside the `common` role, which didn't inherit
+  the `instance` role's `fedora-coreos` default, so an inventory that set
+  `instance_init_type: ignition` without `instance_platform_preset` resolved the
+  channel to empty and fetched `https://…/streams/.json`. `common` now carries
+  its own `instance_platform_preset` default, and `fcos_prepare` asserts a
+  channel is resolvable before building the URL (clear error instead of a 404).
+- **MongoDB kernel gate rejected fixed kernels ≥ 7.0.14** — the preflight check
+  refused any kernel `≥ 6.19`, an open-ended floor. The TCMalloc/rseq
+  incompatibility is a *bounded* range (6.19 through 7.0.13); Linux 7.0.14+
+  resolves it kernel-side. The gate is now a range (`< 6.19` **or** `≥ 7.0.14`
+  via the new `mongodb_fixed_kernel`, default `7.0.14`), so hosts on a fixed
+  kernel 7 pass. See [SERVER-121912](https://jira.mongodb.org/browse/SERVER-121912).
+- **FCOS layered python3 on provision-only VMs** — the Ignition config layered
+  `python3` at first boot unconditionally, even on hosts that run no service
+  stage. python3 is the Ansible runtime for the mongodb/patroni/docker roles
+  (Patroni runs on podman, so it's not docker-specific), so the layer is now
+  gated on `docker_enabled or podman_enabled`. Provision-only hosts (both flags
+  false) stay python-free; if a service stage later runs against one,
+  `preflight/venv.yml` layers python on demand as before.
+- **etcd snapshot cleanup failed on the distroless etcd image** — the snapshot
+  script ran `${ENGINE} exec etcd rm …` to delete its in-container temp file,
+  but the etcd 3.6 image ships no shell/coreutils (`exec: "rm": executable file
+  not found`). Every run logged the error and leaked a 1+ GB temp file into the
+  container's writable layer. The snapshot now writes into the bind-mounted data
+  dir and all cleanup happens host-side — no `exec`, no dependency on any
+  in-container binary.
 - **Backups passed `--tls` for `preferTLS`, breaking on older mongodump** — the
   backup/restore TLS auto-gate fired for both `requireTLS` and `preferTLS`, but
   the dump connects over loopback inside the mongos netns where `preferTLS`

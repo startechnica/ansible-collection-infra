@@ -1,0 +1,63 @@
+---
+# One import attempt: delete any partial/prior item, then import fresh.
+# Looped by content_library_import.yml. Sets `_cl_import_ok` true on success
+# so later loop iterations become no-ops. See that file for why
+# delete-then-import must run together on every attempt (the module won't
+# overwrite an existing item, so a leftover partial would make a bare retry
+# silently "succeed").
+#
+# NOTE: a `when:` on a LOOPED include_tasks is evaluated once, before the loop
+# starts — it can't short-circuit the loop mid-flight. So each real task below
+# carries its own `when: not _cl_import_ok` guard: once an attempt succeeds,
+# every remaining iteration skips its delete+import and just falls through.
+# This is what stops us from deleting a good item and re-importing after a
+# success.
+
+- name: "Backoff before content-library import retry, attempt {{ _cl_attempt }}"
+  ansible.builtin.pause:
+    seconds: "{{ content_library_import_retry_delay | default(30) | int }}"
+  # Pause only on genuine retries: not the first attempt, and not once a
+  # prior attempt already succeeded.
+  when:
+    - _cl_attempt | int > 1
+    - not (_cl_import_ok | default(false) | bool)
+
+- name: "Remove any partial/prior library item, import attempt {{ _cl_attempt }}"
+  vmware.vmware.import_content_library_ovf:
+    hostname: "{{ vcenter_connect.hostname }}"
+    username: "{{ vcenter_connect.username }}"
+    password: "{{ vcenter_connect.password }}"
+    validate_certs: "{{ vcenter_connect.validate_certs }}"
+    library_name: "{{ content_library_name }}"
+    dest: "{{ _cl_item_name }}"
+    state: absent
+  delegate_to: localhost
+  # A missing item is the desired state, not an error.
+  failed_when: false
+  when: not (_cl_import_ok | default(false) | bool)
+
+- name: "Import OVA to content library, attempt {{ _cl_attempt }}"
+  vmware.vmware.import_content_library_ovf:
+    hostname: "{{ vcenter_connect.hostname }}"
+    username: "{{ vcenter_connect.username }}"
+    password: "{{ vcenter_connect.password }}"
+    validate_certs: "{{ vcenter_connect.validate_certs }}"
+    library_name: "{{ content_library_name }}"
+    dest: "{{ _cl_item_name }}"
+    src: "{{ _cl_source_url }}"
+    description: "{{ _cl_description | default('Imported by Ansible') }}"
+    timeout: "{{ content_library_import_timeout | default(3600) | int }}"
+    state: present
+  delegate_to: localhost
+  register: _cl_import
+  # Don't abort the play on a failed attempt — record it and let the caller's
+  # loop try again. The final assert fails loudly if all attempts are used up.
+  failed_when: false
+  when: not (_cl_import_ok | default(false) | bool)
+
+- name: "Record content-library import outcome, attempt {{ _cl_attempt }}"
+  ansible.builtin.set_fact:
+    _cl_import_ok: "{{ _cl_import is not failed }}"
+  # Only update on an attempt that actually ran; a skipped import task leaves
+  # _cl_import unchanged (would look 'not failed' and wrongly latch true).
+  when: not (_cl_import_ok | default(false) | bool)

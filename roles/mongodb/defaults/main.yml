@@ -8,12 +8,15 @@ mongodb_version: "8.2.7"
 mongodb_cluster_type: sharded
 mongodb_cluster_name: "MongoDB Cluster"
 
-# Kernel-compatibility gate. mongod refuses to start on Linux 6.19+ —
-# https://jira.mongodb.org/browse/SERVER-121912 — so the role's preflight
-# fails fast on incompatible kernels rather than letting containers crash
-# in a restart loop. Bump `mongodb_unsupported_kernel` once upstream
-# publishes a fix; flip `mongodb_skip_kernel_check` to bypass entirely.
-mongodb_unsupported_kernel: "6.19"
+# Kernel-compatibility gate. Due to a TCMalloc/rseq ABI violation, mongod
+# refuses to start on a BOUNDED range of Linux kernels: 6.19 through 7.0.13
+# inclusive. Linux 7.0.14+ resolves the incompatibility kernel-side, so the
+# gate is a range, not an open-ended floor — a host on 7.0.14+ (or < 6.19)
+# passes. Tracking: https://jira.mongodb.org/browse/SERVER-121912 (Mongo's
+# own vendored TCMalloc is still unpatched through 8.2, so the escape is the
+# kernel, not a Mongo bump). Flip `mongodb_skip_kernel_check` to bypass.
+mongodb_unsupported_kernel: "6.19"        # broken range starts here (inclusive)
+mongodb_fixed_kernel: "7.0.14"            # fixed at/after here (inclusive)
 mongodb_skip_kernel_check: false
 
 # ── System user ──

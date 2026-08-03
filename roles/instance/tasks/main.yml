@@ -118,6 +118,15 @@
 # "use this exact version", and the user is responsible for ensuring
 # the OVA is already in the content library (or they want the role to
 # import a SPECIFIC version, not auto-track latest).
+#
+# Gate on `_content_library_item_pinned`, NOT on
+# `content_library_item_name | length`. By this point the resolver
+# (`common/tasks/resolve_platform_preset.yml`, run at Stage 0
+# validate_inventory) has already backfilled the bare var from the
+# preset fallback (e.g. 'fedora-coreos'), so its length is never 0 even
+# when the inventory left it blank — which silently disabled auto-import
+# for every unpinned inventory. The resolver captures the true pin/unpin
+# intent in `_content_library_item_pinned` before that overwrite.
 - name: Prepare FCOS content library (ignition + auto_import only)
   ansible.builtin.include_role:
     name: instance_ignition
@@ -125,7 +134,7 @@
   when:
     - instance_init_type == 'ignition'
     - content_library_auto_import | bool
-    - (content_library_item_name | length) == 0
+    - not (_content_library_item_pinned | default(false) | bool)
 
 - name: Validate infrastructure
   ansible.builtin.include_tasks: validate.yml

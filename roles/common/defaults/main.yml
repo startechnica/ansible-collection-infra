@@ -1,0 +1,15 @@
+---
+# Fallback default for the OS platform preset.
+#
+# The `instance` role defaults this to `fedora-coreos` in its own
+# defaults/main.yml, but preset resolution happens inside THIS role
+# (`resolve_platform_preset.yml`), which does not inherit the `instance`
+# role's defaults. Without a default here, an inventory that sets
+# `instance_init_type: ignition` but forgets `instance_platform_preset`
+# resolves `_platform_preset` to `{}`, `ignition_channel` to `''`, and
+# `fcos_prepare` then fetches `streams/.json` → 404 (opaque failure).
+#
+# Keep this value in sync with `roles/instance/defaults/main.yml`.
+# Inventory (or any higher-precedence source) still overrides it — this
+# is only the floor when nothing sets it.
+instance_platform_preset: fedora-coreos

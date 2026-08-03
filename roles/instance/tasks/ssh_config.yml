@@ -108,6 +108,16 @@
     # so any failure is silently ignored (semanage missing on FCOS,
     # ssh.socket absent on non-Debian, etc.). Final `exit 0` guarantees
     # the overall shell exit is 0 regardless of internal sub-failures.
+    #
+    # UBUNTU SOCKET ACTIVATION: on Ubuntu 22.10+ / 24.04 ssh is socket-
+    # activated, and the packaged drop-in ssh.service.d/00-socket.conf sets
+    # `Requires=ssh.socket`. Merely `disable --now ssh.socket` is NOT enough:
+    # the next `systemctl restart ssh` re-pulls ssh.socket via Requires=,
+    # sshd inherits the socket's port-22 fd and IGNORES the `Port` directive
+    # in our drop-in — so the new port never binds and the reconnect fails.
+    # We therefore also write 10-ansible-no-socket.conf clearing Requires=/
+    # Wants= (overriding the 00- drop-in) and daemon-reload, so ssh.service
+    # binds the port from sshd_config instead of an inherited socket fd.
     # Intentionally NO `set -e` and NO `no_log` — these were the source
     # of opaque "Module failed" errors before.
     #
@@ -135,11 +145,15 @@
           || sudo semanage port -m -t ssh_port_t -p tcp {{ _ssh_port }} 2>&1
           || true;
           fi;
-          for sock in ssh.socket sshd.socket; do
-          systemctl is-enabled \"$sock\" >/dev/null 2>&1
-          && sudo systemctl disable --now \"$sock\" 2>&1
-          || true;
+          for unit in ssh sshd; do
+          if systemctl list-unit-files \"$unit.socket\" >/dev/null 2>&1; then
+          sudo systemctl disable --now \"$unit.socket\" 2>&1 || true;
+          sudo mkdir -p \"/etc/systemd/system/$unit.service.d\";
+          printf '[Unit]\nRequires=\nWants=\nAfter=network.target\n'
+          | sudo tee \"/etc/systemd/system/$unit.service.d/10-ansible-no-socket.conf\" >/dev/null;
+          fi;
           done;
+          sudo systemctl daemon-reload 2>&1 || true;
           sudo systemctl enable ssh.service 2>&1
           || sudo systemctl enable sshd.service 2>&1
           || true;
