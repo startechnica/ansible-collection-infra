@@ -14,7 +14,7 @@ docker run --rm \
   -v "$ARCHIVE:/backup/${OBJECT_NAME}:ro" \
   -e MC_HOST_s3="{{ s3_endpoint | regex_replace('^(https?://)', '\\g<1>' ~ s3_access_key ~ ':' ~ s3_secret_key ~ '@') }}" \
   {{ s3_client_image }} \
-  cp "/backup/${OBJECT_NAME}" "s3/{{ s3_bucket }}/{{ s3_prefix }}/${OBJECT_NAME}"
+  cp "/backup/${OBJECT_NAME}" "s3/{{ s3_bucket }}/{{ mongodb_backup_s3_prefix }}/${OBJECT_NAME}"
 
 # ── Integrity verification ───────────────────────────────────────────────────
 # mc's PUT already sends a Content-MD5/checksum the server validates, so a
@@ -27,7 +27,7 @@ LOCAL_SHA="$(sha256sum "$ARCHIVE" | awk '{print $1}')"
 REMOTE_SHA="$(docker run --rm \
   -e MC_HOST_s3="{{ s3_endpoint | regex_replace('^(https?://)', '\\g<1>' ~ s3_access_key ~ ':' ~ s3_secret_key ~ '@') }}" \
   {{ s3_client_image }} \
-  cat "s3/{{ s3_bucket }}/{{ s3_prefix }}/${OBJECT_NAME}" | sha256sum | awk '{print $1}')"
+  cat "s3/{{ s3_bucket }}/{{ mongodb_backup_s3_prefix }}/${OBJECT_NAME}" | sha256sum | awk '{print $1}')"
 if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
   echo "ERROR: S3 object checksum mismatch for ${OBJECT_NAME}" >&2
   echo "       local=$LOCAL_SHA remote=$REMOTE_SHA — keeping local copy" >&2
@@ -42,7 +42,7 @@ docker run --rm \
   -e MC_HOST_s3="{{ s3_endpoint | regex_replace('^(https?://)', '\\g<1>' ~ s3_access_key ~ ':' ~ s3_secret_key ~ '@') }}" \
   {{ s3_client_image }} \
   rm --recursive --force --older-than "{{ mongodb_backup_retain_days }}d" \
-  "s3/{{ s3_bucket }}/{{ s3_prefix }}/"
+  "s3/{{ s3_bucket }}/{{ mongodb_backup_s3_prefix }}/"
 {% endif %}
 
 rm -f "$ARCHIVE"
@@ -51,4 +51,4 @@ rm -f "$ARCHIVE"
 # to drop the local copy now that the bucket holds an identical object.
 rm -rf "{{ mongodb_backup_dir }}/{{ _backup.backup_name }}"
 
-echo "S3 upload complete: s3://{{ s3_bucket }}/{{ s3_prefix }}/${OBJECT_NAME}"
+echo "S3 upload complete: s3://{{ s3_bucket }}/{{ mongodb_backup_s3_prefix }}/${OBJECT_NAME}"

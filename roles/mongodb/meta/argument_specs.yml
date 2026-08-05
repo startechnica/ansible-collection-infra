@@ -299,9 +299,13 @@ argument_specs:
         description: >-
           Force path-style S3 addressing (bucket in the URL path, not the
           hostname). Required by most S3-compatible gateways. Consumed by PBM.
-      s3_prefix:
+      mongodb_backup_s3_prefix:
         type: str
-        description: Path prefix inside the bucket. Defaults to `mongodb/<mongodb_network>`.
+        description: >-
+          S3 key prefix (under s3_bucket) for MongoDB backups — mongodump at this
+          root, PBM under "<prefix>/pbm". Defaults to a cluster-namespaced,
+          slugified path (mongodb-<mongodb_cluster_name>) so distinct clusters
+          sharing one bucket don't collide.
       s3_client_image:
         type: str
         default: "minio/mc:latest"

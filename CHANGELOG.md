@@ -13,6 +13,14 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   set `s3_retain_days` to a value *different* from `mongodb_backup_retain_days`;
   set `mongodb_backup_retain_days` to the desired window instead. Migration:
   [docs/UPGRADING.md](docs/UPGRADING.md).
+- **Renamed `s3_prefix` → `mongodb_backup_s3_prefix`** and changed its default
+  from `mongodb/{{ mongodb_network }}` to a cluster-namespaced, slugified path
+  `mongodb-{{ mongodb_cluster_name | slugify }}` (e.g. `mongodb-mongodb-cluster`).
+  This **moves the default S3 backup path** (mongodump + PBM under
+  `<prefix>/pbm`). Existing objects under the old prefix are not migrated. Any
+  inventory that set `s3_prefix` must rename it to `mongodb_backup_s3_prefix`; to
+  keep the previous location, set `mongodb_backup_s3_prefix: "mongodb/{{ mongodb_network }}"`.
+  `mongodb_network` still names the docker-compose network (docker engine only).
 
 ### Added
 - **Patroni standby-cluster support (DR / off-site replica).** New opt-in

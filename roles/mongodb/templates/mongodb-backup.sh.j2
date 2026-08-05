@@ -69,7 +69,7 @@ $ENGINE run --rm \
   -v "$ARCHIVE:/backup/${NAME}.tar.gz:ro" \
   -e MC_HOST_s3="{{ s3_endpoint | regex_replace('^(https?://)', '\\g<1>' ~ s3_access_key ~ ':' ~ s3_secret_key ~ '@') }}" \
   {{ s3_client_image }} \
-  cp "/backup/${NAME}.tar.gz" "s3/{{ s3_bucket }}/{{ s3_prefix }}/${NAME}.tar.gz"
+  cp "/backup/${NAME}.tar.gz" "s3/{{ s3_bucket }}/{{ mongodb_backup_s3_prefix }}/${NAME}.tar.gz"
 
 # Verify the object end-to-end (SHA-256 round-trip) before deleting the local
 # dump — pure-S3 mode leaves no other copy. mc's PUT checksum already fails a
@@ -78,7 +78,7 @@ LOCAL_SHA="$(sha256sum "$ARCHIVE" | awk '{print $1}')"
 REMOTE_SHA="$($ENGINE run --rm \
   -e MC_HOST_s3="{{ s3_endpoint | regex_replace('^(https?://)', '\\g<1>' ~ s3_access_key ~ ':' ~ s3_secret_key ~ '@') }}" \
   {{ s3_client_image }} \
-  cat "s3/{{ s3_bucket }}/{{ s3_prefix }}/${NAME}.tar.gz" | sha256sum | awk '{print $1}')"
+  cat "s3/{{ s3_bucket }}/{{ mongodb_backup_s3_prefix }}/${NAME}.tar.gz" | sha256sum | awk '{print $1}')"
 if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
   echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] ERROR: S3 checksum mismatch for ${NAME}.tar.gz (local=$LOCAL_SHA remote=$REMOTE_SHA) — keeping local copy" >&2
   rm -f "$ARCHIVE"
@@ -91,7 +91,7 @@ $ENGINE run --rm \
   -e MC_HOST_s3="{{ s3_endpoint | regex_replace('^(https?://)', '\\g<1>' ~ s3_access_key ~ ':' ~ s3_secret_key ~ '@') }}" \
   {{ s3_client_image }} \
   rm --recursive --force --older-than "{{ mongodb_backup_retain_days }}d" \
-  "s3/{{ s3_bucket }}/{{ s3_prefix }}/"
+  "s3/{{ s3_bucket }}/{{ mongodb_backup_s3_prefix }}/"
 {% endif %}
 
 rm -f "$ARCHIVE"
@@ -100,5 +100,5 @@ rm -f "$ARCHIVE"
 # local dump now that the bucket holds an identical object.
 rm -rf "${BACKUP_DIR}/${NAME}"
 
-echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] S3 upload complete: s3://{{ s3_bucket }}/{{ s3_prefix }}/${NAME}.tar.gz"
+echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] S3 upload complete: s3://{{ s3_bucket }}/{{ mongodb_backup_s3_prefix }}/${NAME}.tar.gz"
 {% endif %}

@@ -156,8 +156,12 @@ s3_region: "us-east-1"
 # Required by most S3-compatible gateways (Ceph RGW, MinIO, custom). Matches
 # patroni's wal-g AWS_S3_FORCE_PATH_STYLE. Consumed by PBM's storage config.
 s3_force_path_style: "true"
-# Path prefix inside the bucket (mongodb only).
-s3_prefix: "mongodb/{{ mongodb_network }}"
+# S3 key prefix (under s3_bucket) for MongoDB backups — mongodump archives at
+# this root, PBM under "<prefix>/pbm". Defaults to a cluster-namespaced path so
+# distinct clusters sharing one bucket don't collide. mongodb_cluster_name is a
+# display string ("MongoDB Cluster"), so it's slugified (lowercase, spaces →
+# dashes) into a key-safe segment, e.g. "mongodb-mongodb-cluster".
+mongodb_backup_s3_prefix: "mongodb-{{ mongodb_cluster_name | lower | regex_replace('[^a-z0-9]+', '-') | regex_replace('(^-|-$)', '') }}"
 # Docker image used to run the S3 client (mc). No host install needed.
 s3_client_image: "minio/mc:latest"
 

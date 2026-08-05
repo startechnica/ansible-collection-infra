@@ -10,7 +10,7 @@ storage:
     endpointUrl: "{{ s3_endpoint }}"
     forcePathStyle: {{ 'true' if s3_force_path_style | bool else 'false' }}
     bucket: "{{ s3_bucket }}"
-    prefix: "{{ s3_prefix }}/pbm"
+    prefix: "{{ mongodb_backup_s3_prefix }}/pbm"
     credentials:
       access-key-id: "{{ s3_access_key }}"
       secret-access-key: "{{ s3_secret_key }}"
