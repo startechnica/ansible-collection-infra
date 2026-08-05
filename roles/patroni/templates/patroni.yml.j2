@@ -24,6 +24,25 @@ bootstrap:
     loop_wait: 10
     retry_timeout: 10
     maximum_lag_on_failover: 1048576
+{% if patroni_standby_enabled | default(false) | bool %}
+    # This cluster is a STANDBY: its leader replays the remote primary's data
+    # (streaming, WAL-G wal-fetch fallback) rather than accepting writes.
+    # standby_cluster seeds DCS at bootstrap; reconcile_standby.yml keeps it in
+    # sync afterward, and standby-promote.yml removes it to promote.
+    standby_cluster:
+      host: {{ patroni_standby_primary_host }}
+      port: {{ patroni_standby_primary_port }}
+{% if patroni_standby_primary_slot | default('') | length > 0 %}
+      primary_slot_name: {{ patroni_standby_primary_slot }}
+{% endif %}
+      create_replica_methods:
+{% for _m in patroni_standby_create_replica_methods | default(['basebackup']) %}
+        - {{ _m }}
+{% endfor %}
+{% if walg_enabled %}
+      restore_command: "/opt/walg/wal-g wal-fetch %f %p"
+{% endif %}
+{% endif %}
     postgresql:
       use_pg_rewind: true
       use_slots: true
@@ -77,7 +96,9 @@ bootstrap:
         log_filename: "postgresql-%Y-%m-%d_%H%M%S.log"
         log_destination: "stderr,csvlog"
 {% endif %}
+{% if not (patroni_standby_enabled | default(false) | bool) %}
   post_bootstrap: "psql -c 'CREATE ROLE replicator WITH REPLICATION LOGIN'"
+{% endif %}
   initdb:
     - encoding: UTF8
     - data-checksums
@@ -90,6 +111,16 @@ bootstrap:
     - hostssl replication replicator {{ ip }}/32 cert
 {% endif %}
 {% endfor %}
+{% if patroni_replication_cidrs | default([]) | length > 0 %}
+    # ── Remote standby clusters (set patroni_replication_cidrs on the primary) ──
+{% for cidr in patroni_replication_cidrs %}
+{% if postgresql_replication_password %}
+    - hostssl replication replicator {{ cidr }} scram-sha-256
+{% else %}
+    - hostssl replication replicator {{ cidr }} cert
+{% endif %}
+{% endfor %}
+{% endif %}
     # ── PgBouncer + Ansible (runs in host network on this node) ──
     # hostssl: PgBouncer container connects with TLS via server_tls_sslmode=prefer
     # host:    Ansible postgresql_* tasks (manage_databases, pgbouncer_auth, etc.)
@@ -119,18 +150,22 @@ postgresql:
     superuser:
       username: postgres
       password: "{{ postgresql_postgres_password }}"
+{# On a standby, this connection reaches the REMOTE primary, so honor the
+   standby sslmode (verify-ca needs a shared CA; require skips CA verify). A
+   normal cluster always uses verify-ca against its own CA. #}
+{% set _repl_sslmode = patroni_standby_primary_sslmode | default('verify-ca') if (patroni_standby_enabled | default(false) | bool) else 'verify-ca' %}
 {% if postgresql_replication_password %}
     replication:
       username: replicator
       password: "{{ postgresql_replication_password }}"
-      sslmode: verify-ca
+      sslmode: {{ _repl_sslmode }}
       sslcert: /etc/certs/replicator.crt
       sslkey: /etc/certs/replicator.key
       sslrootcert: /etc/certs/ca.crt
 {% else %}
     replication:
       username: replicator
-      sslmode: verify-ca
+      sslmode: {{ _repl_sslmode }}
       sslcert: /etc/certs/replicator.crt
       sslkey: /etc/certs/replicator.key
       sslrootcert: /etc/certs/ca.crt

@@ -15,6 +15,41 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   [docs/UPGRADING.md](docs/UPGRADING.md).
 
 ### Added
+- **Patroni standby-cluster support (DR / off-site replica).** New opt-in
+  (`patroni_standby_enabled: true`) that deploys a full Patroni cluster whose
+  leader is a **Standby Leader** continuously replaying a *remote* primary —
+  **streaming** with a **WAL-G `wal-fetch` fallback** from the primary's S3
+  archive. New vars: `patroni_standby_primary_host` / `_port` / `_slot` /
+  `_sslmode` / `_create_replica_methods` / `_walg_prefix`, plus cross-cluster
+  wiring `patroni_shared_ca_dir` (reuse one CA across clusters so `verify-ca`
+  streaming works) and `patroni_replication_cidrs` (primary-side pg_hba for
+  remote standby IPs). Adds `bootstrap.dcs.standby_cluster` to the config
+  template (skipping `post_bootstrap` role creation on a standby), a
+  post-bootstrap `reconcile_standby.yml` (keeps the DCS block in sync, both
+  directions), standby-aware leader detection (accepts `Standby Leader`), early
+  guardrails (requires a primary host + a scope distinct from the primary +
+  shared-CA-or-`require`), and a manual promotion playbook
+  `playbooks/patroni/standby-promote.yml` (removes `standby_cluster` from DCS →
+  promotes to an independent primary). Design + full runbook:
+  [docs/design/patroni-standby-cluster.md](docs/design/patroni-standby-cluster.md).
+- **Per-cluster S3 prefixes for Patroni backups** — WAL-G and etcd snapshots had
+  no scope namespacing, so multiple Patroni clusters sharing one bucket collided
+  (`basebackups_005/`, `wal_005/`, `etcd-snapshots/etcd-snapshot-<STAMP>.db`).
+  Two new vars isolate them:
+  Both are scope-namespaced by default (bare key prefixes joined under
+  `s3_bucket`), so clusters don't collide out of the box:
+  - **`patroni_walg_s3_prefix`** (default `patroni-walg-{{ patroni_scope }}`) —
+    WAL-G base backups + WAL archive. A standby's
+    `patroni_standby_primary_walg_prefix` points at the primary's prefix (same
+    bucket) for its wal-fetch fallback. Set `""` to use the bucket root.
+  - **`patroni_etcd_s3_prefix`** (default `patroni-etcd-{{ patroni_scope }}`) —
+    etcd snapshots.
+  NOTE: these **change the default S3 upload paths** — WAL-G moves from the
+  bucket root to `patroni-walg-<scope>/`, and etcd snapshots from
+  `etcd-snapshots/` to `patroni-etcd-<scope>/`. Existing objects under the old
+  paths are not migrated; for an already-running cluster, either pin the old
+  values (`patroni_walg_s3_prefix: ""`, `patroni_etcd_s3_prefix: etcd-snapshots`)
+  or take a fresh base backup at the new prefix before relying on PITR.
 - **Percona Backup for MongoDB (PBM) — sharded-cluster PITR.** New opt-in
   (`mongodb_pbm_enabled: true`) that deploys one `pbm-agent` next to every
   data-bearing `mongod` (two per host on sharded clusters: shard + configsvr;

@@ -1,7 +1,9 @@
 # Design: Patroni standby-cluster support (DR / off-site replica)
 
-Status: **proposed** — not yet implemented.
-Target: 1.0.4 (or a later 1.0.3 slice)
+Status: **implemented** (landed on `feat/patroni-standby-cluster`) — **needs
+validation against a live two-cluster test bed** before it's declared
+production-ready.
+Target: 1.0.3
 Author: scoped during `fix/walg`
 
 Two design decisions are locked (per review):
@@ -178,9 +180,12 @@ text. Required, or reconcile/backup/status day-2 tasks break on any standby.
   `replication`. `patroni_replication_cidrs` covers pg_hba (§2). Document adding the
   standby IPs to the primary's `firewall_service_source_map` / `firewall_trusted_sources`
   for `postgresql-direct` (port 55432).
-- **WAL-G prefix** — if standby `s3_bucket` == primary's, wal-fetch works as-is. If the
-  primary used a distinct prefix, wire `patroni_standby_primary_walg_prefix` into a
-  standby-specific `WALG_S3_PREFIX` in `walg.env.j2` (fall back to `s3://{{ s3_bucket }}`).
+- **WAL-G prefix** — `walg.env.j2` resolves `WALG_S3_PREFIX` by precedence: the standby's
+  `patroni_standby_primary_walg_prefix` (read the primary's archive) → the cluster's own
+  `patroni_walg_s3_prefix` (per-cluster write path) → `s3://{{ s3_bucket }}` (bucket root,
+  back-compat). This closes the root-collision gap: independent clusters sharing a bucket set
+  distinct `patroni_walg_s3_prefix` values; a standby reading a namespaced primary sets
+  `patroni_standby_primary_walg_prefix` to match.
 
 ### 7. Guardrails — `roles/patroni/tasks/shared/` (assert early)
 

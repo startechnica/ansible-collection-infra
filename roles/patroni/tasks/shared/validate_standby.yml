@@ -1,0 +1,68 @@
+---
+# Guardrails for standby-cluster mode (patroni_standby_enabled). Runs at
+# provision, after _computed_vars, so walg_enabled is already resolved.
+# No-op (all asserts skipped) when patroni_standby_enabled is false.
+# See docs/design/patroni-standby-cluster.md.
+
+- name: "Standby: assert a remote primary host is set"
+  ansible.builtin.assert:
+    that:
+      - patroni_standby_primary_host | default('') | length > 0
+    fail_msg: >-
+      patroni_standby_enabled is true but patroni_standby_primary_host is empty.
+      Set it to the remote primary's leader IP/host (or its VIP) that this
+      standby should stream from.
+    success_msg: "Standby primary host: {{ patroni_standby_primary_host }}"
+    quiet: true
+  when: patroni_standby_enabled | default(false) | bool
+
+# A standby needs its OWN etcd DCS and scope; if it reused the primary's scope
+# it would join the primary's DCS and fight leader election. The primary's
+# scope isn't knowable from here, but the placeholder default certainly must
+# not be shared, and the operator must set something project-specific.
+- name: "Standby: assert patroni_scope is not the default placeholder"
+  ansible.builtin.assert:
+    that:
+      - patroni_scope != 'ha-pg-cluster'
+    fail_msg: >-
+      patroni_standby_enabled is true but patroni_scope is still the default
+      placeholder 'ha-pg-cluster'. A standby cluster MUST use its own scope,
+      distinct from the primary's, or the two clusters collide in etcd. Set a
+      unique patroni_scope (e.g. '<project>-pg-dr').
+    success_msg: "Standby scope: {{ patroni_scope }}"
+    quiet: true
+  when: patroni_standby_enabled | default(false) | bool
+
+# verify-ca against the remote primary requires a shared CA; otherwise the
+# standby trusts its own '{{ patroni_scope }}-ca', not the primary's server
+# cert, and the stream fails TLS. Either set patroni_shared_ca_dir, or relax
+# to sslmode=require.
+- name: "Standby: assert verify-ca has a shared CA (else use sslmode=require)"
+  ansible.builtin.assert:
+    that:
+      - >-
+        (patroni_standby_primary_sslmode | default('verify-ca')) != 'verify-ca'
+        or (patroni_shared_ca_dir | default('') | length > 0)
+    fail_msg: >-
+      Standby streams with sslmode=verify-ca but patroni_shared_ca_dir is unset.
+      verify-ca needs the standby to trust the PRIMARY's CA — each cluster
+      otherwise mints its own '{{ patroni_scope }}-ca'. Either set
+      patroni_shared_ca_dir to a shared CA (recommended), or set
+      patroni_standby_primary_sslmode=require to skip server-cert verification.
+    success_msg: "Standby TLS: sslmode={{ patroni_standby_primary_sslmode }}, shared_ca={{ (patroni_shared_ca_dir | default('') | length > 0) }}"
+    quiet: true
+  when: patroni_standby_enabled | default(false) | bool
+
+# A standby with neither a reachable stream source nor WAL-G has no way to get
+# data. We can't test reachability here, but with walg disabled the ONLY source
+# is the stream — warn so a misconfig (no S3, unreachable primary) is visible.
+- name: "Standby: warn when WAL-G fallback is unavailable"
+  ansible.builtin.debug:
+    msg: >-
+      WARNING: standby has walg_enabled=false — its only data source is the
+      live stream from {{ patroni_standby_primary_host }}. If that primary is
+      unreachable at bootstrap the basebackup clone will fail with no fallback.
+      Configure S3/WAL-G (shared with the primary) for a wal-fetch fallback.
+  when:
+    - patroni_standby_enabled | default(false) | bool
+    - not (walg_enabled | default(false) | bool)

@@ -20,6 +20,73 @@ argument_specs:
           Patroni clusters share one etcd DCS. Default is a placeholder — set
           per project (e.g., `startechnica-pg`).
 
+      # ── Standby cluster (DR / off-site read replica) ──
+      patroni_standby_enabled:
+        type: bool
+        default: false
+        description: >-
+          When true, this cluster is a STANDBY: its leader is a "Standby Leader"
+          that continuously replays a remote primary's data (streaming, with
+          WAL-G wal-fetch fallback) instead of accepting writes. Requires
+          `patroni_standby_primary_host` and a `patroni_scope` distinct from the
+          primary's. Promote with playbooks/patroni/standby-promote.yml. See
+          docs/design/patroni-standby-cluster.md.
+      patroni_standby_primary_host:
+        type: str
+        default: ""
+        description: Remote primary IP/host to stream from (its leader or VIP). Required when `patroni_standby_enabled`.
+      patroni_standby_primary_port:
+        type: int
+        default: 55432
+        description: Remote primary's direct-postgres port (its `postgresql_port`).
+      patroni_standby_primary_slot:
+        type: str
+        default: ""
+        description: >-
+          Optional physical replication slot name to hold on the primary so it
+          retains WAL for this standby. Empty = no named slot.
+      patroni_standby_primary_sslmode:
+        type: str
+        default: verify-ca
+        choices: [verify-ca, require]
+        description: >-
+          TLS mode for the outbound replication stream. `verify-ca` verifies the
+          primary's server cert (set `patroni_shared_ca_dir` so both clusters
+          chain to one CA); `require` encrypts without CA verification (use when
+          clusters can't share a CA; pair with `postgresql_replication_password`).
+      patroni_standby_create_replica_methods:
+        type: list
+        elements: str
+        default: [basebackup]
+        description: >-
+          Replica creation methods in order. `basebackup` clones from the primary
+          over the stream; WAL-G restore_command is added automatically when
+          `walg_enabled` so the standby can wal-fetch the primary's archive.
+      patroni_standby_primary_walg_prefix:
+        type: str
+        default: ""
+        description: >-
+          S3 key prefix (under the shared s3_bucket) of the PRIMARY's WAL-G
+          archive for the standby's wal-fetch fallback — set to the primary's
+          patroni_walg_s3_prefix (default patroni-walg-<primary_scope>). Empty =
+          bucket root. The standby must share the primary's s3_bucket.
+      patroni_shared_ca_dir:
+        type: str
+        default: ""
+        description: >-
+          Controller-local dir holding ca.crt + ca.key to reuse ONE CA across
+          primary + standby (so the standby's verify-ca stream trusts the
+          primary's server cert). Empty = each cluster mints its own
+          "{{ patroni_scope }}-ca".
+      patroni_replication_cidrs:
+        type: list
+        elements: str
+        default: []
+        description: >-
+          Extra pg_hba `replication` CIDRs on the PRIMARY, so it admits remote
+          standby node IPs (built-in rules cover only same-cluster node_ips). Also
+          add these IPs to the primary's firewall for `postgresql-direct` (55432).
+
       # ── Floating IP ──
       vip_manager:
         type: str
@@ -281,6 +348,16 @@ argument_specs:
       walg_compression:
         type: str
         default: lz4
+      patroni_walg_s3_prefix:
+        type: str
+        default: patroni-walg-{{ patroni_scope }}
+        description: >-
+          WAL-G S3 key prefix (under s3_bucket) for this cluster's base backups +
+          WAL archive. Defaults to a scope-namespaced path
+          (patroni-walg-<patroni_scope>) so multiple Patroni clusters can share one
+          bucket without colliding at the root. Set "" to use the bucket root. A
+          standby's wal-fetch fallback (patroni_standby_primary_walg_prefix) points
+          at the primary's prefix.
       walg_schedule:
         type: str
         default: "*-*-* 02:00:00"
@@ -301,6 +378,14 @@ argument_specs:
       etcd_snapshot_retain:
         type: int
         default: 7
+      patroni_etcd_s3_prefix:
+        type: str
+        default: patroni-etcd-{{ patroni_scope }}
+        description: >-
+          S3 key prefix for uploaded etcd snapshots. Defaults to a
+          scope-namespaced path (patroni-etcd-<patroni_scope>) so multiple
+          Patroni clusters can share one bucket without colliding on the same
+          etcd-snapshot-<STAMP>.db names. Override to pin a custom layout.
 
       # ── PostgreSQL memory (auto-calculated if empty) ──
       pg_shared_buffers:

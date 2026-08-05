@@ -312,6 +312,12 @@ NetBox connection + vCenter credentials are best kept in
   correct preset) in the inventory.
 - **Patroni stage fails on `patroni_vip_address` undefined** — add `patroni_vip_address:` to the inventory's
   Patroni section or set `vip_manager: "none"` to skip.
+- **Patroni standby cluster won't replicate** — a standby (`patroni_standby_enabled: true`)
+  needs, on both ends: TLS trust (shared `patroni_shared_ca_dir` for `verify-ca`, or
+  `patroni_standby_primary_sslmode: require`), the primary admitting the standby IPs
+  (`patroni_replication_cidrs` + firewall port 55432), matching
+  `postgresql_replication_password`, and a `patroni_scope` distinct from the primary's.
+  See the [patroni role README](roles/patroni/README.md#standby-cluster-dr--off-site-replica).
 - **MongoDB preflight fails on kernel 6.19–7.0.13** — MongoDB 8 crashes on
   startup on a *bounded range* of Linux kernels, **6.19 through 7.0.13**, from a
   vendored-TCMalloc/rseq ABI bug. Linux **7.0.14+ resolves it kernel-side**, so

@@ -85,6 +85,11 @@
 - name: Compute shared variables
   ansible.builtin.include_tasks: shared/_computed_vars.yml
 
+# ── Standby-cluster guardrails (no-op unless patroni_standby_enabled) ─────────
+- name: Validate standby-cluster configuration
+  ansible.builtin.include_tasks: shared/validate_standby.yml
+  when: patroni_action == 'provision'
+
 # ── System-level preflight role (engine-agnostic basics) ─────────────────────
 # Skipped on uninstall/status/etc. so we don't burn cycles on kernel /
 # time-sync / ulimit checks just to tear things down or read state.
@@ -179,6 +184,12 @@
   ansible.builtin.include_tasks: shared/reconcile_archiving.yml
   when: patroni_action == 'provision'
 
+# Keep bootstrap.dcs.standby_cluster in sync post-bootstrap (it only seeds at
+# first init). Also runs on the standby-promote action to REMOVE the block.
+- name: Reconcile standby_cluster config in DCS (idempotent, both directions)
+  ansible.builtin.include_tasks: shared/reconcile_standby.yml
+  when: patroni_action in ['provision', 'standby-promote']
+
 - name: Set up hardened PgBouncer auth (dedicated role + SECURITY DEFINER fn)
   ansible.builtin.include_tasks: shared/pgbouncer_auth.yml
   when: patroni_action == 'provision'
@@ -214,6 +225,21 @@
 - name: "Rotate passwords — engine={{ patroni_container_engine }}"
   ansible.builtin.include_tasks: "{{ patroni_container_engine }}/rotate_passwords.yml"
   when: patroni_action == 'rotate-passwords'
+
+# ── Standby promotion (remove standby_cluster → independent primary) ─────────
+# The reconcile_standby step above already removed the DCS standby_cluster block
+# (this action runs with patroni_standby_enabled=false). Emit the follow-up
+# guidance so a later re-provision doesn't re-attach the standby.
+- name: Report standby promotion result
+  ansible.builtin.debug:
+    msg:
+      - "Standby cluster '{{ patroni_scope }}' promoted to an independent primary."
+      - "Patroni removed bootstrap.dcs.standby_cluster; the Standby Leader is now a real Leader."
+      - "IMPORTANT: set `patroni_standby_enabled: false` in this inventory so a"
+      - "future provision run does NOT re-attach it to the old primary."
+      - "Verify: patronictl -c /etc/patroni/patroni.yml list  (Role should read 'Leader')."
+  run_once: true
+  when: patroni_action == 'standby-promote'
 
 # ── Uninstall (confirmation → engine teardown → shared host cleanup) ────────
 

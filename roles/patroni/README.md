@@ -315,6 +315,7 @@ After install, per-database credential artifacts land in the controller's
 | Rotate postgres + pgbouncer password | `playbooks/patroni/rotate-passwords.yml` |
 | Scale up (add replica) | `playbooks/patroni/add-node.yml -e target_node=<host>` |
 | Scale down (remove replica) | `playbooks/patroni/remove-node.yml -e target_node=<host>` |
+| Promote standby → primary (DR) | `playbooks/patroni/standby-promote.yml [-e patroni_skip_confirm=true]` |
 | Uninstall | `playbooks/patroni/uninstall.yml [-e patroni_destroy_prune=true]` |
 
 ### Uninstall is dual-gated
@@ -325,6 +326,54 @@ There are two interactive prompts during uninstall, both expecting you to type `
 2. *Second prompt* (only when `patroni_destroy_prune: true`): confirms deletion of the data directories (`postgresql_root_dir`, `etcd_data_dir`, etc.). Typing anything else here keeps the data on disk even though the flag was set — last-chance escape hatch before an irreversible wipe.
 
 Use `patroni_skip_confirm: true` to bypass BOTH prompts in CI/automation. Without `patroni_destroy_prune: true`, only the first prompt fires and data is preserved.
+
+## Standby cluster (DR / off-site replica)
+
+A **standby cluster** is a full Patroni cluster — its own etcd, its own
+`patroni_scope`, its own nodes — whose leader is a **"Standby Leader"** that
+continuously replays a *remote* primary's data instead of accepting writes.
+Set `patroni_standby_enabled: true` on the standby's inventory. It replicates by
+**streaming** from the primary, with a **WAL-G `wal-fetch` fallback** (from the
+primary's S3 archive) when the stream is unavailable. Design:
+[docs/design/patroni-standby-cluster.md](../../docs/design/patroni-standby-cluster.md).
+
+Minimum standby inventory:
+
+```yaml
+patroni_scope: myproject-pg-dr          # MUST differ from the primary's scope
+patroni_standby_enabled: true
+patroni_standby_primary_host: 10.0.0.10 # primary's leader IP or VIP
+patroni_standby_primary_port: 55432     # primary's postgresql_port
+patroni_standby_primary_slot: dr_slot   # optional: hold WAL on the primary
+# TLS: pick ONE of the two trust models below
+```
+
+**Cross-cluster wiring (both ends):**
+
+- **TLS trust** — the standby streams over TLS and must trust the primary's server cert:
+  - **Shared CA (recommended):** set `patroni_shared_ca_dir` (a controller-local dir with
+    `ca.key` + `ca.crt`) on **both** clusters so they chain to one CA; keep
+    `patroni_standby_primary_sslmode: verify-ca`.
+  - **No shared CA:** set `patroni_standby_primary_sslmode: require` (encrypted, but the
+    primary's cert is not CA-verified) and set `postgresql_replication_password` on both.
+- **Replication credentials** — the standby must use the **same**
+  `postgresql_replication_password` (or replicator cert) as the primary.
+- **Primary-side pg_hba** — add the standby node IPs to `patroni_replication_cidrs` on the
+  **primary** so it admits their `replication` connections.
+- **Primary-side firewall** — add the standby IPs to the primary's
+  `firewall_service_source_map` for `postgresql-direct` (port 55432).
+- **WAL-G fallback** — the standby must share the primary's `s3_bucket`; set
+  `patroni_standby_primary_walg_prefix` to the primary's `patroni_walg_s3_prefix`
+  (default `patroni-walg-<primary_scope>`) so wal-fetch reaches the primary's archive.
+  Each cluster's own WAL-G and etcd-snapshot paths are already scope-namespaced by default
+  (`patroni_walg_s3_prefix` / `patroni_etcd_s3_prefix` = `patroni-walg-<scope>` /
+  `patroni-etcd-<scope>`), so clusters sharing a bucket don't collide.
+
+**Promotion (DR activation):** run
+`playbooks/patroni/standby-promote.yml` — it removes `standby_cluster` from DCS, so Patroni
+promotes the Standby Leader to a real primary. Afterward set
+`patroni_standby_enabled: false` in the inventory so a later provision doesn't re-attach it.
+You now have two independent primaries — fence the old one to avoid split-brain.
 
 ## Variables reference
 
@@ -358,10 +407,11 @@ Written to `playbooks/artifacts/<inventory-stem>/patroni/`:
 - **WAL-G backup fails** — check S3 credentials (`s3_*`). Backup falls back to `pg_basebackup` when S3 isn't set.
 - **`patronictl remove` hangs** — it's interactive; our `remove-node.yml` sets `failed_when: false` so the play continues. If etcd has stale registration, run `patronictl -c /etc/patroni/patroni.yml remove <scope>` manually on a survivor.
 - **`pkg_resources` deprecation warning** — harmless; some transitive dep (WAL-G?) imports it via setuptools. Noise, not a failure.
+- **Standby cluster not catching up** — check, in order: (1) TLS trust — with `sslmode: verify-ca` the standby needs the primary's CA (set `patroni_shared_ca_dir` on both, or relax to `patroni_standby_primary_sslmode: require`); (2) the primary admits the standby IPs — `patroni_replication_cidrs` on the primary + its firewall for port 55432; (3) matching `postgresql_replication_password`; (4) `patronictl list` on the standby should show a `Standby Leader` — if leader election fails outright, the scope likely collides with the primary's.
 
 ## Gotchas
 
-- **`patroni_scope` must be unique** per etcd cluster. If you run multiple Patroni clusters that share an etcd DCS, same scope = same cluster — they'll fight over leader election.
+- **`patroni_scope` must be unique** per etcd cluster. If you run multiple Patroni clusters that share an etcd DCS, same scope = same cluster — they'll fight over leader election. A **standby cluster** especially must set a `patroni_scope` distinct from its primary — the role asserts this (rejects the default placeholder) when `patroni_standby_enabled: true`.
 - **Major-version PostgreSQL upgrade is not automated** — `postgresql_version` change alone doesn't trigger `pg_upgrade`. Stop Patroni, run `pg_upgrade` manually, then restart. Minor-version upgrades (same `postgresql_version`) are fine.
 - **pg_hba.conf is managed by Patroni** — if you change auth rules, do it via Patroni config and `patronictl reload`. Don't edit `pg_hba.conf` directly; Patroni overwrites it.
 - **vip-manager requires Patroni API cert trust** — the vip-manager container reads `/etc/certs/ca.crt` to validate Patroni's REST API. If you rotate the CA, vip-manager must be restarted.

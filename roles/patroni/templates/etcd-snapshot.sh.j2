@@ -62,7 +62,7 @@ if [[ -f "${SNAPSHOT_FILE}" ]]; then
       "${url}"
   }
 
-  S3_KEY="etcd-snapshots/etcd-snapshot-${STAMP}.db"
+  S3_KEY="{{ patroni_etcd_s3_prefix | default('etcd-snapshots') | regex_replace('/$', '') }}/etcd-snapshot-${STAMP}.db"
   if s3_upload "${SNAPSHOT_FILE}" "${S3_KEY}"; then
     echo "[$(date)] uploaded to s3://${S3_BUCKET}/${S3_KEY}"
   else
