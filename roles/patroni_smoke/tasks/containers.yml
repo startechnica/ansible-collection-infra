@@ -1,14 +1,30 @@
 ---
 # Per-node container health for the patroni stack.
-# Required: etcd, patroni, haproxy, vip-manager, keepalived.
+# Required: etcd, patroni, haproxy + the active VIP container (see below).
 # Optional (gated on enabled flags): pgbouncer, postgres-exporter, walg-init.
+
+# The VIP is served by EITHER vip-manager OR keepalived, never both — the
+# deploy role picks one via `vip_manager` (vip-manager|keepalived|<disabled>)
+# and only when patroni_vip_address is set (patroni_vip_enabled). Build the
+# effective required list here so the smoke test doesn't demand a container
+# that was never deployed (e.g. keepalived on a vip-manager cluster).
+- name: "P1a. Resolve effective required containers (VIP strategy aware)"
+  ansible.builtin.set_fact:
+    _patroni_smoke_required_effective: >-
+      {{ patroni_smoke_required_containers
+         + (['vip-manager'] if (patroni_vip_address | default('') | length > 0
+                                and vip_manager | default('vip-manager') == 'vip-manager')
+            else ['keepalived'] if (patroni_vip_address | default('') | length > 0
+                                    and vip_manager | default('vip-manager') == 'keepalived')
+            else []) }}
+  when: patroni_smoke_check_containers | bool
 
 - name: "P1. Containers up on every node (required)"
   containers.podman.podman_container_info:
     name: "{{ item }}"
   register: _smoke_required_container_checks
   failed_when: false
-  loop: "{{ patroni_smoke_required_containers }}"
+  loop: "{{ _patroni_smoke_required_effective }}"
   when: patroni_smoke_check_containers | bool
 
 - name: "P1b. Containers up on every node (optional, when enabled)"

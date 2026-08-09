@@ -87,7 +87,7 @@
              | selectattr('containers', 'defined')
              | rejectattr('containers', 'truthy')
              | map(attribute='item') | list | join(','))]
-         | select() | list if (_smoke_required_running | int) < (patroni_smoke_required_containers | length) else [])
+         | select() | list if (_smoke_required_running | int) < (_patroni_smoke_required_effective | default(patroni_smoke_required_containers) | length) else [])
       + (['patronictl list failed on every member'] | select() | list if _n_members == 0 else [])
       + (['expected ' ~ _n_expected ~ ' members, got ' ~ _n_members] | select() | list if _n_members != _n_expected else [])
       + (['no Leader (or Standby Leader) elected'] | select() | list if _n_leaders != 1 else [])
@@ -223,7 +223,7 @@
         Containers running:
         {{ _smoke_required_container_checks.results | selectattr('containers', 'defined')
           | selectattr('containers', 'truthy') | list | length }}
-        / {{ patroni_smoke_required_containers | length }} required
+        / {{ _patroni_smoke_required_effective | default(patroni_smoke_required_containers) | length }} required
       - "Etcd: {{ _etcd_healthy_count }} healthy / {{ _etcd_members | length }} members"
       - "HAProxy: primary={{ _haproxy_prim_up }} replica={{ _haproxy_repl_up }}"
       - "VIP {{ patroni_vip_address | default('(none)') }}: held by {{ _smoke_n_vip_holders }} node(s)"
