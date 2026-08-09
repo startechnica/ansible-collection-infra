@@ -40,10 +40,13 @@
          | selectattr('containers', 'truthy') | list | length
          if (mongodb_pbm_enabled | default(false) | bool) else 0 }}
 
+    # `pbm list --out json` returns {"snapshots": null} (not a missing key) right
+    # after a force-resync with no backups yet. default([], true) also replaces
+    # the explicit null; guard from_json against empty stdout. Mirrors the same
+    # parse in roles/mongodb/tasks/pbm.yml.
     _pbm_has_backup: >-
-      {{ (_smoke_pbm_list.stdout | default('') | from_json).snapshots
-         | default([], true) | length > 0
-         if (_smoke_pbm_list.stdout | default('') | length > 0) else false }}
+      {{ ((_smoke_pbm_list.stdout | default('', true) | trim or '{}') | from_json).snapshots
+         | default([], true) | length > 0 }}
 
     _failures: "{{ []
       + (['container down: '
@@ -94,7 +97,7 @@
              and not _pbm_has_backup) else [])
       + (['mongodb-backup.timer not active'] | select() | list
          if ((mongodb_backup_enabled | default(false) | bool)
-             and (_smoke_mongodump_timer.status | default('') | lower) != 'active') else [])
+             and (_smoke_mongodump_timer.status.ActiveState | default('') | lower) != 'active') else [])
       + (['cert expires within ' ~ mongodb_smoke_cert_min_days ~ 'd: '
           ~ (_certs_short | map(attribute='key') | list | join(','))]
          | select() | list if (_certs_short | length) > 0 else [])
@@ -109,7 +112,7 @@
       - "mongos: port={{ ((_smoke_mongos_port.elapsed | default(999)) < 30) }} ping={{ (_smoke_ping.rc | default(1)) == 0 }}"
       - "End-to-end: write={{ not (_smoke_write.failed | default(true)) }} read={{ (_smoke_read.stdout | default('')) is not search('null') }}"
       - "PBM: {{ 'enabled, ' ~ _pbm_agents_running ~ ' agents, has_backups=' ~ _pbm_has_backup if (mongodb_pbm_enabled | default(false) | bool) else 'disabled' }}"
-      - "Scheduled mongodump: {{ (_smoke_mongodump_timer.status | default('(disabled)')) if (mongodb_backup_enabled | default(false) | bool) else 'disabled' }}"
+      - "Scheduled mongodump: {{ (_smoke_mongodump_timer.status.ActiveState | default('(unknown)')) if (mongodb_backup_enabled | default(false) | bool) else 'disabled' }}"
       - "{{ 'Failures (' ~ (_failures | length) ~ '): ' ~ (_failures | join('; ')) if (_failures | length) > 0 else 'No failures.' }}"
   run_once: true
   failed_when: _failures | length > 0

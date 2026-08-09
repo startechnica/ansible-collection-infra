@@ -124,7 +124,7 @@
              and (_smoke_walg_list.stdout | default('')) == '') else [])
       + (['walg-cron.timer not active'] | select() | list
          if (walg_enabled | default(false) | bool
-             and (_smoke_walg_timer.status | default('') | lower) != 'active') else [])
+             and (_smoke_walg_timer.status.ActiveState | default('') | lower) != 'active') else [])
       + (['postgres_exporter :9187/metrics unreachable'] | select() | list
          if ((postgres_exporter_enabled | default(false) | bool)
              and (_smoke_pgexporter.status | default(0) | int) != 200) else [])

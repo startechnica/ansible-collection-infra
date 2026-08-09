@@ -24,6 +24,13 @@ options:
       - mongodb-mongod
       - mongodb-configsvr
       - mongodb-mongos
+  container_engine:
+    description: Container runtime used to inspect/exec containers (docker or podman).
+    type: str
+    default: docker
+    choices:
+      - docker
+      - podman
   replica_sets:
     description: >
       List of replica sets to check. Each entry is a dict with
@@ -107,17 +114,17 @@ def run_cmd(cmd, timeout=30):
         return 1, '', str(e)
 
 
-def check_container(name):
-    """Check if a Docker container is running. Returns status string."""
+def check_container(name, engine="docker"):
+    """Check if a container is running. Returns status string."""
     rc, stdout, stderr = run_cmd([
-        "docker", "inspect", "--format", "{{.State.Status}}", name
+        engine, "inspect", "--format", "{{.State.Status}}", name
     ])
     if rc == 0:
         return stdout
     return "not found"
 
 
-def check_rs_status(container, port, tls_certfile, tls_cafile):
+def check_rs_status(container, port, tls_certfile, tls_cafile, engine="docker"):
     """Check replica set status via mongosh inside the container."""
     eval_str = (
         "JSON.stringify({"
@@ -126,7 +133,7 @@ def check_rs_status(container, port, tls_certfile, tls_cafile):
         "members: rs.status().members.map(m => ({name: m.name, stateStr: m.stateStr}))"
         "})"
     )
-    cmd = ["docker", "exec", container, "mongosh", "--port", str(port), "--quiet"]
+    cmd = [engine, "exec", container, "mongosh", "--port", str(port), "--quiet"]
     if tls_certfile:
         cmd += ["--tls", "--tlsCertificateKeyFile", tls_certfile]
     if tls_cafile:
@@ -188,6 +195,7 @@ def main():
                 type='list', elements='str',
                 default=['mongodb-mongod', 'mongodb-configsvr', 'mongodb-mongos'],
             ),
+            container_engine=dict(type='str', default='docker', choices=['docker', 'podman']),
             replica_sets=dict(type='list', elements='dict', required=True),
             tls_certfile=dict(type='str', default=''),
             tls_cafile=dict(type='str', default=''),
@@ -201,6 +209,7 @@ def main():
     )
 
     containers_list = module.params['containers']
+    engine = module.params['container_engine']
     replica_sets = module.params['replica_sets']
     tls_certfile = module.params['tls_certfile']
     tls_cafile = module.params['tls_cafile']
@@ -217,7 +226,7 @@ def main():
 
     # Check containers
     for name in containers_list:
-        status = check_container(name)
+        status = check_container(name, engine)
         result['containers'][name] = status
         if status != 'running':
             result['healthy'] = False
@@ -229,7 +238,7 @@ def main():
         rs_type = rs.get('type', 'shard')
         container = 'mongodb-configsvr' if rs_type == 'configsvr' else 'mongodb-mongod'
 
-        rs_status = check_rs_status(container, rs_port, tls_certfile, tls_cafile)
+        rs_status = check_rs_status(container, rs_port, tls_certfile, tls_cafile, engine)
         result['replica_sets'][rs_name] = rs_status
         if not rs_status.get('ok') or not rs_status.get('primary'):
             result['healthy'] = False
