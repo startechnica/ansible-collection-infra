@@ -19,8 +19,8 @@
   community.postgresql.postgresql_query:
     login_host: "{{ patroni_vip_address | default('') }}"
     login_port: "{{ postgresql_port | default(5432) }}"
-    login_user: "{{ postgresql_admin_user | default('postgres') }}"
-    login_password: "{{ postgresql_admin_password | default(postgresql_postgres_password | default(''), true) }}"
+    login_user: "{{ postgresql_postgres_user | default('postgres') }}"
+    login_password: "{{ postgresql_postgres_password | default('') }}"
     login_db: postgres
     sslmode: "{{ postgresql_sslmode | default('verify-full') }}"
     ca_cert: "{{ postgresql_tls_ca_cert_path | default(omit, true) }}"
@@ -31,14 +31,14 @@
   when:
     - patroni_smoke_check_postgres | bool
     - patroni_vip_address | default('') | length > 0
-    - postgresql_admin_password | default(postgresql_postgres_password | default(''), true) | length > 0
+    - postgresql_postgres_password | default('') | length > 0
 
 - name: "PG2. pg_is_in_recovery() = f on the leader"
   community.postgresql.postgresql_query:
     login_host: "{{ patroni_vip_address | default('') }}"
     login_port: "{{ postgresql_port | default(5432) }}"
-    login_user: "{{ postgresql_admin_user | default('postgres') }}"
-    login_password: "{{ postgresql_admin_password | default(postgresql_postgres_password | default(''), true) }}"
+    login_user: "{{ postgresql_postgres_user | default('postgres') }}"
+    login_password: "{{ postgresql_postgres_password | default('') }}"
     login_db: postgres
     sslmode: "{{ postgresql_sslmode | default('verify-full') }}"
     ca_cert: "{{ postgresql_tls_ca_cert_path | default(omit, true) }}"
@@ -49,14 +49,14 @@
   when:
     - patroni_smoke_check_postgres | bool
     - patroni_vip_address | default('') | length > 0
-    - postgresql_admin_password | default(postgresql_postgres_password | default(''), true) | length > 0
+    - postgresql_postgres_password | default('') | length > 0
 
 - name: "PG3. pg_hba_file_rules include replication entries"
   community.postgresql.postgresql_query:
     login_host: "{{ patroni_vip_address | default('') }}"
     login_port: "{{ postgresql_port | default(5432) }}"
-    login_user: "{{ postgresql_admin_user | default('postgres') }}"
-    login_password: "{{ postgresql_admin_password | default(postgresql_postgres_password | default(''), true) }}"
+    login_user: "{{ postgresql_postgres_user | default('postgres') }}"
+    login_password: "{{ postgresql_postgres_password | default('') }}"
     login_db: postgres
     sslmode: "{{ postgresql_sslmode | default('verify-full') }}"
     ca_cert: "{{ postgresql_tls_ca_cert_path | default(omit, true) }}"
@@ -67,14 +67,14 @@
   when:
     - patroni_smoke_check_postgres | bool
     - patroni_vip_address | default('') | length > 0
-    - postgresql_admin_password | default(postgresql_postgres_password | default(''), true) | length > 0
+    - postgresql_postgres_password | default('') | length > 0
 
 - name: "PG4a. Write smoke: create unique table + insert"
   community.postgresql.postgresql_query:
     login_host: "{{ patroni_vip_address | default('') }}"
     login_port: "{{ postgresql_port | default(5432) }}"
-    login_user: "{{ postgresql_admin_user | default('postgres') }}"
-    login_password: "{{ postgresql_admin_password | default(postgresql_postgres_password | default(''), true) }}"
+    login_user: "{{ postgresql_postgres_user | default('postgres') }}"
+    login_password: "{{ postgresql_postgres_password | default('') }}"
     login_db: postgres
     sslmode: "{{ postgresql_sslmode | default('verify-full') }}"
     ca_cert: "{{ postgresql_tls_ca_cert_path | default(omit, true) }}"
@@ -89,7 +89,7 @@
   when:
     - patroni_smoke_check_postgres | bool
     - patroni_vip_address | default('') | length > 0
-    - postgresql_admin_password | default(postgresql_postgres_password | default(''), true) | length > 0
+    - postgresql_postgres_password | default('') | length > 0
 
 - name: "PG4b. Wait briefly for replication to a replica"
   ansible.builtin.pause:
@@ -103,8 +103,8 @@
   community.postgresql.postgresql_query:
     login_host: "{{ ansible_host | default(inventory_hostname) }}"
     login_port: "{{ postgresql_port | default(5432) }}"
-    login_user: "{{ postgresql_admin_user | default('postgres') }}"
-    login_password: "{{ postgresql_admin_password | default(postgresql_postgres_password | default(''), true) }}"
+    login_user: "{{ postgresql_postgres_user | default('postgres') }}"
+    login_password: "{{ postgresql_postgres_password | default('') }}"
     login_db: postgres
     sslmode: "{{ postgresql_sslmode | default('verify-full') }}"
     ca_cert: "{{ postgresql_tls_ca_cert_path | default(omit, true) }}"
@@ -121,8 +121,8 @@
   community.postgresql.postgresql_query:
     login_host: "{{ patroni_vip_address | default('') }}"
     login_port: "{{ postgresql_port | default(5432) }}"
-    login_user: "{{ postgresql_admin_user | default('postgres') }}"
-    login_password: "{{ postgresql_admin_password | default(postgresql_postgres_password | default(''), true) }}"
+    login_user: "{{ postgresql_postgres_user | default('postgres') }}"
+    login_password: "{{ postgresql_postgres_password | default('') }}"
     login_db: postgres
     sslmode: "{{ postgresql_sslmode | default('verify-full') }}"
     ca_cert: "{{ postgresql_tls_ca_cert_path | default(omit, true) }}"
