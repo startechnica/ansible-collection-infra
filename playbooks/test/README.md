@@ -79,6 +79,37 @@ Per-node health:
 14. **Write+replicate**: insert on the leader, read on each replica (with cleanup)
 15. **Smoke table cleanup** (always — prevents test-data leakage)
 
+**Users + DBs + Owner** (gated on `patroni_smoke_check_users_and_dbs`):
+
+When `patroni_databases` is populated (positive path):
+
+16. **(A) Each DB in `patroni_databases[].name` exists in `pg_database`** —
+    one query per run with `WHERE datname = ANY(ARRAY[...])`. Catches: deploy
+    didn't run, DB was dropped post-deploy, inventory typo'd a name.
+17. **(B) Each user in `patroni_databases[].users[].name` exists in
+    `pg_roles` with `rolcanlogin=true`** — catches: user-provisioning
+    silently failed (clients would get "role does not exist" on connect).
+18. **(C) Each DB's owner matches `patroni_databases[].owner`** — catches:
+    silent owner reassignment (someone `GRANT`'d the DB to a different
+    role, so app-level "owner" privileges silently degraded).
+
+When `patroni_databases` is empty (negative-as-audit path — verifies the
+cluster matches the inventory's empty claim, NOT a mock):
+
+19. **No managed DBs on the cluster** — `SELECT datname FROM pg_database
+    WHERE datname NOT IN ('postgres','template0','template1')` returns 0
+    rows. Catches: previous inventory had DBs, was reduced to `[]`, but
+    the cleanup step never ran or failed silently — the cluster's actual
+    state no longer matches the inventory's "no managed DBs" claim.
+20. **No managed LOGIN users on the cluster** — `SELECT rolname FROM
+    pg_roles WHERE rolcanlogin=true AND rolname NOT IN ('postgres')`
+    returns 0 rows. Same catch as above for the user dimension.
+    (NOLOGIN-only roles are excluded — they're out-of-band service
+    accounts that aren't part of the inventory model.)
+
+The two paths are mutually exclusive (`patroni_databases | length > 0`
+vs `== 0`); the empty path runs only when the inventory declares empty.
+
 **haproxy**:
 
 16. **`:5000/stats` reachable**
@@ -110,6 +141,29 @@ Per-node health:
 25. **Patroni CA cert** exists and is readable (certs-within-N-days check is
     done via the mongodb_status module on the mongodb side; for patroni the
     file readability is the gate)
+
+**"Create new cert" — sign+verify flow** (delegated to localhost, runs on
+each node using its own SAN, never touches the deployed certs):
+
+26. **Generate leaf key + CSR + sign with the controller-side CA** — exercises
+    the same `community.crypto` modules as the deploy role, on a fresh
+    subdir under `patroni_local_certs_dir/_smoke_new_cert/<hostname>/`. A
+    failure here means the local CA, its key, or the cert generation
+    pipeline is broken — the next deploy that needs a new leaf cert would
+    fail too. Catches: CA key corruption, expired CA, broken OpenSSL,
+    `community.crypto` collection missing/broken on the controller.
+27. **`openssl verify` against the deployed CA** — proves the freshly signed
+    cert chains back to the CA that patroni is actually using. A failure
+    here means there's a CA mismatch (e.g. someone regenerated the CA but
+    not the leaves, or there's an old CA file lingering in the artifacts
+    dir).
+28. **SAN includes this node's hostname + cluster VIP** — proves the SAN
+    generator in the role produces the right names for the current
+    inventory. Catches: inventory added a new node but the cert template
+    wasn't updated; VIP hostname/IP mismatch (would cause clients to fail
+    `verify-full`).
+29. **Cleanup**: scratch subdir removed at the end (`run_once: true` on
+    localhost).
 
 ### `mongodb-smoke.yml` — ~20 positive + negative-as-audit checks
 
@@ -194,7 +248,7 @@ Each smoke role is a **dispatcher** (`tasks/main.yml`) that includes
 1. **Write the collector task**. Use `register: _smoke_<component>` naming so
    the summary can read it. Place it in `roles/<role>/tasks/<component>.yml`.
 2. **Wire it in the dispatcher** (`roles/<role>/tasks/main.yml`) with the
-   `smoke_check_<component>` flag (defaulted in `defaults/main.yml`,
+   `<role_smoke>_check_<component>` flag (defaulted in `defaults/main.yml`,
    documented in `meta/argument_specs.yml`).
 3. **Add the failure clause** to the `_failures` accumulator in
    `tasks/summary.yml` so the aggregator picks it up.
