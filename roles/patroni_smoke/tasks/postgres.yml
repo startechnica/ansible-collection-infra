@@ -13,7 +13,7 @@
   register: _smoke_vip_wait
   failed_when: false
   run_once: true
-  when: smoke_check_postgres | bool
+  when: patroni_smoke_check_postgres | bool
 
 - name: "PG1. SELECT 1 through VIP"
   community.postgresql.postgresql_query:
@@ -29,7 +29,7 @@
   failed_when: false
   run_once: true
   when:
-    - smoke_check_postgres | bool
+    - patroni_smoke_check_postgres | bool
     - patroni_vip_address | default('') | length > 0
     - postgresql_admin_password | default('') | length > 0
 
@@ -47,7 +47,7 @@
   failed_when: false
   run_once: true
   when:
-    - smoke_check_postgres | bool
+    - patroni_smoke_check_postgres | bool
     - patroni_vip_address | default('') | length > 0
     - postgresql_admin_password | default('') | length > 0
 
@@ -65,7 +65,7 @@
   failed_when: false
   run_once: true
   when:
-    - smoke_check_postgres | bool
+    - patroni_smoke_check_postgres | bool
     - patroni_vip_address | default('') | length > 0
     - postgresql_admin_password | default('') | length > 0
 
@@ -79,24 +79,24 @@
     sslmode: "{{ postgresql_sslmode | default('verify-full') }}"
     ca_cert: "{{ postgresql_tls_ca_cert_path | default(omit, true) }}"
     query: >-
-      CREATE TABLE IF NOT EXISTS {{ smoke_table }} (id int PRIMARY KEY,
+      CREATE TABLE IF NOT EXISTS {{ patroni_smoke_table }} (id int PRIMARY KEY,
       written_at timestamp DEFAULT now());
-      INSERT INTO {{ smoke_table }} (id) VALUES (1)
+      INSERT INTO {{ patroni_smoke_table }} (id) VALUES (1)
       ON CONFLICT (id) DO UPDATE SET written_at = now();
   register: _smoke_write
   failed_when: false
   run_once: true
   when:
-    - smoke_check_postgres | bool
+    - patroni_smoke_check_postgres | bool
     - patroni_vip_address | default('') | length > 0
     - postgresql_admin_password | default('') | length > 0
 
 - name: "PG4b. Wait briefly for replication to a replica"
   ansible.builtin.pause:
-    seconds: "{{ smoke_replication_wait_seconds }}"
+    seconds: "{{ patroni_smoke_replication_wait_seconds }}"
   run_once: true
   when:
-    - smoke_check_postgres | bool
+    - patroni_smoke_check_postgres | bool
     - not (_smoke_write.failed | default(true))
 
 - name: "PG4c. Read smoke: row visible on each replica"
@@ -108,14 +108,14 @@
     login_db: postgres
     sslmode: "{{ postgresql_sslmode | default('verify-full') }}"
     ca_cert: "{{ postgresql_tls_ca_cert_path | default(omit, true) }}"
-    query: "SELECT count(*) AS n FROM {{ smoke_table }}"
+    query: "SELECT count(*) AS n FROM {{ patroni_smoke_table }}"
   register: _smoke_replica_read
   failed_when: false
   when:
-    - smoke_check_postgres | bool
+    - patroni_smoke_check_postgres | bool
     - _smoke_write is defined
     - not (_smoke_write.failed | default(true))
-    - smoke_table | length > 0
+    - patroni_smoke_table | length > 0
 
 - name: "PG4d. Cleanup: drop smoke table (always)"
   community.postgresql.postgresql_query:
@@ -126,8 +126,8 @@
     login_db: postgres
     sslmode: "{{ postgresql_sslmode | default('verify-full') }}"
     ca_cert: "{{ postgresql_tls_ca_cert_path | default(omit, true) }}"
-    query: "DROP TABLE IF EXISTS {{ smoke_table }}"
+    query: "DROP TABLE IF EXISTS {{ patroni_smoke_table }}"
   run_once: true
   failed_when: false
   ignore_errors: true
-  when: smoke_table | length > 0
+  when: patroni_smoke_table | length > 0

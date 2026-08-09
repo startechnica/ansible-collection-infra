@@ -8,11 +8,11 @@
   register: _smoke_mongo_ca_end
   changed_when: false
   failed_when: false
-  when: smoke_check_tls | bool
+  when: mongodb_smoke_check_tls | bool
 
 - name: "7b. healthcheck client cert readable"
   ansible.builtin.command: openssl x509 -in {{ mongodb_tls_dir }}/healthcheck.pem -noout -enddate
   register: _smoke_mongo_healthcheck_end
   changed_when: false
   failed_when: false
-  when: smoke_check_tls | bool
+  when: mongodb_smoke_check_tls | bool

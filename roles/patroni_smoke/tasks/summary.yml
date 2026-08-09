@@ -6,7 +6,7 @@
 #   * All assertions are evaluated even if some fail — the operator sees the
 #     full picture in one run, not fail-fast partial output.
 #   * Each `+ (...)` clause is one logical assert, gated on whether its
-#     collector ran (most are gated on the same smoke_check_* flag).
+#     collector ran (most are gated on the same patroni_smoke_check_* flag).
 #   * Negative-as-audit asserts are mixed with positive ones — both read
 #     live state without modifying anything.
 
@@ -49,7 +49,7 @@
       {{ _members
          | selectattr('Role', 'equalto', 'Replica')
          | selectattr('Lag', 'defined')
-         | selectattr('Lag', 'gt', smoke_max_replica_lag_ms) | list }}
+         | selectattr('Lag', 'gt', patroni_smoke_max_replica_lag_ms) | list }}
     _leader_member: >-
       {{ (_members
          | selectattr('Role', 'in', ['Leader', 'Standby Leader'])
@@ -87,13 +87,13 @@
              | selectattr('containers', 'defined')
              | rejectattr('containers', 'list_format')
              | map(attribute='item') | list | join(','))]
-         | select() | list if (_smoke_required_running | int) < (smoke_required_containers | length) else [])
+         | select() | list if (_smoke_required_running | int) < (patroni_smoke_required_containers | length) else [])
       + (['patronictl list failed on every member'] | select() | list if _n_members == 0 else [])
       + (['expected ' ~ _n_expected ~ ' members, got ' ~ _n_members] | select() | list if _n_members != _n_expected else [])
       + (['no Leader (or Standby Leader) elected'] | select() | list if _n_leaders != 1 else [])
       + (['split-brain: >1 Leader elected'] | select() | list if _n_leaders > 1 else [])
       + (['patroni REST /health failed'] | select() | list if (_smoke_patroni_rest.failed | default(true)) else [])
-      + (['replica(s) with lag > ' ~ smoke_max_replica_lag_ms ~ 'ms: '
+      + (['replica(s) with lag > ' ~ patroni_smoke_max_replica_lag_ms ~ 'ms: '
           ~ (_laggy_replicas | map(attribute='Member') | list | join(','))]
          | select() | list if (_laggy_replicas | length) > 0 else [])
       + (['VIP unreachable on postgresql_port'] | select() | list
@@ -132,7 +132,86 @@
          if ((pgbouncer_enabled | default(false) | bool)
              and not ((_smoke_pgbouncer.elapsed | default(999)) < 10)) else [])
       + (['patroni server cert missing or unreadable'] | select() | list
-         if (_smoke_patroni_cert_end.failed | default(true)) else [])
+         if (_patroni_smoke_patroni_cert_end.failed | default(true)) else [])
+      + (['create-new-cert: chain verify failed: ' ~ (_patroni_smoke_new_cert_verify.stderr | default(''))]
+         | select() | list
+         if (patroni_smoke_check_tls | bool)
+            and (_patroni_smoke_new_cert_verify is defined)
+            and (_patroni_smoke_new_cert_verify.rc | default(1)) != 0 else [])
+      + (['create-new-cert: SAN missing DNS:' ~ inventory_hostname]
+         | select() | list
+         if (patroni_smoke_check_tls | bool)
+            and (_patroni_smoke_new_cert_san is defined)
+            and (_patroni_smoke_new_cert_san.stdout | default('')) | length > 0
+            and not ((_patroni_smoke_new_cert_san.stdout | default(''))
+                 is search('DNS:' ~ inventory_hostname)) else [])
+      + (['users+dbs (A): query failed: ' ~ (_patroni_smoke_db_check.msg | default(_patroni_smoke_db_check.stderr | default('')))]
+         | select() | list
+         if (patroni_smoke_check_users_and_dbs | bool)
+            and (patroni_databases | default([]) | length) > 0
+            and (_patroni_smoke_db_check is defined)
+            and (_patroni_smoke_db_check.failed | default(true)) else [])
+      + (['users+dbs (A): DBs missing from pg_database: '
+          ~ ((_patroni_smoke_expected_dbs | default([]))
+             | difference(
+               (_patroni_smoke_db_check.query_result | default([]) | map(attribute='datname') | list)
+             ) | join(','))]
+         | select() | list
+         if (patroni_smoke_check_users_and_dbs | bool)
+            and (patroni_databases | default([]) | length) > 0
+            and (_patroni_smoke_db_check is defined)
+            and not (_patroni_smoke_db_check.failed | default(true))
+            and ((_patroni_smoke_db_check.query_result | default([]) | map(attribute='datname') | list)
+                 | difference(_patroni_smoke_expected_dbs | default([])) | length) > 0 else [])
+      + (['users+dbs (B): query failed: ' ~ (_patroni_smoke_user_check.msg | default(_patroni_smoke_user_check.stderr | default('')))]
+         | select() | list
+         if (patroni_smoke_check_users_and_dbs | bool)
+            and (_patroni_smoke_expected_users | default([]) | length) > 0
+            and (_patroni_smoke_user_check is defined)
+            and (_patroni_smoke_user_check.failed | default(true)) else [])
+      + (['users+dbs (B): users missing from pg_roles: '
+          ~ ((_patroni_smoke_expected_users | default([]))
+             | difference(
+               (_patroni_smoke_user_check.query_result | default([]) | map(attribute='rolname') | list)
+             ) | join(','))]
+         | select() | list
+         if (patroni_smoke_check_users_and_dbs | bool)
+            and (_patroni_smoke_expected_users | default([]) | length) > 0
+            and (_patroni_smoke_user_check is defined)
+            and not (_patroni_smoke_user_check.failed | default(true))
+            and ((_patroni_smoke_user_check.query_result | default([]) | map(attribute='rolname') | list)
+                 | difference(_patroni_smoke_expected_users | default([])) | length) > 0 else [])
+      + (['users+dbs (C): DB owners do not match inventory'
+          ~ ': ' ~ ((_patroni_smoke_owner_check.query_result | default([]))
+                    | selectattr('value.owner', 'defined')
+                    | rejectattr('value.owner', 'in', _patroni_smoke_expected_owners | default([]))
+                    | map(attribute='key') | list | join(','))]
+         | select() | list
+         if (patroni_smoke_check_users_and_dbs | bool)
+            and (_patroni_smoke_expected_dbs | default([]) | length) > 0
+            and (_patroni_smoke_owner_check is defined)
+            and ((_patroni_smoke_owner_check.query_result | default([]))
+                 | selectattr('value.owner', 'defined')
+                 | rejectattr('value.owner', 'in', _patroni_smoke_expected_owners | default([]))
+                 | list | length) > 0 else [])
+      + (['users+dbs (empty path): managed DBs exist on cluster but inventory says []: '
+          ~ ((_patroni_smoke_db_empty_check.query_result | default([]))
+             | map(attribute='datname') | list | join(','))]
+         | select() | list
+         if (patroni_smoke_check_users_and_dbs | bool)
+            and (patroni_databases | default([]) | length) == 0
+            and (_patroni_smoke_db_empty_check is defined)
+            and not (_patroni_smoke_db_empty_check.failed | default(true))
+            and ((_patroni_smoke_db_empty_check.query_result | default([]) | length) > 0) else [])
+      + (['users+dbs (empty path): managed LOGIN users exist on cluster but inventory says []: '
+          ~ ((_patroni_smoke_user_empty_check.query_result | default([]))
+             | map(attribute='rolname') | list | join(','))]
+         | select() | list
+         if (patroni_smoke_check_users_and_dbs | bool)
+            and (patroni_databases | default([]) | length) == 0
+            and (_patroni_smoke_user_empty_check is defined)
+            and not (_patroni_smoke_user_empty_check.failed | default(true))
+            and ((_patroni_smoke_user_empty_check.query_result | default([]) | length) > 0) else [])
       }}"
     _verdict: "{{ 'PASS' if (_failures | length == 0) else 'FAIL' }}"
   ansible.builtin.debug:
@@ -144,7 +223,7 @@
         Containers running:
         {{ _smoke_required_container_checks.results | selectattr('containers', 'defined')
           | selectattr('containers', 'list_format') | list | length }}
-        / {{ smoke_required_containers | length }} required
+        / {{ patroni_smoke_required_containers | length }} required
       - "Etcd: {{ _etcd_healthy_count }} healthy / {{ _etcd_members | length }} members"
       - "HAProxy: primary={{ _haproxy_prim_up }} replica={{ _haproxy_repl_up }}"
       - "VIP {{ patroni_vip_address | default('(none)') }}: held by {{ _smoke_n_vip_holders }} node(s)"

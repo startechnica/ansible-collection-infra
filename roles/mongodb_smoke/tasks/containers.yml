@@ -11,7 +11,7 @@
   loop:
     - mongodb-mongod
     - mongodb-mongos
-  when: smoke_check_containers | bool
+  when: mongodb_smoke_check_containers | bool
 
 - name: "1b. Containers on every node — configsvr (sharded only)"
   containers.podman.podman_container_info:
@@ -19,7 +19,7 @@
   register: _smoke_configsvr
   failed_when: false
   when:
-    - smoke_check_containers | bool
+    - mongodb_smoke_check_containers | bool
     - mongodb_cluster_type == 'sharded'
 
 - name: "1c. Containers on every node — exporter (when enabled)"
@@ -28,7 +28,7 @@
   register: _smoke_exporter
   failed_when: false
   when:
-    - smoke_check_containers | bool
+    - mongodb_smoke_check_containers | bool
     - mongodb_exporter_enabled | default(false) | bool
 
 - name: "1d. Containers on every node — PBM agents (when enabled)"
@@ -40,5 +40,5 @@
     - mongodb-pbm-shard
     - mongodb-pbm-config
   when:
-    - smoke_check_containers | bool
+    - mongodb_smoke_check_containers | bool
     - mongodb_pbm_enabled | default(false) | bool

@@ -14,5 +14,5 @@
   register: _smoke_vip_holders
   changed_when: false
   when:
-    - smoke_check_vip | bool
+    - patroni_smoke_check_vip | bool
     - patroni_vip_address | default('') | length > 0

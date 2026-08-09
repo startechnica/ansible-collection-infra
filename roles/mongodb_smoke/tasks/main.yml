@@ -5,51 +5,51 @@
 # a fixed order (collectors first, summary last). Adding a new component
 # (e.g. chaos.yml) follows the same 4-step pattern documented in the role.
 
-- name: "MongoDB smoke :: no-op (smoke_enabled=false)"
+- name: "MongoDB smoke :: no-op (mongodb_smoke_enabled=false)"
   ansible.builtin.debug:
-    msg: "mongodb_smoke skipped (smoke_enabled=false)"
-  when: not (smoke_enabled | bool)
+    msg: "mongodb_smoke skipped (mongodb_smoke_enabled=false)"
+  when: not (mongodb_smoke_enabled | bool)
 
 - name: "MongoDB smoke :: container health"
   ansible.builtin.include_tasks: containers.yml
-  when: smoke_enabled | bool
+  when: mongodb_smoke_enabled | bool
 
 - name: "MongoDB smoke :: cluster state (RS primaries + certs)"
   ansible.builtin.include_tasks: cluster_state.yml
   when:
-    - smoke_enabled | bool
-    - smoke_check_cluster_state | bool
+    - mongodb_smoke_enabled | bool
+    - mongodb_smoke_check_cluster_state | bool
 
 - name: "MongoDB smoke :: mongos (port + ping)"
   ansible.builtin.include_tasks: mongos.yml
   when:
-    - smoke_enabled | bool
-    - smoke_check_mongos | bool
+    - mongodb_smoke_enabled | bool
+    - mongodb_smoke_check_mongos | bool
 
 - name: "MongoDB smoke :: end-to-end (write + read through mongos)"
   ansible.builtin.include_tasks: endtoend.yml
   when:
-    - smoke_enabled | bool
-    - smoke_check_endtoend | bool
+    - mongodb_smoke_enabled | bool
+    - mongodb_smoke_check_endtoend | bool
 
 - name: "MongoDB smoke :: PBM (status + base backup)"
   ansible.builtin.include_tasks: pbm.yml
   when:
-    - smoke_enabled | bool
-    - smoke_check_pbm | bool
+    - mongodb_smoke_enabled | bool
+    - mongodb_smoke_check_pbm | bool
 
 - name: "MongoDB smoke :: scheduled mongodump timer"
   ansible.builtin.include_tasks: mongodump_timer.yml
   when:
-    - smoke_enabled | bool
-    - smoke_check_mongodump_timer | bool
+    - mongodb_smoke_enabled | bool
+    - mongodb_smoke_check_mongodump_timer | bool
 
 - name: "MongoDB smoke :: tls (cert readability)"
   ansible.builtin.include_tasks: tls.yml
   when:
-    - smoke_enabled | bool
-    - smoke_check_tls | bool
+    - mongodb_smoke_enabled | bool
+    - mongodb_smoke_check_tls | bool
 
 - name: "MongoDB smoke :: summary (PASS/FAIL aggregator)"
   ansible.builtin.include_tasks: summary.yml
-  when: smoke_enabled | bool
+  when: mongodb_smoke_enabled | bool

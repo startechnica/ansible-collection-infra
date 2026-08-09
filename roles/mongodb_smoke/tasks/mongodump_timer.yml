@@ -9,7 +9,7 @@
   changed_when: false
   failed_when: false
   when:
-    - smoke_check_mongodump_timer | bool
+    - mongodb_smoke_check_mongodump_timer | bool
     - mongodb_backup_enabled | default(false) | bool
 
 - name: "6b. /var/log/mongodb-backup.log exists"
@@ -17,5 +17,5 @@
     path: /var/log/mongodb-backup.log
   register: _smoke_mongodump_log
   when:
-    - smoke_check_mongodump_timer | bool
+    - mongodb_smoke_check_mongodump_timer | bool
     - mongodb_backup_enabled | default(false) | bool

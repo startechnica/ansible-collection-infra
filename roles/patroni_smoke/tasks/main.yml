@@ -3,78 +3,92 @@
 #
 # Each component lives in its own file under tasks/, included here in a
 # fixed order (collectors first, summary last). Per-component `when:` flags
-# (smoke_check_*) are re-evaluated inside each file so operators can skip
+# (patroni_smoke_check_*) are re-evaluated inside each file so operators can skip
 # individual asserts from the inventory without touching the role.
 #
 # Adding a new component (e.g. chaos.yml for chaos-day, planned separately):
 #   1. Write tasks/<component>.yml using the same _smoke_* register naming.
-#   2. include_tasks: it here with `when: smoke_check_<component> | bool`.
+#   2. include_tasks: it here with `when: patroni_smoke_check_<component> | bool`.
 #   3. Append matching failure clauses in tasks/summary.yml.
-#   4. Add smoke_check_<component> to defaults + argument_specs.
+#   4. Add patroni_smoke_check_<component> to defaults + argument_specs.
 
-- name: "Patroni smoke :: no-op (smoke_enabled=false)"
+- name: "Patroni smoke :: no-op (patroni_smoke_enabled=false)"
   ansible.builtin.debug:
-    msg: "patroni_smoke skipped (smoke_enabled=false)"
-  when: not (smoke_enabled | bool)
+    msg: "patroni_smoke skipped (patroni_smoke_enabled=false)"
+  when: not (patroni_smoke_enabled | bool)
 
 - name: "Patroni smoke :: container health"
   ansible.builtin.include_tasks: containers.yml
-  when: smoke_enabled | bool
+  when: patroni_smoke_enabled | bool
 
 - name: "Patroni smoke :: etcd"
   ansible.builtin.include_tasks: etcd.yml
   when:
-    - smoke_enabled | bool
-    - smoke_check_etcd | bool
+    - patroni_smoke_enabled | bool
+    - patroni_smoke_check_etcd | bool
 
 - name: "Patroni smoke :: patroni REST + member list"
   ansible.builtin.include_tasks: patroni.yml
   when:
-    - smoke_enabled | bool
-    - smoke_check_patroni | bool
+    - patroni_smoke_enabled | bool
+    - patroni_smoke_check_patroni | bool
 
 - name: "Patroni smoke :: postgres (VIP + select + write+replicate)"
   ansible.builtin.include_tasks: postgres.yml
   when:
-    - smoke_enabled | bool
-    - smoke_check_postgres | bool
+    - patroni_smoke_enabled | bool
+    - patroni_smoke_check_postgres | bool
+
+- name: "Patroni smoke :: users + DBs (A/B/C: DBs exist, users LOGIN, owners match)"
+  ansible.builtin.include_tasks: users_and_dbs.yml
+  when:
+    - patroni_smoke_enabled | bool
+    - patroni_smoke_check_users_and_dbs | bool
+    - patroni_databases | length > 0
+
+- name: "Patroni smoke :: users + DBs (empty-path audit: cluster has no managed DBs/users)"
+  ansible.builtin.include_tasks: users_and_dbs_empty.yml
+  when:
+    - patroni_smoke_enabled | bool
+    - patroni_smoke_check_users_and_dbs | bool
+    - patroni_databases | length == 0
 
 - name: "Patroni smoke :: haproxy"
   ansible.builtin.include_tasks: haproxy.yml
   when:
-    - smoke_enabled | bool
-    - smoke_check_haproxy | bool
+    - patroni_smoke_enabled | bool
+    - patroni_smoke_check_haproxy | bool
 
 - name: "Patroni smoke :: pgbouncer"
   ansible.builtin.include_tasks: pgbouncer.yml
   when:
-    - smoke_enabled | bool
-    - smoke_check_pgbouncer | bool
+    - patroni_smoke_enabled | bool
+    - patroni_smoke_check_pgbouncer | bool
 
 - name: "Patroni smoke :: vip-manager/keepalived (split-brain guard)"
   ansible.builtin.include_tasks: vip.yml
   when:
-    - smoke_enabled | bool
-    - smoke_check_vip | bool
+    - patroni_smoke_enabled | bool
+    - patroni_smoke_check_vip | bool
 
 - name: "Patroni smoke :: walg"
   ansible.builtin.include_tasks: walg.yml
   when:
-    - smoke_enabled | bool
-    - smoke_check_walg | bool
+    - patroni_smoke_enabled | bool
+    - patroni_smoke_check_walg | bool
 
 - name: "Patroni smoke :: postgres_exporter"
   ansible.builtin.include_tasks: exporter.yml
   when:
-    - smoke_enabled | bool
-    - smoke_check_exporter | bool
+    - patroni_smoke_enabled | bool
+    - patroni_smoke_check_exporter | bool
 
 - name: "Patroni smoke :: tls"
   ansible.builtin.include_tasks: tls.yml
   when:
-    - smoke_enabled | bool
-    - smoke_check_tls | bool
+    - patroni_smoke_enabled | bool
+    - patroni_smoke_check_tls | bool
 
 - name: "Patroni smoke :: summary (PASS/FAIL aggregator)"
   ansible.builtin.include_tasks: summary.yml
-  when: smoke_enabled | bool
+  when: patroni_smoke_enabled | bool

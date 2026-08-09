@@ -10,5 +10,5 @@
   register: _smoke_pgexporter
   failed_when: false
   when:
-    - smoke_check_exporter | bool
+    - patroni_smoke_check_exporter | bool
     - postgres_exporter_enabled | default(false) | bool

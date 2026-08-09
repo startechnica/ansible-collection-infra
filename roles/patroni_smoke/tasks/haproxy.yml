@@ -11,7 +11,7 @@
     state: started
   register: _smoke_haproxy_stats
   failed_when: false
-  when: smoke_check_haproxy | bool
+  when: patroni_smoke_check_haproxy | bool
 
 - name: "H2. HAProxy stats CSV (backends UP)"
   ansible.builtin.uri:
@@ -19,4 +19,4 @@
     status_code: 200
   register: _smoke_haproxy_csv
   failed_when: false
-  when: smoke_check_haproxy | bool
+  when: patroni_smoke_check_haproxy | bool

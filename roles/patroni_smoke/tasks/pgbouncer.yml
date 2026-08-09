@@ -13,5 +13,5 @@
   register: _smoke_pgbouncer
   failed_when: false
   when:
-    - smoke_check_pgbouncer | bool
+    - patroni_smoke_check_pgbouncer | bool
     - pgbouncer_enabled | default(false) | bool

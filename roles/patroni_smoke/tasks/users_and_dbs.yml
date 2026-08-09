@@ -1,0 +1,92 @@
+---
+# Users + Databases + Owner checks.
+#
+# Reads the live patroni_databases inventory structure and asserts:
+#   A. Each DB in patroni_databases[].name actually exists in pg_database.
+#   B. Each user in patroni_databases[].users[].name actually exists in pg_roles
+#      with rolcanlogin=true (otherwise clients get "role does not exist" on connect).
+#   C. Each DB's owner matches patroni_databases[].owner (catches silent owner
+#      reassignment — someone GRANT'd the DB to a different role).
+#
+# One query per check, single round trip per role call. All read-only.
+# Skips cleanly when patroni_databases is empty (no inventory DBs defined)
+# or when patroni_smoke_check_users_and_dbs is false.
+#
+# SQL parameter binding (the ANY(ARRAY[...]) form) needs each name wrapped
+# in single quotes. We use Jinja loops to build the array literal so single
+# quotes inside values are escaped and names with special chars still work.
+
+- name: "Users+DBs :: collect expected names + owner map from inventory"
+  ansible.builtin.set_fact:
+    _patroni_smoke_expected_dbs: "{{ patroni_databases | map(attribute='name') | list }}"
+    _patroni_smoke_expected_users: "{{ patroni_databases | subelements('users', skip_missing=True)
+                                     | map(attribute='1.name') | list | unique }}"
+    _patroni_smoke_expected_owners: "{{ patroni_databases | map(attribute='owner')
+                                       | select('defined') | select('truthy') | list | unique }}"
+
+- name: "Users+DBs (A) :: check each DB exists in pg_database"
+  community.postgresql.postgresql_query:
+    login_host: "{{ patroni_vip_address | default('') }}"
+    login_port: "{{ postgresql_port | default(5432) }}"
+    login_user: "{{ postgresql_admin_user | default('postgres') }}"
+    login_password: "{{ postgresql_admin_password | default('') }}"
+    login_db: postgres
+    sslmode: "{{ postgresql_sslmode | default('verify-full') }}"
+    ca_cert: "{{ postgresql_tls_ca_cert_path | default(omit, true) }}"
+    query: >-
+      SELECT datname FROM pg_database
+      WHERE datname = ANY(ARRAY[
+        {%- for n in _patroni_smoke_expected_dbs %}'{{ n | string | replace("'", "''") }}'{% if not loop.last %},{% endif -%}
+        {%- endfor %}])
+  register: _patroni_smoke_db_check
+  failed_when: false
+  run_once: true
+  when:
+    - patroni_smoke_check_users_and_dbs | bool
+    - patroni_databases | length > 0
+    - postgresql_admin_password | default('') | length > 0
+
+- name: "Users+DBs (B) :: check each user exists in pg_roles (rolcanlogin=true)"
+  community.postgresql.postgresql_query:
+    login_host: "{{ patroni_vip_address | default('') }}"
+    login_port: "{{ postgresql_port | default(5432) }}"
+    login_user: "{{ postgresql_admin_user | default('postgres') }}"
+    login_password: "{{ postgresql_admin_password | default('') }}"
+    login_db: postgres
+    sslmode: "{{ postgresql_sslmode | default('verify-full') }}"
+    ca_cert: "{{ postgresql_tls_ca_cert_path | default(omit, true) }}"
+    query: >-
+      SELECT rolname FROM pg_roles
+      WHERE rolcanlogin = true AND rolname = ANY(ARRAY[
+        {%- for n in _patroni_smoke_expected_users %}'{{ n | string | replace("'", "''") }}'{% if not loop.last %},{% endif -%}
+        {%- endfor %}])
+  register: _patroni_smoke_user_check
+  failed_when: false
+  run_once: true
+  when:
+    - patroni_smoke_check_users_and_dbs | bool
+    - _patroni_smoke_expected_users | length > 0
+    - postgresql_admin_password | default('') | length > 0
+
+- name: "Users+DBs (C) :: check each DB's owner matches patroni_databases[].owner"
+  community.postgresql.postgresql_query:
+    login_host: "{{ patroni_vip_address | default('') }}"
+    login_port: "{{ postgresql_port | default(5432) }}"
+    login_user: "{{ postgresql_admin_user | default('postgres') }}"
+    login_password: "{{ postgresql_admin_password | default('') }}"
+    login_db: postgres
+    sslmode: "{{ postgresql_sslmode | default('verify-full') }}"
+    ca_cert: "{{ postgresql_tls_ca_cert_path | default(omit, true) }}"
+    query: >-
+      SELECT datname, pg_catalog.pg_get_userbyid(datdba) AS owner
+      FROM pg_database
+      WHERE datname = ANY(ARRAY[
+        {%- for n in _patroni_smoke_expected_dbs %}'{{ n | string | replace("'", "''") }}'{% if not loop.last %},{% endif -%}
+        {%- endfor %}])
+  register: _patroni_smoke_owner_check
+  failed_when: false
+  run_once: true
+  when:
+    - patroni_smoke_check_users_and_dbs | bool
+    - _patroni_smoke_expected_dbs | length > 0
+    - postgresql_admin_password | default('') | length > 0

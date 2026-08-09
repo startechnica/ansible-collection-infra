@@ -21,7 +21,7 @@
 
     _certs_short: >-
       {{ _smoke_status_certs | dict2items
-         | selectattr('value.days_remaining', 'lt', smoke_cert_min_days)
+         | selectattr('value.days_remaining', 'lt', mongodb_smoke_cert_min_days)
          | list }}
 
     _container_running: >-
@@ -95,7 +95,7 @@
       + (['mongodb-backup.timer not active'] | select() | list
          if ((mongodb_backup_enabled | default(false) | bool)
              and (_smoke_mongodump_timer.status | default('') | lower) != 'active') else [])
-      + (['cert expires within ' ~ smoke_cert_min_days ~ 'd: '
+      + (['cert expires within ' ~ mongodb_smoke_cert_min_days ~ 'd: '
           ~ (_certs_short | map(attribute='key') | list | join(','))]
          | select() | list if (_certs_short | length) > 0 else [])
       }}"

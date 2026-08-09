@@ -8,17 +8,17 @@
     name: "{{ item }}"
   register: _smoke_required_container_checks
   failed_when: false
-  loop: "{{ smoke_required_containers }}"
-  when: smoke_check_containers | bool
+  loop: "{{ patroni_smoke_required_containers }}"
+  when: patroni_smoke_check_containers | bool
 
 - name: "P1b. Containers up on every node (optional, when enabled)"
   containers.podman.podman_container_info:
     name: "{{ item }}"
   register: _smoke_optional_container_checks
   failed_when: false
-  loop: "{{ smoke_optional_containers }}"
+  loop: "{{ patroni_smoke_optional_containers }}"
   when:
-    - smoke_check_containers | bool
+    - patroni_smoke_check_containers | bool
     - item in ['pgbouncer'] and pgbouncer_enabled | default(false) | bool
     - item in ['postgres-exporter'] and postgres_exporter_enabled | default(false) | bool
     - item in ['walg-init'] and walg_enabled | default(false) | bool
