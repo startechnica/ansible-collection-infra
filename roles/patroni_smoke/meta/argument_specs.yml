@@ -25,6 +25,12 @@ argument_specs:
         type: int
         default: 30
         description: Minimum days remaining for any cert to count as healthy.
+      patroni_smoke_table:
+        type: str
+        description: |
+          Unique table name for the write+replicate probe, timestamped so
+          re-runs never collide. Created on the leader and dropped in the
+          always block. Defaults to startechnica_smoke_<UTC-timestamp>.
       patroni_smoke_required_containers:
         type: list
         elements: str

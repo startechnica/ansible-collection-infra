@@ -47,4 +47,9 @@ patroni_smoke_check_vip: true
 patroni_smoke_check_walg: true
 patroni_smoke_check_exporter: true
 patroni_smoke_check_tls: true
-smoke_check_users_and_dbs: true
+patroni_smoke_check_users_and_dbs: true
+
+# Unique smoke table name for the write+replicate probe. Timestamped so
+# re-runs never collide; dropped in tasks/postgres.yml's always block.
+# Mirrors the mongodb_smoke_collection convention.
+patroni_smoke_table: "startechnica_smoke_{{ ansible_facts['date_time'].iso8601 | default(lookup('pipe', 'date -u +%FT%TZ')) | regex_replace('[^0-9]', '') }}"
