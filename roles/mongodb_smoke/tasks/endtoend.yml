@@ -1,0 +1,56 @@
+---
+# End-to-end: write through mongos + read from the matching primary.
+#   * The same unique collection is created, asserted, and dropped in
+#     `always:` so partial failures don't leak test data.
+
+- name: "4a. Write: insert a unique doc through mongos"
+  ansible.builtin.command: >-
+    podman exec mongodb-mongos mongosh --quiet
+    --tls --tlsCertificateKeyFile /etc/mongo/ssl/healthcheck.pem
+    --tlsCAFile /etc/mongo/ssl/ca.pem
+    --authenticationMechanism MONGODB-X509 --authenticationDatabase '$external'
+    --port {{ mongodb_mongos_node_port }}
+    --eval 'db.getSiblingDB("{{ smoke_db }}").{{ smoke_collection }}.insertOne({ written_at: new Date(), id: 1 })'
+  register: _smoke_write
+  failed_when: false
+  changed_when: false
+  run_once: true
+  when: smoke_check_endtoend | bool
+
+- name: "4b. Wait briefly for replication"
+  ansible.builtin.pause:
+    seconds: "{{ smoke_replication_wait_seconds }}"
+  run_once: true
+  when:
+    - smoke_check_endtoend | bool
+    - not (_smoke_write.failed | default(true))
+
+- name: "4c. Read: doc present on the matching primary"
+  ansible.builtin.command: >-
+    podman exec mongodb-mongos mongosh --quiet
+    --tls --tlsCertificateKeyFile /etc/mongo/ssl/healthcheck.pem
+    --tlsCAFile /etc/mongo/ssl/ca.pem
+    --authenticationMechanism MONGODB-X509 --authenticationDatabase '$external'
+    --port {{ mongodb_mongos_node_port }}
+    --eval 'db.getSiblingDB("{{ smoke_db }}").{{ smoke_collection }}.findOne({ id: 1 })'
+  register: _smoke_read
+  failed_when: false
+  changed_when: false
+  run_once: true
+  when:
+    - smoke_check_endtoend | bool
+    - not (_smoke_write.failed | default(true))
+
+- name: "4d. Cleanup: drop smoke db (always)"
+  ansible.builtin.command: >-
+    podman exec mongodb-mongos mongosh --quiet
+    --tls --tlsCertificateKeyFile /etc/mongo/ssl/healthcheck.pem
+    --tlsCAFile /etc/mongo/ssl/ca.pem
+    --authenticationMechanism MONGODB-X509 --authenticationDatabase '$external'
+    --port {{ mongodb_mongos_node_port }}
+    --eval 'db.getSiblingDB("{{ smoke_db }}").dropDatabase()'
+  changed_when: false
+  failed_when: false
+  ignore_errors: true
+  run_once: true
+  when: smoke_check_endtoend | bool

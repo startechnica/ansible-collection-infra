@@ -1,0 +1,21 @@
+---
+# Scheduled mongodump backup timer.
+#   * mongodb-backup.timer is active (when mongodb_backup_enabled)
+
+- name: "6a. mongodb-backup.timer active"
+  ansible.builtin.systemd:
+    name: mongodb-backup.timer
+  register: _smoke_mongodump_timer
+  changed_when: false
+  failed_when: false
+  when:
+    - smoke_check_mongodump_timer | bool
+    - mongodb_backup_enabled | default(false) | bool
+
+- name: "6b. /var/log/mongodb-backup.log exists"
+  ansible.builtin.stat:
+    path: /var/log/mongodb-backup.log
+  register: _smoke_mongodump_log
+  when:
+    - smoke_check_mongodump_timer | bool
+    - mongodb_backup_enabled | default(false) | bool

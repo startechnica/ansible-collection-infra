@@ -1,0 +1,49 @@
+---
+# Defaults consumed by patroni_smoke (passed via the play that targets
+# patroni_nodes). The role itself reads from these names; consumers
+# can override them at the play, group_vars, or inventory level.
+
+# Per-component knobs. Names are public — they're documented in
+# meta/argument_specs.yml and surfaced to operators.
+
+# Replica lag threshold (milliseconds). A replica with lag above this
+# contributes to the failure list.
+smoke_max_replica_lag_ms: 5000
+
+# Time to wait after the leader write before reading from replicas.
+smoke_replication_wait_seconds: 10
+
+# Certs must have at least this many days remaining on the smoke summary.
+smoke_cert_min_days: 30
+
+# Containers that must be running on every patroni_node for the smoke test
+# to pass. pgbouncer/postgres-exporter/walg-init are gated on their own
+# enabled flags — see tasks/containers.yml.
+smoke_required_containers:
+  - etcd
+  - patroni
+  - haproxy
+  - vip-manager
+  - keepalived
+
+smoke_optional_containers:
+  - pgbouncer
+  - postgres-exporter
+  - walg-init
+
+# Master switch. When false, the role is a no-op (used in CI gates).
+smoke_enabled: true
+
+# Skip individual components (rare — useful for ad-hoc noise reduction).
+# Setting any of these to false removes that component's checks from
+# both collection and summary.
+smoke_check_containers: true
+smoke_check_etcd: true
+smoke_check_patroni: true
+smoke_check_postgres: true
+smoke_check_haproxy: true
+smoke_check_pgbouncer: true
+smoke_check_vip: true
+smoke_check_walg: true
+smoke_check_exporter: true
+smoke_check_tls: true

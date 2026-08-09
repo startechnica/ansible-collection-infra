@@ -1,0 +1,24 @@
+---
+# Per-node container health for the patroni stack.
+# Required: etcd, patroni, haproxy, vip-manager, keepalived.
+# Optional (gated on enabled flags): pgbouncer, postgres-exporter, walg-init.
+
+- name: "P1. Containers up on every node (required)"
+  containers.podman.podman_container_info:
+    name: "{{ item }}"
+  register: _smoke_required_container_checks
+  failed_when: false
+  loop: "{{ smoke_required_containers }}"
+  when: smoke_check_containers | bool
+
+- name: "P1b. Containers up on every node (optional, when enabled)"
+  containers.podman.podman_container_info:
+    name: "{{ item }}"
+  register: _smoke_optional_container_checks
+  failed_when: false
+  loop: "{{ smoke_optional_containers }}"
+  when:
+    - smoke_check_containers | bool
+    - item in ['pgbouncer'] and pgbouncer_enabled | default(false) | bool
+    - item in ['postgres-exporter'] and postgres_exporter_enabled | default(false) | bool
+    - item in ['walg-init'] and walg_enabled | default(false) | bool

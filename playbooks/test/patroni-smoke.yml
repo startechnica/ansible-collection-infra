@@ -1,0 +1,12 @@
+---
+# Thin wrapper around the startechnica.infra.patroni_smoke role.
+# All checks live in roles/patroni_smoke/tasks/*.yml. This file is the
+# canonical entry point — scripts/smoke.sh dispatches to it.
+
+- name: "Patroni smoke test"
+  hosts: patroni_nodes
+  gather_facts: true
+  become: true
+
+  roles:
+    - role: startechnica.infra.patroni_smoke

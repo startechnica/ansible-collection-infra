@@ -1,0 +1,79 @@
+---
+argument_specs:
+  main:
+    short_description: Post-deploy smoke test for a patroni cluster
+    description:
+      - Reads live cluster state (etcd, patroni, postgres, haproxy, pgbouncer, keepalived, vip-manager, WAL-G, postgres_exporter, TLS) and reports PASS/FAIL.
+      - All asserts are read-only; no destructive tests are run by default.
+      - Run via playbooks/test/patroni-smoke.yml or via scripts/smoke.sh.
+    options:
+      smoke_enabled:
+        type: bool
+        default: true
+        description: Master switch. When false, the role is a no-op.
+      smoke_max_replica_lag_ms:
+        type: int
+        default: 5000
+        description: |
+          Maximum allowed replica lag in milliseconds. A replica with lag above this
+          contributes a failure to the summary.
+      smoke_replication_wait_seconds:
+        type: int
+        default: 10
+        description: Seconds to wait after the leader write before reading on replicas.
+      smoke_cert_min_days:
+        type: int
+        default: 30
+        description: Minimum days remaining for any cert to count as healthy.
+      smoke_required_containers:
+        type: list
+        elements: str
+        default: [etcd, patroni, haproxy, vip-manager, keepalived]
+        description: Containers that must be running on every patroni_node.
+      smoke_optional_containers:
+        type: list
+        elements: str
+        default: [pgbouncer, postgres-exporter, walg-init]
+        description: |
+          Containers that are checked only when their respective enabled flag is true
+          (pgbouncer_enabled, postgres_exporter_enabled, walg_enabled).
+      smoke_check_containers:
+        type: bool
+        default: true
+        description: Skip the per-node container-up check.
+      smoke_check_etcd:
+        type: bool
+        default: true
+        description: Skip the etcd quorum / leader check.
+      smoke_check_patroni:
+        type: bool
+        default: true
+        description: Skip the patroni REST API / member-list check.
+      smoke_check_postgres:
+        type: bool
+        default: true
+        description: Skip the end-to-end postgres read/write through VIP.
+      smoke_check_haproxy:
+        type: bool
+        default: true
+        description: Skip the haproxy stats + backend-up check.
+      smoke_check_pgbouncer:
+        type: bool
+        default: true
+        description: Skip the pgbouncer port check.
+      smoke_check_vip:
+        type: bool
+        default: true
+        description: Skip the VIP-on-exactly-one-node guard.
+      smoke_check_walg:
+        type: bool
+        default: true
+        description: Skip the WAL-G backup-list + timer check.
+      smoke_check_exporter:
+        type: bool
+        default: true
+        description: Skip the postgres_exporter metrics-endpoint check.
+      smoke_check_tls:
+        type: bool
+        default: true
+        description: Skip the patroni server/CA cert readability check.

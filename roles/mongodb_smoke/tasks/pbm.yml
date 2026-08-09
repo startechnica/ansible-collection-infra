@@ -1,0 +1,31 @@
+---
+# PBM — cluster-consistent backups + PITR.
+#   * pbm status — agents healthy
+#   * pbm list --out json — at least one base backup exists (when init_backup is enabled)
+
+- name: "5a. PBM status (per node)"
+  ansible.builtin.command: >-
+    podman exec
+    -e PBM_MONGODB_URI=
+    {{ 'mongodb-pbm-config' if mongodb_cluster_type == 'sharded' else 'mongodb-pbm' }}
+    pbm status
+  register: _smoke_pbm_status
+  failed_when: false
+  changed_when: false
+  when:
+    - smoke_check_pbm | bool
+    - mongodb_pbm_enabled | default(false) | bool
+
+- name: "5b. PBM backup list (any base backups exist)"
+  ansible.builtin.command: >-
+    podman exec
+    -e PBM_MONGODB_URI=
+    {{ 'mongodb-pbm-config' if mongodb_cluster_type == 'sharded' else 'mongodb-pbm' }}
+    pbm list --out json
+  register: _smoke_pbm_list
+  failed_when: false
+  changed_when: false
+  run_once: true
+  when:
+    - smoke_check_pbm | bool
+    - mongodb_pbm_enabled | default(false) | bool

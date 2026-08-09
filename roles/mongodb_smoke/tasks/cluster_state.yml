@@ -1,0 +1,27 @@
+---
+# Cluster state — replica sets + containers + certs (mongodb_status module).
+#   * RS primaries present (each RS has exactly 1 PRIMARY)
+#   * No RS with 0 members
+#   * RS names match the expected set (no inventory misconfig)
+#   * Cert expiry > threshold
+
+- name: "2. MongoDB cluster status (RS state + certs)"
+  mongodb_status:
+    containers: >-
+      {{ ['mongodb-mongod', 'mongodb-mongos']
+         + (['mongodb-configsvr'] if mongodb_cluster_type == 'sharded' else [])
+         + (['mongodb-exporter'] if mongodb_exporter_enabled | bool else []) }}
+    replica_sets:
+      - name: "{{ mongodb_shard_replset }}"
+        port: "{{ mongodb_mongod_exec_port }}"
+        type: shard
+      - name: "{{ mongodb_config_replset }}"
+        port: "{{ mongodb_configsvr_exec_port }}"
+        type: configsvr
+    tls_certfile: /etc/mongo/ssl/healthcheck.pem
+    tls_cafile: /etc/mongo/ssl/ca.pem
+    mongodb_tls_dir: "{{ mongodb_tls_dir }}"
+  register: _smoke_status
+  failed_when: false
+  run_once: true
+  when: smoke_check_cluster_state | bool

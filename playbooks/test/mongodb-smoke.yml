@@ -1,0 +1,10 @@
+---
+# Thin wrapper around the startechnica.infra.mongodb_smoke role.
+
+- name: "MongoDB smoke test"
+  hosts: mongodb_nodes
+  gather_facts: true
+  become: true
+
+  roles:
+    - role: startechnica.infra.mongodb_smoke

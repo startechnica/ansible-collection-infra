@@ -1,0 +1,44 @@
+---
+# Per-node container health for the mongodb stack.
+#   * Core: mongod + mongos on every node
+#   * Optional: configsvr (sharded only), exporter (when enabled), PBM agents (when enabled)
+
+- name: "1a. Containers on every node — core (mongod, mongos)"
+  containers.podman.podman_container_info:
+    name: "{{ item }}"
+  register: _smoke_core_containers
+  failed_when: false
+  loop:
+    - mongodb-mongod
+    - mongodb-mongos
+  when: smoke_check_containers | bool
+
+- name: "1b. Containers on every node — configsvr (sharded only)"
+  containers.podman.podman_container_info:
+    name: mongodb-configsvr
+  register: _smoke_configsvr
+  failed_when: false
+  when:
+    - smoke_check_containers | bool
+    - mongodb_cluster_type == 'sharded'
+
+- name: "1c. Containers on every node — exporter (when enabled)"
+  containers.podman.podman_container_info:
+    name: mongodb-exporter
+  register: _smoke_exporter
+  failed_when: false
+  when:
+    - smoke_check_containers | bool
+    - mongodb_exporter_enabled | default(false) | bool
+
+- name: "1d. Containers on every node — PBM agents (when enabled)"
+  containers.podman.podman_container_info:
+    name: "{{ item }}"
+  register: _smoke_pbm_containers
+  failed_when: false
+  loop:
+    - mongodb-pbm-shard
+    - mongodb-pbm-config
+  when:
+    - smoke_check_containers | bool
+    - mongodb_pbm_enabled | default(false) | bool

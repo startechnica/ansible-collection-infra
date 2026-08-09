@@ -1,0 +1,27 @@
+---
+# Defaults consumed by mongodb_smoke (passed via the play that targets
+# mongodb_nodes).
+
+# Replication wait before reading the smoke doc.
+smoke_replication_wait_seconds: 5
+
+# Unique smoke collection name + DB. Defaulted here so the playbook
+# wrapper doesn't need to compute them per-invocation.
+smoke_db: "startechnica_smoke"
+smoke_collection: "startechnica_smoke_{{ ansible_facts['date_time'].iso8601 | default(lookup('pipe', 'date -u +%FT%TZ')) | regex_replace('[^0-9]', '') }}"
+
+# Cert expiry threshold (days remaining).
+smoke_cert_min_days: 30
+
+# Master switch.
+smoke_enabled: true
+
+# Per-component toggles (mirror the patroni_smoke shape). Setting any to
+# false removes that component's checks from both collection and summary.
+smoke_check_containers: true
+smoke_check_cluster_state: true
+smoke_check_mongos: true
+smoke_check_endtoend: true
+smoke_check_pbm: true
+smoke_check_mongodump_timer: true
+smoke_check_tls: true

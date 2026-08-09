@@ -1,0 +1,133 @@
+---
+# Postgres — end-to-end through the VIP.
+#   * VIP1: VIP reachable on postgresql_port (TCP)
+#   * PG1-3: SELECT 1, pg_is_in_recovery(), pg_hba replication rules
+#   * PG4a-d: write+replicate+cleanup (smoke table, dropped in always)
+
+- name: "VIP1. VIP reachable on postgresql_port"
+  ansible.builtin.wait_for:
+    host: "{{ patroni_vip_address | default('') }}"
+    port: "{{ postgresql_port | default(5432) }}"
+    timeout: 30
+    state: started
+  register: _smoke_vip_wait
+  failed_when: false
+  run_once: true
+  when: smoke_check_postgres | bool
+
+- name: "PG1. SELECT 1 through VIP"
+  community.postgresql.postgresql_query:
+    login_host: "{{ patroni_vip_address | default('') }}"
+    login_port: "{{ postgresql_port | default(5432) }}"
+    login_user: "{{ postgresql_admin_user | default('postgres') }}"
+    login_password: "{{ postgresql_admin_password | default('') }}"
+    login_db: postgres
+    sslmode: "{{ postgresql_sslmode | default('verify-full') }}"
+    ca_cert: "{{ postgresql_tls_ca_cert_path | default(omit, true) }}"
+    query: "SELECT 1 AS smoke_ok"
+  register: _smoke_select
+  failed_when: false
+  run_once: true
+  when:
+    - smoke_check_postgres | bool
+    - patroni_vip_address | default('') | length > 0
+    - postgresql_admin_password | default('') | length > 0
+
+- name: "PG2. pg_is_in_recovery() = f on the leader"
+  community.postgresql.postgresql_query:
+    login_host: "{{ patroni_vip_address | default('') }}"
+    login_port: "{{ postgresql_port | default(5432) }}"
+    login_user: "{{ postgresql_admin_user | default('postgres') }}"
+    login_password: "{{ postgresql_admin_password | default('') }}"
+    login_db: postgres
+    sslmode: "{{ postgresql_sslmode | default('verify-full') }}"
+    ca_cert: "{{ postgresql_tls_ca_cert_path | default(omit, true) }}"
+    query: "SELECT pg_is_in_recovery() AS in_recovery"
+  register: _smoke_in_recovery
+  failed_when: false
+  run_once: true
+  when:
+    - smoke_check_postgres | bool
+    - patroni_vip_address | default('') | length > 0
+    - postgresql_admin_password | default('') | length > 0
+
+- name: "PG3. pg_hba_file_rules include replication entries"
+  community.postgresql.postgresql_query:
+    login_host: "{{ patroni_vip_address | default('') }}"
+    login_port: "{{ postgresql_port | default(5432) }}"
+    login_user: "{{ postgresql_admin_user | default('postgres') }}"
+    login_password: "{{ postgresql_admin_password | default('') }}"
+    login_db: postgres
+    sslmode: "{{ postgresql_sslmode | default('verify-full') }}"
+    ca_cert: "{{ postgresql_tls_ca_cert_path | default(omit, true) }}"
+    query: "SELECT count(*) AS n FROM pg_hba_file_rules WHERE type = 'hostssl' AND database LIKE '%replication%'"
+  register: _smoke_pg_hba_replication
+  failed_when: false
+  run_once: true
+  when:
+    - smoke_check_postgres | bool
+    - patroni_vip_address | default('') | length > 0
+    - postgresql_admin_password | default('') | length > 0
+
+- name: "PG4a. Write smoke: create unique table + insert"
+  community.postgresql.postgresql_query:
+    login_host: "{{ patroni_vip_address | default('') }}"
+    login_port: "{{ postgresql_port | default(5432) }}"
+    login_user: "{{ postgresql_admin_user | default('postgres') }}"
+    login_password: "{{ postgresql_admin_password | default('') }}"
+    login_db: postgres
+    sslmode: "{{ postgresql_sslmode | default('verify-full') }}"
+    ca_cert: "{{ postgresql_tls_ca_cert_path | default(omit, true) }}"
+    query: >-
+      CREATE TABLE IF NOT EXISTS {{ smoke_table }} (id int PRIMARY KEY,
+      written_at timestamp DEFAULT now());
+      INSERT INTO {{ smoke_table }} (id) VALUES (1)
+      ON CONFLICT (id) DO UPDATE SET written_at = now();
+  register: _smoke_write
+  failed_when: false
+  run_once: true
+  when:
+    - smoke_check_postgres | bool
+    - patroni_vip_address | default('') | length > 0
+    - postgresql_admin_password | default('') | length > 0
+
+- name: "PG4b. Wait briefly for replication to a replica"
+  ansible.builtin.pause:
+    seconds: "{{ smoke_replication_wait_seconds }}"
+  run_once: true
+  when:
+    - smoke_check_postgres | bool
+    - not (_smoke_write.failed | default(true))
+
+- name: "PG4c. Read smoke: row visible on each replica"
+  community.postgresql.postgresql_query:
+    login_host: "{{ ansible_host | default(inventory_hostname) }}"
+    login_port: "{{ postgresql_port | default(5432) }}"
+    login_user: "{{ postgresql_admin_user | default('postgres') }}"
+    login_password: "{{ postgresql_admin_password | default('') }}"
+    login_db: postgres
+    sslmode: "{{ postgresql_sslmode | default('verify-full') }}"
+    ca_cert: "{{ postgresql_tls_ca_cert_path | default(omit, true) }}"
+    query: "SELECT count(*) AS n FROM {{ smoke_table }}"
+  register: _smoke_replica_read
+  failed_when: false
+  when:
+    - smoke_check_postgres | bool
+    - _smoke_write is defined
+    - not (_smoke_write.failed | default(true))
+    - smoke_table | length > 0
+
+- name: "PG4d. Cleanup: drop smoke table (always)"
+  community.postgresql.postgresql_query:
+    login_host: "{{ patroni_vip_address | default('') }}"
+    login_port: "{{ postgresql_port | default(5432) }}"
+    login_user: "{{ postgresql_admin_user | default('postgres') }}"
+    login_password: "{{ postgresql_admin_password | default('') }}"
+    login_db: postgres
+    sslmode: "{{ postgresql_sslmode | default('verify-full') }}"
+    ca_cert: "{{ postgresql_tls_ca_cert_path | default(omit, true) }}"
+    query: "DROP TABLE IF EXISTS {{ smoke_table }}"
+  run_once: true
+  failed_when: false
+  ignore_errors: true
+  when: smoke_table | length > 0

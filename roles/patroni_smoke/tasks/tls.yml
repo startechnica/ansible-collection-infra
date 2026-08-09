@@ -1,0 +1,22 @@
+---
+# TLS — server cert + CA cert readability.
+#   * TLS3: patroni server cert exists and is readable
+#   * TLS3b: patroni CA cert exists and is readable
+# (Days-remaining is checked on the mongodb side via the mongodb_status
+# module; for patroni we only verify the chain files are present and
+# parseable — adding expiry math here would duplicate the openssl call
+# pattern that mongodb_status already implements.)
+
+- name: "TLS3. Patroni server cert readable"
+  ansible.builtin.command: openssl x509 -in /etc/patroni/ssl/patroni.crt -noout -enddate
+  register: _smoke_patroni_cert_end
+  changed_when: false
+  failed_when: false
+  when: smoke_check_tls | bool
+
+- name: "TLS3b. Patroni CA cert readable"
+  ansible.builtin.command: openssl x509 -in /etc/patroni/ssl/ca.crt -noout -enddate
+  register: _smoke_patroni_ca_end
+  changed_when: false
+  failed_when: false
+  when: smoke_check_tls | bool

@@ -1,0 +1,26 @@
+---
+# WAL-G — S3 backup tool for the patroni cluster.
+#   * W1: backup-list returns at least one entry (proves backups are running)
+#   * W4: walg-cron.timer is active (the systemd timer is enabled)
+
+- name: "W1. WAL-G backup-list"
+  containers.podman.podman_container_exec:
+    name: patroni
+    command: /opt/walg/wal-g backup-list
+  register: _smoke_walg_list
+  changed_when: false
+  failed_when: false
+  run_once: true
+  when:
+    - smoke_check_walg | bool
+    - walg_enabled | default(false) | bool
+
+- name: "W4. walg-cron.timer active"
+  ansible.builtin.systemd:
+    name: walg-cron.timer
+  register: _smoke_walg_timer
+  changed_when: false
+  failed_when: false
+  when:
+    - smoke_check_walg | bool
+    - walg_enabled | default(false) | bool

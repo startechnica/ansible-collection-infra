@@ -1,0 +1,115 @@
+---
+# Aggregate all per-component results into a single PASS/FAIL report.
+# All assertions evaluated even if some fail — operator sees the full picture.
+
+- name: "Build smoke report (aggregator inputs)"
+  ansible.builtin.set_fact:
+    _smoke_status_rss: "{{ _smoke_status.replica_sets | default({}) }}"
+    _smoke_status_containers: "{{ _smoke_status.containers | default({}) }}"
+    _smoke_status_certs: "{{ _smoke_status.certificates | default({}) }}"
+
+- name: "Print smoke report and PASS/FAIL summary"
+  vars:
+    _rss: "{{ _smoke_status_rss | dict2items }}"
+    _rss_with_primary: "{{ _rss | selectattr('value.primary', 'defined') | list }}"
+    _rss_without_primary: "{{ _rss | rejectattr('value.primary', 'defined') | list }}"
+    _rss_zero_members: "{{ _rss | selectattr('value.members', 'equalto', 0) | list }}"
+
+    _expected_rs_names: >-
+      {{ ['mongodb_config_replset']
+         + (['mongodb_shard_replset'] if mongodb_cluster_type == 'sharded' else []) }}
+
+    _certs_short: >-
+      {{ _smoke_status_certs | dict2items
+         | selectattr('value.days_remaining', 'lt', smoke_cert_min_days)
+         | list }}
+
+    _container_running: >-
+      {{ (_smoke_core_containers.results | selectattr('containers', 'defined')
+          | selectattr('containers', 'list_format') | list | length)
+         + (1 if (mongodb_cluster_type == 'sharded'
+             and ((_smoke_configsvr.containers | default([]) | length) > 0)) else 0)
+         + (1 if (mongodb_exporter_enabled | default(false) | bool
+             and ((_smoke_exporter.containers | default([]) | length) > 0)) else 0) }}
+    _container_expected: >-
+      {{ 2 + (1 if mongodb_cluster_type == 'sharded' else 0)
+         + (1 if mongodb_exporter_enabled | default(false) | bool else 0) }}
+
+    _pbm_agents_running: >-
+      {{ _smoke_pbm_containers.results | selectattr('containers', 'defined')
+         | selectattr('containers', 'list_format') | list | length
+         if (mongodb_pbm_enabled | default(false) | bool) else 0 }}
+
+    _pbm_has_backup: >-
+      {{ (_smoke_pbm_list.stdout | default('') | from_json).snapshots
+         | default([], true) | length > 0
+         if (_smoke_pbm_list.stdout | default('') | length > 0) else false }}
+
+    _failures: "{{ []
+      + (['container down: '
+          ~ ((['mongodb-mongod', 'mongodb-mongos']
+              | difference(
+                _smoke_core_containers.results
+                | selectattr('containers', 'defined')
+                | selectattr('containers', 'list_format')
+                | map(attribute='item') | list))) | join(',')]
+         | select() | list if (_smoke_core_containers.results
+          | rejectattr('containers', 'defined') | rejectattr('containers', 'list_format') | list | length) > 0 else [])
+      + (['configsvr container missing (sharded)'] | select() | list
+         if (mongodb_cluster_type == 'sharded'
+             and not ((_smoke_configsvr.containers | default([]) | length) > 0)) else [])
+      + (['PBM agent container down (sharded expects 2)'] | select() | list
+         if (mongodb_pbm_enabled | default(false) | bool
+             and mongodb_cluster_type == 'sharded'
+             and _pbm_agents_running < 2) else [])
+      + (['PBM agent container down (replicaset expects 1)'] | select() | list
+         if (mongodb_pbm_enabled | default(false) | bool
+             and mongodb_cluster_type == 'replicaset'
+             and _pbm_agents_running < 1) else [])
+      + (['mongodb_status module failed'] | select() | list if (_smoke_status.failed | default(true)) else [])
+      + (['replica set missing primary: ' ~ (_rss_without_primary | map(attribute='key') | list | join(','))]
+         | select() | list if (_rss_without_primary | length) > 0 else [])
+      + (['replica set with 0 members: ' ~ (_rss_zero_members | map(attribute='key') | list | join(','))]
+         | select() | list if (_rss_zero_members | length) > 0 else [])
+      + (['replica set names mismatch: got '
+          ~ (_rss | map(attribute='key') | list | sort | join(','))
+          ~ ', expected '
+          ~ (_expected_rs_names | sort | join(','))]
+         | select() | list
+         if ((_rss | map(attribute='key') | list | sort) != (_expected_rs_names | sort)) else [])
+      + (['mongos port unreachable'] | select() | list
+         if not ((_smoke_mongos_port.elapsed | default(999)) < 30) else [])
+      + (['mongos ping failed (rc=' ~ (_smoke_ping.rc | default(1)) ~ ')'] | select() | list
+         if (_smoke_ping.rc | default(1)) != 0 else [])
+      + (['write through mongos failed'] | select() | list if (_smoke_write.failed | default(true)) else [])
+      + (['read from replica failed (no doc found)'] | select() | list
+         if (not (_smoke_write.failed | default(true))
+             and (_smoke_read.stdout | default('')) is search('null')) else [])
+      + (['PBM status unhealthy'] | select() | list
+         if ((mongodb_pbm_enabled | default(false) | bool)
+             and (_smoke_pbm_status.failed | default(true))) else [])
+      + (['PBM has no base backups (init_backup may have failed)'] | select() | list
+         if ((mongodb_pbm_enabled | default(false) | bool)
+             and (mongodb_pbm_init_backup | default(true) | bool)
+             and not _pbm_has_backup) else [])
+      + (['mongodb-backup.timer not active'] | select() | list
+         if ((mongodb_backup_enabled | default(false) | bool)
+             and (_smoke_mongodump_timer.status | default('') | lower) != 'active') else [])
+      + (['cert expires within ' ~ smoke_cert_min_days ~ 'd: '
+          ~ (_certs_short | map(attribute='key') | list | join(','))]
+         | select() | list if (_certs_short | length) > 0 else [])
+      }}"
+    _verdict: "{{ 'PASS' if (_failures | length == 0) else 'FAIL' }}"
+  ansible.builtin.debug:
+    msg:
+      - "MongoDB smoke test verdict: {{ _verdict }}"
+      - "Cluster type: {{ mongodb_cluster_type }}"
+      - "Containers running: {{ _container_running }} / {{ _container_expected }} core"
+      - "Replica sets: {{ _rss | map(attribute='key') | list }} | primaries: {{ _rss_with_primary | map(attribute='value.primary') | list }}"
+      - "mongos: port={{ ((_smoke_mongos_port.elapsed | default(999)) < 30) }} ping={{ (_smoke_ping.rc | default(1)) == 0 }}"
+      - "End-to-end: write={{ not (_smoke_write.failed | default(true)) }} read={{ (_smoke_read.stdout | default('')) is not search('null') }}"
+      - "PBM: {{ 'enabled, ' ~ _pbm_agents_running ~ ' agents, has_backups=' ~ _pbm_has_backup if (mongodb_pbm_enabled | default(false) | bool) else 'disabled' }}"
+      - "Scheduled mongodump: {{ (_smoke_mongodump_timer.status | default('(disabled)')) if (mongodb_backup_enabled | default(false) | bool) else 'disabled' }}"
+      - "{{ 'Failures (' ~ (_failures | length) ~ '): ' ~ (_failures | join('; ')) if (_failures | length) > 0 else 'No failures.' }}"
+  run_once: true
+  failed_when: _failures | length > 0

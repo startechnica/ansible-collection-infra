@@ -1,0 +1,18 @@
+---
+# VIP — vip-manager + keepalived.
+#   * V1: which node holds the VIP — the summary checks that exactly ONE
+#     node has it (split-brain guard). This is a negative-as-audit check;
+#     we don't kill the leader to test failover — that's chaos work.
+
+- name: "V1. Check which node holds the VIP"
+  ansible.builtin.shell: |
+    if ip addr show 2>/dev/null | grep -q "{{ patroni_vip_address | default('xxx') }}/"; then
+      echo "HAS_VIP"
+    else
+      echo "NO_VIP"
+    fi
+  register: _smoke_vip_holders
+  changed_when: false
+  when:
+    - smoke_check_vip | bool
+    - patroni_vip_address | default('') | length > 0
