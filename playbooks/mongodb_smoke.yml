@@ -6,12 +6,26 @@
 # playbooks/ and maps the filename verbatim to the FQCN suffix, so this file
 # must be named mongodb_smoke.yml (underscores) and live here, not under test/.
 #
-# All checks live in roles/mongodb_smoke/tasks/*.yml.
+# The `mongodb_nodes` group is built at runtime from instances[] by
+# mongodb/_setup.yml (the same prelude deploy_mongodb.yml / mongodb/install.yml
+# use), so this inventory does not need a static group. All checks live in
+# roles/mongodb_smoke/tasks/*.yml.
+
+- name: "Setup mongodb hosts (build group from instances)"
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: "Build host group from instances"
+      ansible.builtin.include_tasks: mongodb/_setup.yml
 
 - name: "MongoDB smoke test"
   hosts: mongodb_nodes
   gather_facts: true
   become: true
-
+  pre_tasks:
+    - name: "Inherit localhost vars"
+      ansible.builtin.include_role:
+        name: common
+        tasks_from: inherit_localhost_vars
   roles:
     - role: startechnica.infra.mongodb_smoke
