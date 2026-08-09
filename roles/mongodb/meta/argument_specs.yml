@@ -30,23 +30,33 @@ argument_specs:
 
       mongodb_version:
         type: str
-        default: "8.2.6"
+        default: "8.0.28"
         description: MongoDB Docker image tag to deploy.
 
       mongodb_unsupported_kernel:
         type: str
         default: "6.19"
         description:
-          - Lower bound (inclusive) of the kernel range where MongoDB is known to be incompatible due to a TCMalloc/rseq ABI violation.
-          - Preflight refuses to install when `mongodb_unsupported_kernel <= host kernel < mongodb_fixed_kernel`. Kernels below this value are compatible.
+          - Open-ended lower bound of the kernel range where MongoDB's vendored-TCMalloc/rseq ABI violation bites.
+          - Kernels at/above this value are affected (no upper-bound escape); kernels below are always fine.
+          - This is only half the gate — the refuse is also version-gated (see `mongodb_kernel_guard_min_version`).
+          - Preflight blocks only when `host kernel >= mongodb_unsupported_kernel` AND `mongodb_version >= mongodb_kernel_guard_min_version`.
+          - See https://jira.mongodb.org/browse/SERVER-121912.
+
+      mongodb_kernel_guard_min_version:
+        type: str
+        default: "8.3"
+        description:
+          - The MongoDB version line that ADDED the hard startup refuse (log id 12257600) on kernels >= `mongodb_unsupported_kernel`. Deployments below this version run fine on affected kernels.
+          - Verified 2026-08 on kernel 7.1.3 — mongo 8.3.7 hard-refuses, mongo 8.2.7 runs healthy. Combined with `mongodb_unsupported_kernel` to form the two-axis compatibility gate.
           - See https://jira.mongodb.org/browse/SERVER-121912.
 
       mongodb_fixed_kernel:
         type: str
         default: "7.0.14"
         description:
-          - Upper bound (inclusive) at/above which the incompatibility is resolved kernel-side. Kernels >= this value pass preflight. The broken window is therefore 6.19 through 7.0.13.
-          - The fix is in the Linux kernel, not MongoDB — Mongo's vendored TCMalloc is still unpatched through 8.2, so upgrading MongoDB alone does not escape the range.
+          - DEPRECATED / INERT. The gate no longer consumes this var.
+          - An earlier revision treated 7.0.14+ as fixed (a brief upstream window that was reverted); the incompatibility is now open-ended (6.19+). Kept declared only so setting it doesn't error.
           - See https://jira.mongodb.org/browse/SERVER-121912.
 
       mongodb_skip_kernel_check:
@@ -199,7 +209,7 @@ argument_specs:
         default: true
       mongodb_exporter_image:
         type: str
-        default: "percona/mongodb_exporter:0.43.1"
+        default: "docker.io/percona/mongodb_exporter:0.52.0"
       mongodb_exporter_port:
         type: int
         default: 9216
@@ -214,7 +224,7 @@ argument_specs:
           agent per local mongod (2/host sharded, 1/host replicaset).
       mongodb_pbm_image:
         type: str
-        default: "docker.io/percona/percona-backup-mongodb:2.11.0"
+        default: "docker.io/percona/percona-backup-mongodb:2.15.0"
       mongodb_pbm_cn:
         type: str
         default: mongodb-pbm

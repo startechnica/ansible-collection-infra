@@ -4,19 +4,28 @@ debug: false
 # ─── MongoDB Cluster Role Defaults ────────────────────────────────────────────
 
 mongodb_enabled: false
-mongodb_version: "8.2.7"
+mongodb_version: "8.0.28"
 mongodb_cluster_type: sharded
 mongodb_cluster_name: "MongoDB Cluster"
 
-# Kernel-compatibility gate. Due to a TCMalloc/rseq ABI violation, mongod
-# refuses to start on a BOUNDED range of Linux kernels: 6.19 through 7.0.13
-# inclusive. Linux 7.0.14+ resolves the incompatibility kernel-side, so the
-# gate is a range, not an open-ended floor — a host on 7.0.14+ (or < 6.19)
-# passes. Tracking: https://jira.mongodb.org/browse/SERVER-121912 (Mongo's
-# own vendored TCMalloc is still unpatched through 8.2, so the escape is the
-# kernel, not a Mongo bump). Flip `mongodb_skip_kernel_check` to bypass.
-mongodb_unsupported_kernel: "6.19"        # broken range starts here (inclusive)
-mongodb_fixed_kernel: "7.0.14"            # fixed at/after here (inclusive)
+# Kernel-compatibility gate — a TWO-AXIS check (kernel AND MongoDB version).
+# MongoDB's VENDORED tcmalloc has an rseq ABI violation, and from a certain
+# build on, mongod HARD-REFUSES to start on Linux kernels 6.19+ (open-ended,
+# no kernel upper-bound escape). But the refuse is VERSION-GATED: it was added
+# in the 8.3 line. Verified 2026-08 on FCOS 44 (kernel 7.1.3):
+#   * mongo 8.3.7 → hard-refuses (log id 12257600), crash-loops.
+#   * mongo 8.2.7 → healthy, stays up.
+# So a host on kernel >= 6.19 is only blocked when running MongoDB >= 8.3.
+# Compatible when: kernel < mongodb_unsupported_kernel OR
+#                  mongodb_version < mongodb_kernel_guard_min_version.
+# Tracking: https://jira.mongodb.org/browse/SERVER-121912. Flip
+# `mongodb_skip_kernel_check` to bypass.
+mongodb_unsupported_kernel: "6.19"            # kernel broken at/above here (open-ended)
+mongodb_kernel_guard_min_version: "8.3"       # MongoDB line that ADDED the refuse
+# DEPRECATED / INERT: the gate no longer uses this. An earlier revision treated
+# 7.0.14+ as fixed (a brief upstream window that was reverted); kept defined
+# only so inventories that set it don't error. Safe to ignore.
+mongodb_fixed_kernel: "7.0.14"
 mongodb_skip_kernel_check: false
 
 # ── System user ──
@@ -173,7 +182,7 @@ mongodb_exporter_enabled: true
 # without a TTY" inside a systemd service. docker is more forgiving
 # and auto-resolves bare names to docker.io, but explicit is better
 # than implicit.
-mongodb_exporter_image: "docker.io/percona/mongodb_exporter:0.51.0"
+mongodb_exporter_image: "docker.io/percona/mongodb_exporter:0.52.0"
 mongodb_exporter_port: 9216
 
 # ── Percona Backup for MongoDB (PBM) ──
@@ -189,7 +198,7 @@ mongodb_exporter_port: 9216
 # docs/design/mongodb-pbm.md.
 mongodb_pbm_enabled: false
 # Pin the agent image (avoid :latest for reproducible/offline-friendly pulls).
-mongodb_pbm_image: "docker.io/percona/percona-backup-mongodb:2.14.0"
+mongodb_pbm_image: "docker.io/percona/percona-backup-mongodb:2.15.0"
 mongodb_pbm_cn: mongodb-pbm
 mongodb_pbm_mem_limit_mb: 256
 # PBM continuous oplog slicing (restore to any timestamp in the window) is

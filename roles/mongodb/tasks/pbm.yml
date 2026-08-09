@@ -179,7 +179,12 @@
   run_once: true
   when:
     - mongodb_pbm_init_backup | bool
-    - (_pbm_list.stdout | default('{}') | from_json).snapshots | default([]) | length == 0
+    # `pbm list --out json` returns {"snapshots": null} (not a missing key) when
+    # storage was just resynced and holds no backups. A bare default([]) only
+    # fills UNDEFINED, not an explicit null, so `null | length` crashes — the
+    # `, true` makes default() also replace the None. Guard from_json too: an
+    # empty stdout would otherwise fail to parse.
+    - ((_pbm_list.stdout | default('', true) | trim or '{}') | from_json).snapshots | default([], true) | length == 0
 
 # ── Scheduled `pbm backup` + retention (host-level systemd timer, one node) ──
 # Reuses the shared backup knobs: fires on mongodb_backup_schedule, prunes via

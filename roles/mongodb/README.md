@@ -61,7 +61,7 @@ Routes VMs tagged `mongodb` (in NetBox or via inventory `instance_tags`) to this
     - role: startechnica.infra.mongodb
       vars:
         mongodb_cluster_type: replicaset
-        mongodb_version: "8.2.6"
+        mongodb_version: "8.0.28"
         mongodb_admin_password: "{{ vault_mongodb_admin_password }}"
 ```
 
@@ -71,7 +71,7 @@ Minimum config under the host group or `cloud_init.vars`:
 
 ```yaml
 mongodb_cluster_type: sharded        # or replicaset
-mongodb_version: "8.2.6"
+mongodb_version: "8.0.28"
 mongodb_admin_password: ""           # auto-generated if empty
 
 # (optional) application DBs
@@ -217,7 +217,8 @@ Day-2:
 ```bash
 ansible-playbook playbooks/mongodb_pbm_status.yml  -i inventories/<inv>.yml
 ansible-playbook playbooks/mongodb/pbm-backup.yml  -i inventories/<inv>.yml
-ansible-playbook playbooks/mongodb/pbm-restore.yml -i inventories/<inv>.yml -e pbm_target='2026-06-09T12:30:00'
+ansible-playbook playbooks/mongodb/pbm-restore.yml -i inventories/<inv>.yml \
+  -e pbm_target='2026-06-09T12:30:00'
 ```
 
 **Constraints:** on the Community `mongo` image PBM does **logical** backups +
@@ -241,7 +242,7 @@ cluster. Design notes: [docs/design/mongodb-pbm.md](../../docs/design/mongodb-pb
 | PBM status (agents, storage, PITR window, backups) | `playbooks/mongodb_pbm_status.yml` (FQCN: `startechnica.infra.mongodb_pbm_status`) |
 | Rolling restart | `playbooks/mongodb/restart.yml` |
 | Renew leaf certificates | `playbooks/mongodb/renew-certs.yml` |
-| Rolling version upgrade | `playbooks/mongodb/upgrade.yml -e mongodb_image_tag_new=8.2.7` |
+| Rolling version upgrade | `playbooks/mongodb/upgrade.yml -e mongodb_image_tag_new=8.3.8` |
 | Scale up (add replica) | `playbooks/mongodb/add-node.yml -e target_node=<host>` |
 | Scale down (remove replica) | `playbooks/mongodb/remove-node.yml -e target_node=<host>` |
 | Uninstall | `playbooks/mongodb/uninstall.yml [-e mongodb_destroy_prune=true]` |
@@ -281,27 +282,99 @@ Written to `playbooks/artifacts/<inventory-stem>/mongodb/`:
 
 ## Gotchas
 
-- **MongoDB 8 breaks on Linux kernel 6.19–7.0.13** — `mongod` refuses to start
-  (`MongoDB cannot start: Linux kernel versions 6.19 and newer has a known
-  incompatibility...`) from a TCMalloc/rseq ABI bug. This is a **bounded range**,
-  not an open-ended floor: **Linux 7.0.14+ resolves it kernel-side**. The
-  `preflight` task ([tasks/preflight.yml](tasks/preflight.yml)) passes when the
-  kernel is `< 6.19` **or** `>= 7.0.14` (bounds are `mongodb_unsupported_kernel`
-  / `mongodb_fixed_kernel`). The fix is in the kernel, not MongoDB — Mongo's
-  vendored TCMalloc is still unpatched through 8.2, so upgrading Mongo alone does
-  NOT escape the range. **The kernel bump lands WITHIN a single FCOS major
-  release**, so pinning FCOS 43 alone is not enough:
+### Three constraints bind this role together
 
-  | Kernel | MongoDB 8 |
-  |---|---|
-  | `< 6.19` (e.g. FCOS `43.20260217.3.1` = 6.18) | ✅ works |
-  | `6.19` – `7.0.13` (e.g. FCOS `43.20260413.3.2` = 6.19) | ❌ broken |
-  | `>= 7.0.14` | ✅ works (fixed kernel-side) |
+MongoDB version, kernel version, and PBR/PBM cluster-consistent PITR form a
+three-way interaction that is easy to get wrong. **All three apply at once**
+when sizing a cluster — pick a version that satisfies them together.
 
-  Upgrade the host to kernel `>= 7.0.14`, or pin an FCOS build with kernel
-  `< 6.19`. Bypass with `mongodb_skip_kernel_check: true` **only** after
-  verifying mongo actually runs on your kernel — running with the check disabled
-  on an incompatible kernel crashes containers in a tight loop.
+#### 1. Kernel gate (Linux kernel ≥ 6.19 vs MongoDB ≥ 8.3)
+
+`mongod` hard-refuses to start (`MongoDB cannot start: Linux kernel versions
+6.19 and newer has a known incompatibility...`) from a bug in MongoDB's
+**vendored TCMalloc** (rseq ABI violation). The kernel side is **open-ended**
+(every kernel `>= 6.19` is affected — `7.0.14` does **not** resolve it), but
+the refuse is **version-gated**: the hard startup check was added in the
+**8.3** line. Verified on kernel `7.1.3`: mongo `8.3.7` hard-refuses,
+`8.2.7` healthy. The `preflight` task
+([tasks/preflight.yml](tasks/preflight.yml)) blocks only when **both** axes hit
+— kernel `>= 6.19` (`mongodb_unsupported_kernel`) **and** MongoDB `>= 8.3`
+(`mongodb_kernel_guard_min_version`):
+
+| | kernel `< 6.19` | kernel `>= 6.19` (e.g. FCOS 44 = 7.1.3) |
+|---|---|---|
+| **MongoDB `< 8.3`** (e.g. 8.2.7, 8.0.28) | ✅ works | ✅ works |
+| **MongoDB `>= 8.3`** (e.g. 8.3.7) | ✅ works | ❌ hard-refuse |
+
+#### 2. PBM 2.15 LTS-only support (PBM 2.15 doesn't support 8.2)
+
+PBM (`mongodb_pbm_enabled`) only certifies against MongoDB **LTS** releases:
+`7.0.x` and `8.0.x`. It rejects mid-train **rapid releases** (`8.1`, `8.2`,
+`8.3`, …) at the agent — the connection succeeds but the backup hangs at
+"starting" and 30s later fails with:
+
+```
+WARNING: This PBM works with MongoDB and PSMDB v7.0, v8.0 and you are
+running v8.2. PBM does not support minor versions of MongoDB.
+Error: wait for backup status: backup stuck at "starting" status
+```
+
+Verified on kernel `7.1.3`: mongo `8.0.28` → PBM works; `8.2.7` → PBM fails.
+MongoDB's release model is an **LTS train** since 5.0 — only `x.0` releases
+are LTS with long support; intermediate versions are short-lived rapid
+releases. PBM only tracks LTS because backup-tool correctness depends on opLog
+/ WiredTiger / snapshot internals that change too quickly on rapid trains.
+([Percona compatibility matrix](https://docs.percona.com/percona-backup-mongodb/details/versions.html))
+
+#### 3. Sharded PITR requires PBM (not mongodump)
+
+On a **sharded** cluster, `mongodump --oplog` is rejected via `mongos`. The
+`mongodb-backup.timer` (scheduled) and `playbooks/mongodb/backup.yml`
+(on-demand) BOTH fail with:
+
+```
+Failed: can't use --oplog option when dumping from a mongos
+```
+
+when `mongodb_backup_pitr: true` is set on `mongodb_cluster_type: sharded`.
+The only path to PITR on sharded is **PBM**, which runs one agent per replica
+set and produces cluster-consistent slices. On a **replica-set** cluster
+this constraint does not apply — `mongodump --oplog` works directly against
+the mongod.
+
+#### The combined matrix
+
+The intersection of all three constraints, expressed as valid deployments:
+
+| Goal | Cluster | Kernel | MongoDB | PBM | Result |
+|---|---|---|---|---|---|
+| **Sharded + PITR (the recommended combination)** | sharded | any | `8.0.x` LTS | ✅ | ✅ full + PITR |
+| **Sharded, no PITR** | sharded | `>= 6.19` | `8.2.x` (or any LTS) | ❌ | ✅ full backups only |
+| **Sharded, no PITR, recent kernel, FCOS pin not possible** | sharded | `>= 6.19` | `8.0.x` LTS | ❌ | ✅ full backups only |
+| **Replica set, PITR** | replicaset | any | `7.0.x` / `8.0.x` LTS | ❌ (mongodump handles it) | ✅ full + PITR |
+| **Anything on a kernel `< 6.19`** | either | `< 6.19` | any | ✅ if PBM-supported | ✅ no kernel constraint |
+| MongoDB `>= 8.3` on `>= 6.19` kernel | either | `>= 6.19` | `8.3.x` | ❌ | ❌ mongod hard-refuses |
+
+**On a sharded cluster on a kernel ≥ 6.19 (e.g. FCOS 44 = 7.1.3), MongoDB
+8.0.x is the only version that supports PBM and therefore PITR.** This is the
+default for `artaku-db-idc3d.yml` and the right pick for sharded DR.
+
+#### Resolutions
+
+- **Pin MongoDB 8.0.x** (the default LTS that satisfies everything). Used by
+  `inventories/artaku-db-idc3d.yml` on the DR cluster.
+- **Pin an FCOS build with kernel `< 6.19`** (via `content_library_item_name`) —
+  e.g. FCOS `43.20260217.3.1` ships 6.18. Pinning the FCOS major alone is NOT
+  enough — the kernel bump lands within a single major release.
+- **Run MongoDB on a different OS** (Ubuntu 24.04 ships 6.8).
+- **Bypass with `mongodb_skip_kernel_check: true`** — only if you're sure the
+  combination works. mongod crash-loops if it genuinely doesn't. Don't leave it
+  on as a "make it run anyway" switch.
+
+> **Note:** an earlier version of this role first treated kernel `7.0.14+` as
+> fixed (a reverted upstream window), then over-corrected to block *all* 8.x
+> on `>= 6.19`. Both were wrong. `mongodb_fixed_kernel` is now **inert**; the
+> gate is the two-axis check above.
 - **FCV (featureCompatibilityVersion)** is NOT auto-bumped on version upgrade. After a major upgrade (6→7, 7→8), run `db.adminCommand({setFeatureCompatibilityVersion: "7.0"})` manually after a soak period.
 - **Auto-generated admin password persists** — once `admin.password` exists in the artifacts dir, it's reused on every run. Delete the file if you want a fresh password.
 - **Cert rotation is zero-downtime** — renew-certs.yml uses a rolling restart, one node at a time. The CA is NOT rotated unless you explicitly do so (breaking change).

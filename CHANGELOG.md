@@ -140,7 +140,64 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   days later. Standard-vSwitch NICs (which legitimately have a null
   `portgroup_key`) are exempt.
 
+### Changed
+- **Percona sidecar image defaults bumped.** `mongodb_exporter_image`
+  `0.51.0` → `0.52.0`, `mongodb_pbm_image` `2.14.0` → `2.15.0`. Standalone
+  Go binaries — unaffected by the kernel issue below.
+- **`mongodb_version` default → `8.0.28`.** Pinned to the **LTS** line that
+  satisfies all three version-selection constraints documented in the README
+  gotchas: (1) kernel gate (`< 8.3`), (2) PBM 2.15 LTS-only support
+  (`7.0.x`/`8.0.x` only — rapid releases `8.1`/`8.2`/`8.3` rejected at the
+  agent), and (3) sharded-cluster PITR (mongodump --oplog can't run via
+  mongos, only PBM handles it). On a sharded cluster on kernel ≥ 6.19 (e.g.
+  FCOS 44 = 7.1.3), 8.0.x is the only MongoDB line that supports PBM and
+  therefore PITR.
+
 ### Fixed
+- **Kernel-compatibility gate is now a two-axis (kernel × MongoDB version)
+  check.** The vendored-TCMalloc/rseq incompatibility on Linux kernel `>= 6.19`
+  is real, open-ended (no `7.0.14+` escape), **but version-gated**: the hard
+  startup refuse (`MongoDB cannot start: Linux kernel versions 6.19 and
+  newer...`, log id 12257600) was introduced in the **8.3** line. Verified on
+  kernel `7.1.3`: mongo `8.3.7` hard-refuses and crash-loops, mongo `8.2.7`
+  runs healthy. Preflight now blocks **only** when kernel
+  `>= mongodb_unsupported_kernel` (6.19) **AND** `mongodb_version >=
+  mongodb_kernel_guard_min_version` (new, default `8.3`). `mongodb_fixed_kernel`
+  is retained but **inert**. Supersedes two earlier wrong takes on this gate
+  in the same dev cycle (a bounded `7.0.14+`-fixed range, then a version-blind
+  open-ended floor that wrongly blocked 8.2). On an affected kernel, pin
+  `mongodb_version < 8.3`, a kernel `< 6.19` (via `content_library_item_name`),
+  or a non-affected OS.
+  Tracking: [SERVER-121912](https://jira.mongodb.org/browse/SERVER-121912).
+- **PBM 2.15 doesn't support MongoDB rapid releases — now caught at preflight.**
+  PBM 2.15 only certifies against MongoDB LTS releases (`7.0.x`, `8.0.x`);
+  mid-train rapid releases (`8.1`, `8.2`, `8.3`, …) are rejected at the
+  agent: backup hangs at "starting" and fails 30s later with "PBM does not
+  support minor versions of MongoDB" — silent until the first timer tick at
+  02:00. New preflight check fails fast with a clear message when
+  `mongodb_pbm_enabled: true` is combined with a non-LTS MongoDB version, so
+  this is caught at provision time instead.
+  ([Percona compatibility matrix](https://docs.percona.com/percona-backup-mongodb/details/versions.html))
+- **`mongodump --oplog` on a sharded cluster is a dead flag — now caught at
+  preflight.** On `mongodb_cluster_type: sharded`, setting
+  `mongodb_backup_pitr: true` WITHOUT also setting `mongodb_pbm_enabled: true`
+  causes the scheduled backup to fail at the first 02:00 timer tick with
+  "can't use --oplog option when dumping from a mongos" — mongodump cannot
+  produce cluster-consistent PITR on sharded, only PBM can. New preflight
+  check fails fast with a clear message for this invalid combination.
+- **PBM initial base-backup crashed on a freshly-resynced cluster** — `pbm list
+  --out json` returns `{"snapshots": null}` (an explicit null, not a missing
+  key) right after a storage force-resync with no backups yet, so the
+  `.snapshots | default([]) | length` guard hit `NoneType has no len()` and
+  failed the provision. Now uses `default([], true)` (replaces null, not just
+  undefined) and tolerates empty stdout. Only surfaced on the first PBM-enabled
+  run before any backup existed.
+- **Transient `IncompleteRead` on the post-rebind NIC re-probe** — the
+  `vmware_guest_info` verification read after a DVS NIC rebind pulls the whole VM
+  object, the largest response in the provision flow, and could be truncated
+  mid-body on a busy vCenter (`IncompleteRead(N bytes read)`), aborting the run
+  even though the rebind itself succeeded. The idempotent read now retries
+  (`until` / 5×) instead of failing.
 - **Distributed-portgroup NICs deployed disconnected** — content-library OVFs
   create the NIC with a standard-vSwitch backing (`NetworkBackingInfo`), and
   `vmware_guest`'s `networks:` can't convert that to a distributed-vSwitch

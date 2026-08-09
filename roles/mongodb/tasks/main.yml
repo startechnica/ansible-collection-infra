@@ -20,7 +20,7 @@
 #   ansible-playbook ... -e mongodb_action=backup
 #   ansible-playbook ... -e mongodb_action=uninstall -e mongodb_destroy_prune=true
 #   ansible-playbook ... -e mongodb_action=restore -e restore_path=/opt/mongodb/backups/...
-#   ansible-playbook ... -e mongodb_action=upgrade -e mongodb_image_tag_new=8.2.7
+#   ansible-playbook ... -e mongodb_action=upgrade -e mongodb_image_tag_new=8.3.8
 
 # ── Skip if disabled ──
 

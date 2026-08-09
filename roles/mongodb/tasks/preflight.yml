@@ -3,48 +3,66 @@
 # Common checks (root, docker, compose, RAM) + target Python venv with pymongo
 # are handled by the preflight role dependency.
 
-# A TCMalloc/rseq ABI violation makes mongod refuse to start on a BOUNDED
-# range of Linux kernels: 6.19 through 7.0.13 inclusive (and earlier in our
-# experience it also segfaulted under the sharded TLS path). Linux 7.0.14+
-# resolves it kernel-side, so kernels at/above `mongodb_fixed_kernel` are
-# compatible again — the gate is a range, not an open-ended floor.
+# A TCMalloc/rseq ABI violation in MongoDB's VENDORED tcmalloc makes mongod
+# HARD-REFUSE to start on Linux kernels 6.19 and newer — BUT only from a
+# certain MongoDB build onward. This is BOTH a kernel range AND a MongoDB
+# version boundary; the gate must check both:
+#
+#   * Kernel side: broken at/above `mongodb_unsupported_kernel` (6.19),
+#     open-ended (no upper bound — 7.0.14 does NOT resolve it).
+#   * MongoDB side: the explicit startup refuse (log id 12257600,
+#     "Linux kernel versions 6.19 and newer has a known incompatibility")
+#     was ADDED in `mongodb_kernel_guard_min_version` (8.3). Earlier lines
+#     (8.2.x) run fine on the same kernel.
+#
+# Verified empirically 2026-08-06/07 on FCOS 44 (kernel 7.1.3):
+#   * mongo 8.3.7  → hard-refuses (id 12257600), container crash-loops.
+#   * mongo 8.2.7  → healthy, stays up past the rseq-corruption window.
+#
+# So the incompatibility is real but VERSION-GATED: a host on kernel >= 6.19
+# is only blocked when running MongoDB >= 8.3. An earlier revision of this
+# gate got this wrong twice — first a bounded kernel range (7.0.14+ "fixed",
+# reverted), then a version-blind open-ended floor that wrongly blocked the
+# working 8.2 line. This version encodes both axes.
 # Upstream tracking: https://jira.mongodb.org/browse/SERVER-121912
 #
-# Compatible when: kernel < 6.19  OR  kernel >= 7.0.14.
-# Broken when:     6.19 <= kernel < 7.0.14.
+# Compatible when: kernel < 6.19  OR  mongodb_version < 8.3.
+# Blocked when:    kernel >= 6.19 AND mongodb_version >= 8.3.
 #
-# Override `mongodb_skip_kernel_check: true` in inventory to bypass.
-- name: Assert kernel is compatible with MongoDB
+# Override `mongodb_skip_kernel_check: true` to bypass.
+- name: Assert kernel is compatible with the selected MongoDB version
   ansible.builtin.assert:
     that:
       - >-
         (ansible_facts['kernel'] is version(mongodb_unsupported_kernel, '<'))
-        or (ansible_facts['kernel'] is version(mongodb_fixed_kernel, '>='))
+        or (mongodb_version is version(mongodb_kernel_guard_min_version, '<'))
     fail_msg: |
-      Kernel {{ ansible_facts['kernel'] }} on {{ inventory_hostname }} is not compatible
-      with MongoDB.
+      MongoDB {{ mongodb_version }} on kernel {{ ansible_facts['kernel'] }}
+      ({{ inventory_hostname }}) is not a supported combination.
 
-      Linux kernels {{ mongodb_unsupported_kernel }} through 7.0.13 have a
-      known incompatibility with current MongoDB releases — mongod refuses to
-      start (`MongoDB cannot start: Linux kernel versions 6.19 and newer has a
-      known incompatibility...`). Linux {{ mongodb_fixed_kernel }} and later
-      fixes it kernel-side.
+      MongoDB >= {{ mongodb_kernel_guard_min_version }} HARD-REFUSES to start on
+      Linux kernels >= {{ mongodb_unsupported_kernel }} (a vendored-tcmalloc/rseq
+      ABI bug — `MongoDB cannot start: Linux kernel versions 6.19 and newer has a
+      known incompatibility...`). The refuse is open-ended (no kernel upper-bound
+      escape) and was introduced in the {{ mongodb_kernel_guard_min_version }}
+      line — earlier releases (e.g. 8.2.x) run fine on the same kernel.
       Tracking: https://jira.mongodb.org/browse/SERVER-121912
 
-      Resolution options:
-        1. Upgrade the host to kernel >= {{ mongodb_fixed_kernel }} (the
-           incompatibility is resolved kernel-side from 7.0.14 on).
+      Resolution options (pick one):
+        1. Pin an older MongoDB line that predates the refuse:
+           `mongodb_version: "8.0.28"` (verified good on kernel 7.1.3;
+           8.0.x also satisfies PBM's LTS-only support on sharded clusters).
         2. Pin the host OS to a release with kernel < {{ mongodb_unsupported_kernel }}.
-           Note the kernel bump can land WITHIN a single FCOS major release:
-           e.g. FCOS 43.20260217.3.1 shipped kernel 6.18 (works), FCOS
-           43.20260413.3.2 shipped kernel 6.19 (broken). Pinning the FCOS
-           major isn't enough — pin the specific stream build via
-           `content_library_item_name` in inventory.
+           The kernel bump can land WITHIN a single FCOS major release:
+           FCOS 43.20260217.3.1 = 6.18 (works), 43.20260413.3.2 = 6.19 (broken),
+           44.20260707.3.1 = 7.1.3 (broken with >= {{ mongodb_kernel_guard_min_version }}).
+           Pin the specific stream build via `content_library_item_name`.
         3. Move MongoDB nodes to a different OS (Ubuntu 24.04 ships 6.8).
-        4. Bypass with `mongodb_skip_kernel_check: true` (use only after
-           verifying mongo runs on your kernel — running with this set on
-           an incompatible kernel crashes containers in a tight loop).
-    success_msg: "Kernel {{ ansible_facts['kernel'] }} is compatible with MongoDB."
+        4. Bypass with `mongodb_skip_kernel_check: true` — mongod WILL crash-loop
+           if the combination is genuinely unsupported; only for a mis-compare.
+    success_msg: >-
+      MongoDB {{ mongodb_version }} on kernel {{ ansible_facts['kernel'] }} is a
+      supported combination.
   when: not (mongodb_skip_kernel_check | bool)
 
 - name: Validate cluster type
@@ -53,9 +71,76 @@
     fail_msg: "mongodb_cluster_type must be 'sharded' or 'replicaset', got '{{ mongodb_cluster_type }}'"
     success_msg: "Cluster type: {{ mongodb_cluster_type }}"
 
+# Percona Backup for MongoDB (PBM 2.15.x) only certifies against MongoDB LTS
+# releases (7.0.x, 8.0.x). Mid-train rapid releases (8.1, 8.2, 8.3, ...) are
+# rejected by the PBM agent — the backup hangs at "starting" and fails 30s
+# later with "PBM does not support minor versions of MongoDB". Surfacing
+# this at provision is much better than at the next 02:00 timer tick.
+# MongoDB's release model is an LTS train since 5.0: only x.0 majors get long
+# support, intermediate versions are short-lived rapid releases.
+# Tracking: https://docs.percona.com/percona-backup-mongodb/details/versions.html
+#
+# "LTS" here = mongodb_version's major.minor is in the explicit list. The
+# major.minor check uses the version compare's first two segments; e.g.
+#   "8.2.7"   -> 8.2  -> NOT in [7.0, 8.0]  -> blocked
+#   "8.0.28"  -> 8.0  -> IN [7.0, 8.0]       -> allowed
+- name: Assert MongoDB version is PBM-supported (LTS only)
+  ansible.builtin.assert:
+    that:
+      - not (mongodb_pbm_enabled | bool) or (_pbm_supported_mms | bool)
+    fail_msg: |
+      MongoDB {{ mongodb_version }} is NOT supported by PBM (Percona Backup
+      for MongoDB). PBM 2.15.x only certifies against MongoDB LTS releases
+      — `7.0.x` and `8.0.x`. Mid-train rapid releases (8.1, 8.2, 8.3, ...)
+      are rejected at the agent: backup hangs at "starting" and fails with
+      "PBM does not support minor versions of MongoDB".
+      Tracking: https://docs.percona.com/percona-backup-mongodb/details/versions.html
+
+      You have `mongodb_pbm_enabled: true` on this cluster. Pick one:
+        1. Pin `mongodb_version: "8.0.28"` (or another 8.0.x / 7.0.x LTS).
+        2. Set `mongodb_pbm_enabled: false` (loses cluster-consistent
+           sharded PITR; daily full mongodump backups still work).
+    success_msg: "MongoDB {{ mongodb_version }} is a PBM-supported LTS release."
+  vars:
+    # Major.minor tuple, e.g. "8.2.7" -> [8, 2]; "8.0.28" -> [8, 0].
+    _pbm_version_parts: "{{ mongodb_version.split('.') }}"
+    _pbm_major: "{{ _pbm_version_parts[0] | int }}"
+    _pbm_minor: "{{ _pbm_version_parts[1] | int }}"
+    # PBM's supported LTS set: { (7,0), (8,0) }. Anything else is rapid.
+    _pbm_supported_mms: "{{ (_pbm_major, _pbm_minor) in [(7, 0), (8, 0)] }}"
+  when: mongodb_pbm_enabled | bool
+
+# On a SHARDED cluster, mongodump --oplog (the path that mongodb_backup_pitr
+# toggles) is rejected via mongos: "can't use --oplog option when dumping from
+# a mongos". The only path to PITR on sharded is PBM. So if the operator sets
+# backup_pitr=true on a sharded cluster WITHOUT enabling PBM, the scheduled
+# backup fails at the first 02:00 timer tick — fail-fast here instead.
+- name: Assert sharded cluster can actually do PITR (PBM enabled or backup_pitr off)
+  ansible.builtin.assert:
+    that:
+      - not ((mongodb_cluster_type == 'sharded') and (mongodb_backup_pitr | bool) and not (mongodb_pbm_enabled | bool))
+    fail_msg: |
+      On a sharded cluster, `mongodb_backup_pitr: true` requires
+      `mongodb_pbm_enabled: true`. mongodump --oplog (the path backup_pitr
+      toggles) is rejected via mongos with "can't use --oplog option when
+      dumping from a mongos", and mongodump cannot produce cluster-consistent
+      PITR on sharded — only PBM can (one agent per replica set).
+
+      Current configuration:
+        mongodb_cluster_type    = {{ mongodb_cluster_type }}
+        mongodb_backup_pitr     = {{ mongodb_backup_pitr }}
+        mongodb_pbm_enabled     = {{ mongodb_pbm_enabled }}
+
+      Pick one:
+        1. Enable PBM (`mongodb_pbm_enabled: true`) — requires an LTS MongoDB
+           version (8.0.x or 7.0.x).
+        2. Disable PITR (`mongodb_backup_pitr: false`) — daily full mongodump
+           backups still work, but no PITR on this cluster.
+    success_msg: "PITR configuration is consistent with the cluster topology."
+
 - name: Check admin password is set
   ansible.builtin.assert:
     that: mongodb_admin_password | length > 0
     fail_msg: "mongodb_admin_password must be set (in group_vars or vault)"
-    success_msg: "mongodb_admin_password is set."
+    success_msg: "mongodb admin password is set."
   tags: [never, init]
