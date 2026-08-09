@@ -1,0 +1,19 @@
+---
+# Export anchor — intentionally does no work.
+#
+# Importing this role with `tasks_from: export_vars` loads the mongodb role's
+# defaults/main.yml + vars/main.yml (the engine-derived *_exec_port, replset
+# names, cluster_type, feature flags, etc.) into the calling play WITHOUT
+# running any of the deploy/day-2 tasks in main.yml.
+#
+# Consumed by roles/mongodb_smoke (its dispatcher imports this first) so the
+# smoke checks read the SAME variables the deploy used — single source of
+# truth, no duplicated defaults to drift.
+#
+# Usage:
+#   - ansible.builtin.import_role:
+#       name: mongodb
+#       tasks_from: export_vars
+#
+# Role defaults are lowest precedence, so anything the inventory sets still
+# wins. Keep this file task-free; its only job is to trigger var loading.

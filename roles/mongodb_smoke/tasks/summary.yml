@@ -16,8 +16,8 @@
     _rss_zero_members: "{{ _rss | selectattr('value.members', 'equalto', 0) | list }}"
 
     _expected_rs_names: >-
-      {{ ['mongodb_config_replset']
-         + (['mongodb_shard_replset'] if mongodb_cluster_type == 'sharded' else []) }}
+      {{ ([mongodb_config_replset] if mongodb_cluster_type == 'sharded' else [])
+         + [mongodb_shard_replset] }}
 
     _certs_short: >-
       {{ _smoke_status_certs | dict2items
@@ -26,7 +26,7 @@
 
     _container_running: >-
       {{ (_smoke_core_containers.results | selectattr('containers', 'defined')
-          | selectattr('containers', 'list_format') | list | length)
+          | selectattr('containers', 'truthy') | list | length)
          + (1 if (mongodb_cluster_type == 'sharded'
              and ((_smoke_configsvr.containers | default([]) | length) > 0)) else 0)
          + (1 if (mongodb_exporter_enabled | default(false) | bool
@@ -37,7 +37,7 @@
 
     _pbm_agents_running: >-
       {{ _smoke_pbm_containers.results | selectattr('containers', 'defined')
-         | selectattr('containers', 'list_format') | list | length
+         | selectattr('containers', 'truthy') | list | length
          if (mongodb_pbm_enabled | default(false) | bool) else 0 }}
 
     _pbm_has_backup: >-
@@ -51,10 +51,10 @@
               | difference(
                 _smoke_core_containers.results
                 | selectattr('containers', 'defined')
-                | selectattr('containers', 'list_format')
+                | selectattr('containers', 'truthy')
                 | map(attribute='item') | list))) | join(',')]
          | select() | list if (_smoke_core_containers.results
-          | rejectattr('containers', 'defined') | rejectattr('containers', 'list_format') | list | length) > 0 else [])
+          | selectattr('containers', 'defined') | rejectattr('containers', 'truthy') | list | length) > 0 else [])
       + (['configsvr container missing (sharded)'] | select() | list
          if (mongodb_cluster_type == 'sharded'
              and not ((_smoke_configsvr.containers | default([]) | length) > 0)) else [])

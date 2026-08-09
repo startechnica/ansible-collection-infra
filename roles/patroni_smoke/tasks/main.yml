@@ -17,6 +17,18 @@
     msg: "patroni_smoke skipped (patroni_smoke_enabled=false)"
   when: not (patroni_smoke_enabled | bool)
 
+# Pull the patroni role's defaults/ + vars/ (postgresql_port, patroni_scope,
+# walg_enabled, patroni_vip_address, postgres_exporter_enabled, etc.) so the
+# checks below read the SAME variables the deploy used. No deploy tasks run —
+# export_vars.yml is a no-op anchor. This notably makes the smoke test use the
+# role's real default postgresql_port (55432) instead of a hard-coded 5432
+# fallback. Inventory overrides still win. See roles/patroni/tasks/export_vars.yml.
+- name: "Patroni smoke :: import patroni-role vars (single source of truth)"
+  ansible.builtin.import_role:
+    name: patroni
+    tasks_from: export_vars
+  when: patroni_smoke_enabled | bool
+
 - name: "Patroni smoke :: container health"
   ansible.builtin.include_tasks: containers.yml
   when: patroni_smoke_enabled | bool

@@ -26,32 +26,8 @@ mongodb_smoke_check_pbm: true
 mongodb_smoke_check_mongodump_timer: true
 mongodb_smoke_check_tls: true
 
-# ── Borrowed from the mongodb role ──────────────────────────────────────────
-# The smoke checks read these mongodb-role variables directly, but this role
-# does not load the mongodb role's defaults/ or vars/. Re-declare them here
-# with the SAME defaults so a smoke run works against an inventory that only
-# overrides a subset. These are role defaults (lowest precedence), so anything
-# the inventory sets for the mongodb deploy still wins here.
-#
-# Keep in sync with roles/mongodb/defaults/main.yml + roles/mongodb/vars/main.yml.
-mongodb_cluster_type: sharded
-mongodb_root_dir: /opt/mongodb
-mongodb_tls_dir: "{{ mongodb_root_dir }}/ssl"
-mongodb_container_engine: "{{ container_engine | default('podman') }}"
-
-mongodb_shard_replset: rs0
-mongodb_config_replset: configReplSet
-
-mongodb_mongos_node_port: 27017
-mongodb_configsvr_node_port: 27018
-mongodb_mongod_node_port: 27019
-
-# Engine-derived exec ports (docker publishes 27017; podman uses the node port).
-# Mirrors roles/mongodb/vars/main.yml.
-mongodb_mongod_exec_port: "{{ 27017 if mongodb_container_engine == 'docker' else mongodb_mongod_node_port }}"
-mongodb_configsvr_exec_port: "{{ 27017 if mongodb_container_engine == 'docker' else mongodb_configsvr_node_port }}"
-
-mongodb_backup_enabled: true
-mongodb_exporter_enabled: true
-mongodb_pbm_enabled: false
-mongodb_pbm_init_backup: true
+# NOTE: mongodb-role variables the checks read (mongodb_cluster_type,
+# *_exec_port, mongodb_tls_dir, replset names, feature flags) are NOT
+# re-declared here. The dispatcher imports them from the mongodb role via
+# `import_role: {name: mongodb, tasks_from: export_vars}` so there is a single
+# source of truth. See roles/mongodb_smoke/tasks/main.yml.

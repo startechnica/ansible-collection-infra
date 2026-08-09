@@ -10,6 +10,17 @@
     msg: "mongodb_smoke skipped (mongodb_smoke_enabled=false)"
   when: not (mongodb_smoke_enabled | bool)
 
+# Pull the mongodb role's defaults/ + vars/ (cluster_type, engine-derived
+# *_exec_port, replset names, feature flags) so the checks below read the
+# SAME variables the deploy used. No deploy tasks run — export_vars.yml is a
+# no-op anchor. Inventory overrides still win (role defaults are lowest
+# precedence). See roles/mongodb/tasks/export_vars.yml.
+- name: "MongoDB smoke :: import mongodb-role vars (single source of truth)"
+  ansible.builtin.import_role:
+    name: mongodb
+    tasks_from: export_vars
+  when: mongodb_smoke_enabled | bool
+
 - name: "MongoDB smoke :: container health"
   ansible.builtin.include_tasks: containers.yml
   when: mongodb_smoke_enabled | bool
