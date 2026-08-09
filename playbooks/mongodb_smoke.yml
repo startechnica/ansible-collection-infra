@@ -1,0 +1,17 @@
+---
+# Top-level entry point so the collection FQCN resolves:
+#   ansible-playbook startechnica.infra.mongodb_smoke -i <inventory>
+#
+# Collection playbook resolution only finds playbooks at the top level of
+# playbooks/ and maps the filename verbatim to the FQCN suffix, so this file
+# must be named mongodb_smoke.yml (underscores) and live here, not under test/.
+#
+# All checks live in roles/mongodb_smoke/tasks/*.yml.
+
+- name: "MongoDB smoke test"
+  hosts: mongodb_nodes
+  gather_facts: true
+  become: true
+
+  roles:
+    - role: startechnica.infra.mongodb_smoke
