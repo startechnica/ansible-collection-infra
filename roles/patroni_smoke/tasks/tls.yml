@@ -37,80 +37,77 @@
 # patroni_node but delegates all openssl work to localhost (where the
 # controller-side CA lives); the node only owns the SAN set.
 
-- name: "Create new cert :: set up scratch dir on controller"
-  ansible.builtin.file:
-    path: "{{ patroni_local_certs_dir }}/_smoke_new_cert/{{ inventory_hostname }}"
-    state: directory
-    mode: "0700"
+# All controller-side cert work runs on localhost as the invoking user, NOT
+# under become — the CA and patroni_local_certs_dir are user-owned artifacts,
+# and the play targets patroni_nodes with become: true (node sudo). Without
+# `become: false` here, delegate_to: localhost inherits that become and tries
+# to sudo on the controller ("sudo: a password is required"). The deploy role's
+# tls_certificates.yml pairs every localhost delegation with become: false for
+# the same reason.
+- name: "Create new cert :: controller-side sign+verify flow"
   delegate_to: localhost
-  run_once: false
+  become: false
   when: patroni_smoke_check_tls | bool
+  block:
+    - name: "Create new cert :: set up scratch dir on controller"
+      ansible.builtin.file:
+        path: "{{ patroni_local_certs_dir }}/_smoke_new_cert/{{ inventory_hostname }}"
+        state: directory
+        mode: "0700"
 
-- name: "Create new cert :: generate private key"
-  community.crypto.openssl_privatekey:
-    path: "{{ patroni_local_certs_dir }}/_smoke_new_cert/{{ inventory_hostname }}/leaf.key"
-    type: "{{ tls_key_type | default('ECC') }}"
-    curve: "{{ tls_key_curve | default('secp256r1') if (tls_key_type | default('ECC')) == 'ECC' else omit }}"
-    size: "{{ tls_key_size | default(4096) if (tls_key_type | default('ECC')) != 'ECC' else omit }}"
-  delegate_to: localhost
-  when: patroni_smoke_check_tls | bool
+    - name: "Create new cert :: generate private key"
+      community.crypto.openssl_privatekey:
+        path: "{{ patroni_local_certs_dir }}/_smoke_new_cert/{{ inventory_hostname }}/leaf.key"
+        type: "{{ tls_key_type | default('ECC') }}"
+        curve: "{{ tls_key_curve | default('secp256r1') if (tls_key_type | default('ECC')) == 'ECC' else omit }}"
+        size: "{{ tls_key_size | default(4096) if (tls_key_type | default('ECC')) != 'ECC' else omit }}"
 
-- name: "Create new cert :: generate CSR with node SAN"
-  community.crypto.openssl_csr:
-    path: "{{ patroni_local_certs_dir }}/_smoke_new_cert/{{ inventory_hostname }}/leaf.csr"
-    privatekey_path: "{{ patroni_local_certs_dir }}/_smoke_new_cert/{{ inventory_hostname }}/leaf.key"
-    common_name: "{{ inventory_hostname }}"
-    subject_alt_name:
-      - "DNS:{{ inventory_hostname }}"
-      - "DNS:{{ patroni_scope }}"
-      - "IP:{{ ansible_host | default(inventory_hostname) }}"
-      - "IP:{{ patroni_vip_address | default('') }}"
-    key_usage:
-      - digitalSignature
-      - keyEncipherment
-    extended_key_usage:
-      - serverAuth
-      - clientAuth
-  delegate_to: localhost
-  when: patroni_smoke_check_tls | bool
+    - name: "Create new cert :: generate CSR with node SAN"
+      community.crypto.openssl_csr:
+        path: "{{ patroni_local_certs_dir }}/_smoke_new_cert/{{ inventory_hostname }}/leaf.csr"
+        privatekey_path: "{{ patroni_local_certs_dir }}/_smoke_new_cert/{{ inventory_hostname }}/leaf.key"
+        common_name: "{{ inventory_hostname }}"
+        subject_alt_name:
+          - "DNS:{{ inventory_hostname }}"
+          - "DNS:{{ patroni_scope }}"
+          - "IP:{{ ansible_host | default(inventory_hostname) }}"
+          - "IP:{{ patroni_vip_address | default('') }}"
+        key_usage:
+          - digitalSignature
+          - keyEncipherment
+        extended_key_usage:
+          - serverAuth
+          - clientAuth
 
-- name: "Create new cert :: sign CSR with local CA"
-  community.crypto.x509_certificate:
-    path: "{{ patroni_local_certs_dir }}/_smoke_new_cert/{{ inventory_hostname }}/leaf.crt"
-    csr_path: "{{ patroni_local_certs_dir }}/_smoke_new_cert/{{ inventory_hostname }}/leaf.csr"
-    ownca_path: "{{ patroni_local_certs_dir }}/ca/ca.crt"
-    ownca_privatekey_path: "{{ patroni_local_certs_dir }}/ca/ca.key"
-    ownca_not_after: "+{{ tls_cert_days | default(365) }}d"
-    ownca_digest: "{{ tls_signature_digest | default('sha256') }}"
-  delegate_to: localhost
-  when: patroni_smoke_check_tls | bool
+    - name: "Create new cert :: sign CSR with local CA"
+      community.crypto.x509_certificate:
+        path: "{{ patroni_local_certs_dir }}/_smoke_new_cert/{{ inventory_hostname }}/leaf.crt"
+        csr_path: "{{ patroni_local_certs_dir }}/_smoke_new_cert/{{ inventory_hostname }}/leaf.csr"
+        ownca_path: "{{ patroni_local_certs_dir }}/ca/ca.crt"
+        ownca_privatekey_path: "{{ patroni_local_certs_dir }}/ca/ca.key"
+        ownca_not_after: "+{{ tls_cert_days | default(365) }}d"
+        ownca_digest: "{{ tls_signature_digest | default('sha256') }}"
 
-- name: "Create new cert :: verify chain against the deployed CA"
-  ansible.builtin.command: >-
-    openssl verify
-    -CAfile {{ patroni_local_certs_dir }}/ca/ca.crt
-    {{ patroni_local_certs_dir }}/_smoke_new_cert/{{ inventory_hostname }}/leaf.crt
-  register: _patroni_smoke_new_cert_verify
-  changed_when: false
-  failed_when: false
-  delegate_to: localhost
-  when: patroni_smoke_check_tls | bool
+    - name: "Create new cert :: verify chain against the deployed CA"
+      ansible.builtin.command: >-
+        openssl verify
+        -CAfile {{ patroni_local_certs_dir }}/ca/ca.crt
+        {{ patroni_local_certs_dir }}/_smoke_new_cert/{{ inventory_hostname }}/leaf.crt
+      register: _patroni_smoke_new_cert_verify
+      changed_when: false
+      failed_when: false
 
-- name: "Create new cert :: assert SAN includes this node's hostname"
-  ansible.builtin.command: >-
-    openssl x509 -in
-    {{ patroni_local_certs_dir }}/_smoke_new_cert/{{ inventory_hostname }}/leaf.crt
-    -noout -ext subjectAltName
-  register: _patroni_smoke_new_cert_san
-  changed_when: false
-  failed_when: false
-  delegate_to: localhost
-  when: patroni_smoke_check_tls | bool
+    - name: "Create new cert :: assert SAN includes this node's hostname"
+      ansible.builtin.command: >-
+        openssl x509 -in
+        {{ patroni_local_certs_dir }}/_smoke_new_cert/{{ inventory_hostname }}/leaf.crt
+        -noout -ext subjectAltName
+      register: _patroni_smoke_new_cert_san
+      changed_when: false
+      failed_when: false
 
-- name: "Create new cert :: cleanup scratch dir"
-  ansible.builtin.file:
-    path: "{{ patroni_local_certs_dir }}/_smoke_new_cert"
-    state: absent
-  delegate_to: localhost
-  run_once: true
-  when: patroni_smoke_check_tls | bool
+    - name: "Create new cert :: cleanup scratch dir"
+      ansible.builtin.file:
+        path: "{{ patroni_local_certs_dir }}/_smoke_new_cert"
+        state: absent
+      run_once: true

@@ -26,7 +26,7 @@
     login_host: "{{ patroni_vip_address | default('') }}"
     login_port: "{{ postgresql_port | default(5432) }}"
     login_user: "{{ postgresql_admin_user | default('postgres') }}"
-    login_password: "{{ postgresql_admin_password | default('') }}"
+    login_password: "{{ postgresql_admin_password | default(postgresql_postgres_password | default(''), true) }}"
     login_db: postgres
     sslmode: "{{ postgresql_sslmode | default('verify-full') }}"
     ca_cert: "{{ postgresql_tls_ca_cert_path | default(omit, true) }}"
@@ -40,14 +40,14 @@
   when:
     - patroni_smoke_check_users_and_dbs | bool
     - patroni_databases | length == 0
-    - postgresql_admin_password | default('') | length > 0
+    - postgresql_admin_password | default(postgresql_postgres_password | default(''), true) | length > 0
 
 - name: "Users+DBs (empty path) :: check no managed LOGIN users exist"
   community.postgresql.postgresql_query:
     login_host: "{{ patroni_vip_address | default('') }}"
     login_port: "{{ postgresql_port | default(5432) }}"
     login_user: "{{ postgresql_admin_user | default('postgres') }}"
-    login_password: "{{ postgresql_admin_password | default('') }}"
+    login_password: "{{ postgresql_admin_password | default(postgresql_postgres_password | default(''), true) }}"
     login_db: postgres
     sslmode: "{{ postgresql_sslmode | default('verify-full') }}"
     ca_cert: "{{ postgresql_tls_ca_cert_path | default(omit, true) }}"
@@ -65,4 +65,4 @@
   when:
     - patroni_smoke_check_users_and_dbs | bool
     - patroni_databases | length == 0
-    - postgresql_admin_password | default('') | length > 0
+    - postgresql_admin_password | default(postgresql_postgres_password | default(''), true) | length > 0
