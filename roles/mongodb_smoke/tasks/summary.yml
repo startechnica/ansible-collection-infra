@@ -93,7 +93,7 @@
              and (_smoke_pbm_status.failed | default(true))) else [])
       + (['PBM has no base backups (init_backup may have failed)'] | select() | list
          if ((mongodb_pbm_enabled | default(false) | bool)
-             and (mongodb_pbm_init_backup | default(true) | bool)
+             and (mongodb_backup_init | default(true) | bool)
              and not _pbm_has_backup) else [])
       + (['mongodb-backup.timer not active'] | select() | list
          if ((mongodb_backup_enabled | default(false) | bool)

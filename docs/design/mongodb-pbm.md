@@ -154,7 +154,7 @@ mongodb_backup_storage_type: minio          # minio|s3
 mongodb_backup_pitr: false                 # enable continuous oplog slicing (shared knob)
 mongodb_pbm_compression: zstd              # none|gzip|snappy|lz4|s2|zstd
 mongodb_pbm_compression_level: ""          # optional codec level (zstd 1–22, …)
-mongodb_pbm_init_backup: true              # base backup on provision (PITR anchor)
+mongodb_backup_init: true                  # base backup on provision (PITR anchor)
 ```
 
 Scheduling + retention reuse the **shared backup knobs** rather than PBM-specific

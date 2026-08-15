@@ -94,7 +94,7 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   applying config, the role now force-resyncs PBM storage (clearing *"storage is
   not initialized"*) and lays down a base backup when none exists, so PITR has
   the anchor it requires to start slicing (*"no backup found. full backup is
-  required to start PITR"*). Idempotent via `mongodb_pbm_init_backup` (default
+  required to start PITR"*). Idempotent via `mongodb_backup_init` (default
   `true`) — re-runs never create extra backups. Also fixes PBM S3 against
   path-style-only / strict-checksum gateways: `forcePathStyle` (new
   `s3_force_path_style`, default `true`) avoids `HeadObject 403`, and

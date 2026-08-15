@@ -197,7 +197,7 @@ each node using its own SAN, never touches the deployed certs):
 
 14. **`pbm status` healthy** (no agents stuck or in error state)
 15. **At least one base backup exists** (init_backup worked) when
-    `mongodb_pbm_init_backup` is true (default)
+    `mongodb_backup_init` is true (default)
 
 **Scheduled mongodump**:
 

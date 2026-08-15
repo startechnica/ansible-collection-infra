@@ -215,7 +215,7 @@ mongodb_backup_storage_type: minio
 # initialized") and lay down a base backup if none exists yet — PBM needs one
 # before PITR can start slicing. Idempotent: skipped when a backup already
 # exists. Set false to manage the first backup yourself.
-mongodb_pbm_init_backup: true
+mongodb_backup_init: true
 # Backup compression type: none|gzip|snappy|lz4|s2|zstd.
 mongodb_backup_compression_type: zstd
 # Deprecated alias for mongodb_backup_compression_type.

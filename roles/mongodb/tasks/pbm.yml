@@ -183,7 +183,7 @@
   until: _pbm_resync.rc == 0
   run_once: true
   when:
-    - mongodb_pbm_init_backup | bool
+    - mongodb_backup_init | bool
     - _pbm_storage_available | bool
 
 - name: Check for an existing PBM backup
@@ -194,7 +194,7 @@
   changed_when: false
   run_once: true
   when:
-    - mongodb_pbm_init_backup | bool
+    - mongodb_backup_init | bool
     - _pbm_storage_available | bool
 
 - name: Take initial PBM base backup (storage init + PITR anchor)
@@ -205,7 +205,7 @@
   changed_when: true
   run_once: true
   when:
-    - mongodb_pbm_init_backup | bool
+    - mongodb_backup_init | bool
     - _pbm_storage_available | bool
     # `pbm list --out json` returns {"snapshots": null} (not a missing key) when
     # storage was just resynced and holds no backups. A bare default([]) only
