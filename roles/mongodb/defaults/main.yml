@@ -218,8 +218,6 @@ mongodb_backup_storage_type: minio
 mongodb_backup_init: true
 # Backup compression type: none|gzip|snappy|lz4|s2|zstd.
 mongodb_backup_compression_type: zstd
-# Deprecated alias for mongodb_backup_compression_type.
-mongodb_pbm_compression: "{{ mongodb_backup_compression_type }}"
 # Optional compression level (codec-specific, e.g. zstd 1–22, gzip 1–9). Empty
 # uses the codec's default. Applies to both base backups and PITR oplog slices.
 mongodb_backup_compression_level: 3

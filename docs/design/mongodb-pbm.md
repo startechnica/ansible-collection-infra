@@ -118,7 +118,7 @@ storage:
       secret-access-key: "{{ s3_secret_key }}"
 pitr:
   enabled: "{{ mongodb_backup_pitr | bool }}"
-  compression: "{{ mongodb_pbm_compression }}"
+  compression: "{{ mongodb_backup_compression_type }}"
 ```
 
 Both backends pass credentials as discrete fields rather than splicing them into

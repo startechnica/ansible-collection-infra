@@ -252,11 +252,6 @@ argument_specs:
         default: zstd
         choices: [none, gzip, snappy, lz4, s2, zstd]
         description: Compression codec for PBM base backups and PITR oplog slices.
-      mongodb_pbm_compression:
-        type: str
-        default: zstd
-        choices: [none, gzip, snappy, lz4, s2, zstd]
-        description: Alias for mongodb_backup_compression_type.
       mongodb_backup_compression_level:
         type: str
         default: ""

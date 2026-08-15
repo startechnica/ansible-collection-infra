@@ -29,7 +29,7 @@
     _pbm_control: "{{ 'mongodb-pbm-config' if mongodb_cluster_type == 'sharded' else 'mongodb-pbm-shard' }}"
     # Shared `pbm backup` compression args (level is optional).
     _pbm_compression_args: >-
-      --compression={{ mongodb_pbm_compression }}{{ (' --compression-level=' ~ mongodb_backup_compression_level)
+      --compression={{ mongodb_backup_compression_type }}{{ (' --compression-level=' ~ mongodb_backup_compression_level)
       if mongodb_backup_compression_level | string | length > 0 else '' }}
     # Control URI with `$` doubled so systemd unit ExecStart doesn't try to
     # expand `$external` as an environment variable.
