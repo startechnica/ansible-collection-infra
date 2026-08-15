@@ -240,11 +240,6 @@ argument_specs:
           PBM backend for the shared S3-compatible target. MinIO is the default
           for compatibility with MinIO, Ceph, custom gateways, and proxies;
           select s3 for Amazon S3 or endpoints requiring PBM's AWS SDK backend.
-      mongodb_pbm_storage_type:
-        type: str
-        default: minio
-        choices: [minio, s3]
-        description: Alias for mongodb_backup_storage_type.
       mongodb_pbm_init_backup:
         type: bool
         default: true

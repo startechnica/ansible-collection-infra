@@ -208,8 +208,6 @@ mongodb_pbm_mem_limit_mb: 256
 # SignatureDoesNotMatch). Set `s3` for Amazon S3 or when the endpoint requires
 # PBM's AWS SDK backend.
 mongodb_backup_storage_type: minio
-# Deprecated alias for mongodb_backup_storage_type.
-mongodb_pbm_storage_type: "{{ mongodb_backup_storage_type }}"
 # PBM continuous oplog slicing (restore to any timestamp in the window) is
 # gated on the shared mongodb_backup_pitr knob — the same switch that enables
 # mongodump --oplog for replica-set backups. One PITR intent, one knob.

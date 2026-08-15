@@ -24,7 +24,6 @@
       ansible.builtin.assert:
         that:
           - mongodb_backup_storage_type == 'minio'
-          - mongodb_pbm_storage_type == 'minio'
 
     - name: Recreate PBM render directory
       ansible.builtin.file:

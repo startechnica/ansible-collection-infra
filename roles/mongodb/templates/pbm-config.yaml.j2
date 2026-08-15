@@ -4,8 +4,8 @@
 # cluster. This rendered file is the declarative source of truth. Reuses the
 # shared s3_* vars (PBM's native clients — not the mc client path).
 storage:
-  type: {{ mongodb_pbm_storage_type }}
-{% if mongodb_pbm_storage_type == 'minio' %}
+  type: {{ mongodb_backup_storage_type }}
+{% if mongodb_backup_storage_type == 'minio' %}
   minio:
     region: "{{ s3_region }}"
     # PBM's MinIO client requires host[:port] without a URL scheme. Keep the
