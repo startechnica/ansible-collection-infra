@@ -93,18 +93,26 @@ No new secrets: the agent authenticates by cert, like the exporter.
 
 ## Storage config (reuse `s3_*`, but via PBM-native S3 — not mc)
 
-PBM has **native** S3 support; we do **not** use the `minio/mc` path. PBM config
-is stored *in the cluster* and applied once with `pbm config --file`. Rendered
-from the existing shared vars:
+PBM config is stored *in the cluster* and applied once with
+`pbm config --file`. The default `mongodb_pbm_storage_type: minio` selects
+PBM's native MinIO Go client for MinIO, Ceph, custom S3 gateways, and endpoints
+behind proxies that can rewrite headers signed by the AWS SDK. This is unrelated
+to the role's `minio/mc` backup path: PBM still talks directly to object storage
+using the shared `s3_*` credentials. Set `mongodb_pbm_storage_type: s3` for
+Amazon S3 or endpoints that require PBM's AWS SDK backend.
+
+The default configuration renders as:
 
 ```yaml
 storage:
-  type: s3
-  s3:
+  type: minio
+  minio:
     region: "{{ s3_region }}"
-    endpointUrl: "{{ s3_endpoint }}"
+    endpoint: "{{ s3_endpoint | regex_replace('^https?://', '') }}"
+    secure: true
+    forcePathStyle: true
     bucket: "{{ s3_bucket }}"
-    prefix: "{{ s3_prefix }}/pbm"        # namespaced under the existing prefix
+    prefix: "{{ mongodb_backup_s3_prefix }}/pbm"
     credentials:
       access-key-id: "{{ s3_access_key }}"
       secret-access-key: "{{ s3_secret_key }}"
@@ -113,9 +121,9 @@ pitr:
   compression: "{{ mongodb_pbm_compression }}"
 ```
 
-Note PBM uses the AWS SDK (sigv4); the digit-leading-key / URL-encoding issues we
-hit with `mc` don't apply here — credentials are passed as discrete fields, not
-spliced into a URL.
+Both backends pass credentials as discrete fields rather than splicing them into
+a URL. The `minio` backend expects `endpoint` as `host[:port]` plus a separate
+`secure` boolean; the `s3` backend receives the URL-shaped `endpointUrl`.
 
 ## Deployment (respect `mongodb_container_engine`)
 
@@ -137,10 +145,12 @@ PBM agents are stateless (state lives in the cluster + S3), so no data volumes.
 ## New variables (`mongodb_pbm_*`)
 
 ```yaml
+mongodb_backup_type: pbm                  # pbm|mongodump selector
 mongodb_pbm_enabled: false                 # master switch
 mongodb_pbm_image: "percona/percona-backup-mongodb:2.x.y"   # pin, not :latest
 mongodb_pbm_cn: "mongodb-pbm"              # client-cert CN
 mongodb_pbm_mem_limit_mb: 256
+mongodb_pbm_storage_type: minio             # minio|s3
 mongodb_backup_pitr: false                 # enable continuous oplog slicing (shared knob)
 mongodb_pbm_compression: zstd              # none|gzip|snappy|lz4|s2|zstd
 mongodb_pbm_compression_level: ""          # optional codec level (zstd 1–22, …)

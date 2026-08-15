@@ -1,0 +1,82 @@
+---
+# Regression coverage for the PBM storage backend selector. The MinIO client
+# and AWS S3 client use different PBM configuration keys and endpoint formats.
+
+- name: Render PBM storage configurations
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  vars_files:
+    - ../roles/mongodb/defaults/main.yml
+  vars:
+    _pbm_render_dir: /tmp/pbm-storage-config-test
+
+  tasks:
+    - name: Set PBM storage test inputs
+      ansible.builtin.set_fact:
+        s3_endpoint: https://s3.example.test:9443
+        s3_bucket: test-backup-bucket
+        s3_access_key: test-access-key
+        s3_secret_key: test-secret-key
+        mongodb_backup_s3_prefix: mongodb-test
+
+    - name: Verify MinIO is the default PBM storage backend
+      ansible.builtin.assert:
+        that:
+          - mongodb_pbm_storage_type == 'minio'
+
+    - name: Recreate PBM render directory
+      ansible.builtin.file:
+        path: "{{ _pbm_render_dir }}"
+        state: "{{ item }}"
+        mode: "0755"
+      loop: [absent, directory]
+
+    - name: Render each supported PBM storage backend
+      ansible.builtin.template:
+        src: ../roles/mongodb/templates/pbm-config.yaml.j2
+        dest: "{{ _pbm_render_dir }}/{{ item }}.yaml"
+        mode: "0600"
+      vars:
+        mongodb_pbm_storage_type: "{{ item }}"
+      loop:
+        - minio
+        - s3
+
+    - name: Read rendered PBM storage configurations
+      ansible.builtin.slurp:
+        src: "{{ _pbm_render_dir }}/{{ item }}.yaml"
+      loop:
+        - minio
+        - s3
+      register: _pbm_rendered
+
+    - name: Parse rendered PBM storage configurations
+      ansible.builtin.set_fact:
+        _pbm_minio_config: "{{ _pbm_rendered.results[0].content | b64decode | from_yaml }}"
+        _pbm_s3_config: "{{ _pbm_rendered.results[1].content | b64decode | from_yaml }}"
+
+    - name: Verify MinIO backend configuration
+      ansible.builtin.assert:
+        that:
+          - _pbm_minio_config.storage.type == 'minio'
+          - _pbm_minio_config.storage.minio.endpoint == 's3.example.test:9443'
+          - _pbm_minio_config.storage.minio.secure == true
+          - _pbm_minio_config.storage.minio.forcePathStyle == true
+          - _pbm_minio_config.storage.minio.bucket == s3_bucket
+          - _pbm_minio_config.storage.minio.prefix == 'mongodb-test/pbm'
+          - _pbm_minio_config.storage.minio.credentials['access-key-id'] == s3_access_key
+          - _pbm_minio_config.storage.minio.credentials['secret-access-key'] == s3_secret_key
+          - _pbm_minio_config.storage.s3 is not defined
+
+    - name: Verify AWS S3 backend configuration
+      ansible.builtin.assert:
+        that:
+          - _pbm_s3_config.storage.type == 's3'
+          - _pbm_s3_config.storage.s3.endpointUrl == s3_endpoint
+          - _pbm_s3_config.storage.s3.forcePathStyle == true
+          - _pbm_s3_config.storage.s3.bucket == s3_bucket
+          - _pbm_s3_config.storage.s3.prefix == 'mongodb-test/pbm'
+          - _pbm_s3_config.storage.s3.credentials['access-key-id'] == s3_access_key
+          - _pbm_s3_config.storage.s3.credentials['secret-access-key'] == s3_secret_key
+          - _pbm_s3_config.storage.minio is not defined

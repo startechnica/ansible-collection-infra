@@ -62,6 +62,9 @@ mongodb_services: >-
   {{ _mongodb_services_sharded if mongodb_cluster_type == 'sharded'
      else _mongodb_services_replicaset }}
 
+# Control container for cluster-wide `pbm` CLI commands.
+_pbm_control: "{{ 'mongodb-pbm-config' if mongodb_cluster_type == 'sharded' else 'mongodb-pbm-shard' }}"
+
 # Connection string for PBM CLI control commands (pbm config/status/backup/
 # restore). The CLI must reach the replica set that holds PBM's control data —
 # the config RS on sharded clusters, the shard RS on replica sets — so it pins

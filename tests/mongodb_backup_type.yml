@@ -1,0 +1,33 @@
+---
+# Unit test for mongodb_backup_type default and validation assertions.
+
+- name: Test mongodb_backup_type defaults and options
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  vars_files:
+    - ../roles/mongodb/defaults/main.yml
+
+  tasks:
+    - name: Verify default backup type is pbm
+      ansible.builtin.assert:
+        that:
+          - mongodb_backup_type == 'pbm'
+        fail_msg: "mongodb_backup_type default should be pbm"
+
+    - name: Verify PBM backup fails when mongodb_pbm_enabled is false
+      block:
+        - name: Include PBM backup tasks
+          ansible.builtin.include_tasks: ../roles/mongodb/tasks/pbm_backup.yml
+          vars:
+            mongodb_pbm_enabled: false
+      rescue:
+        - name: Record expected failure
+          ansible.builtin.set_fact:
+            _pbm_backup_failed_as_expected: true
+
+    - name: Assert PBM assertion caught disabled PBM
+      ansible.builtin.assert:
+        that:
+          - _pbm_backup_failed_as_expected | default(false) | bool
+        fail_msg: "PBM backup should fail when mongodb_pbm_enabled is false"

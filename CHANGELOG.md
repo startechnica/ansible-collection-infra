@@ -23,6 +23,16 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   `mongodb_network` still names the docker-compose network (docker engine only).
 
 ### Added
+- **Unified MongoDB backup engine selector (`mongodb_backup_type: mongodump|pbm`).**
+  Configures the active backup engine for both scheduled and on-demand backups.
+  When set to `pbm`, `mongodb_action: backup` and scheduled timers dispatch to
+  Percona Backup for MongoDB (PBM); when `mongodump`, traditional containerized
+  mongodump is used.
+- **Selectable PBM object-storage client.** New
+  `mongodb_pbm_storage_type: minio|s3` setting defaults to PBM's native MinIO
+  client for MinIO and other S3-compatible endpoints, avoiding AWS SDK request
+  signing incompatibilities with proxies that rewrite signed headers. Set it to
+  `s3` for Amazon S3 or endpoints that require PBM's AWS SDK backend.
 - **Patroni standby-cluster support (DR / off-site replica).** New opt-in
   (`patroni_standby_enabled: true`) that deploys a full Patroni cluster whose
   leader is a **Standby Leader** continuously replaying a *remote* primary —

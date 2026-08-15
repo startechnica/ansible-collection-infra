@@ -2,9 +2,23 @@
 # Percona Backup for MongoDB — storage + PITR configuration.
 # Applied cluster-wide once via `pbm config --file`; PBM persists it inside the
 # cluster. This rendered file is the declarative source of truth. Reuses the
-# shared s3_* vars (native S3 — not the mc client path).
+# shared s3_* vars (PBM's native clients — not the mc client path).
 storage:
-  type: s3
+  type: {{ mongodb_pbm_storage_type }}
+{% if mongodb_pbm_storage_type == 'minio' %}
+  minio:
+    region: "{{ s3_region }}"
+    # PBM's MinIO client requires host[:port] without a URL scheme. Keep the
+    # shared s3_endpoint URL-shaped for mc/WAL-G and derive MinIO's form here.
+    endpoint: "{{ s3_endpoint | regex_replace('^https?://', '') | regex_replace('/+$', '') }}"
+    secure: {{ 'true' if s3_endpoint | lower | regex_search('^https://') else 'false' }}
+    forcePathStyle: {{ 'true' if s3_force_path_style | bool else 'false' }}
+    bucket: "{{ s3_bucket }}"
+    prefix: "{{ mongodb_backup_s3_prefix }}/pbm"
+    credentials:
+      access-key-id: "{{ s3_access_key }}"
+      secret-access-key: "{{ s3_secret_key }}"
+{% else %}
   s3:
     region: "{{ s3_region }}"
     endpointUrl: "{{ s3_endpoint }}"
@@ -14,9 +28,10 @@ storage:
     credentials:
       access-key-id: "{{ s3_access_key }}"
       secret-access-key: "{{ s3_secret_key }}"
+{% endif %}
 pitr:
   enabled: {{ 'true' if mongodb_backup_pitr | bool else 'false' }}
-  compression: {{ mongodb_pbm_compression }}
+  compression: {{ mongodb_pbm_compression_type }}
 {% if mongodb_pbm_compression_level | string | length > 0 %}
   compressionLevel: {{ mongodb_pbm_compression_level }}
 {% endif %}
