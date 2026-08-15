@@ -16,8 +16,8 @@
 - name: Resolve PBM control container + compression args
   ansible.builtin.set_fact:
     _pbm_compression_args: >-
-      --compression={{ mongodb_pbm_compression }}{{ (' --compression-level=' ~ mongodb_pbm_compression_level)
-      if mongodb_pbm_compression_level | string | length > 0 else '' }}
+      --compression={{ mongodb_pbm_compression }}{{ (' --compression-level=' ~ mongodb_backup_compression_level)
+      if mongodb_backup_compression_level | string | length > 0 else '' }}
   run_once: true
 
 - name: Run PBM backup (waits for completion)

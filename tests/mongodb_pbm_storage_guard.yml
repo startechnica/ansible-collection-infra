@@ -14,8 +14,8 @@
     mongodb_gid: 999
     mongodb_mongod_exec_port: 27019
     mongodb_configsvr_exec_port: 27018
-    mongodb_pbm_compression: zstd
-    mongodb_pbm_compression_level: 3
+    mongodb_backup_compression_type: zstd
+    mongodb_backup_compression_level: 3
     mongodb_pbm_mem_limit_mb: 256
     mongodb_backup_init: true
     mongodb_pbm_image: docker.io/percona/percona-backup-mongodb:2.15.0

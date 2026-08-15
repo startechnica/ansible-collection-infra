@@ -83,8 +83,8 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   `mongodb_backup_schedule` and a post-backup `pbm cleanup` prunes base backups
   + oplog chunks older than `mongodb_backup_retain_days` (one schedule + one
   retention window for both the mongodump path and PBM). Backup compression is
-  tunable via `mongodb_pbm_compression` (default `zstd`) + optional
-  `mongodb_pbm_compression_level` (applied to base backups and PITR slices).
+  tunable via `mongodb_backup_compression_type` (default `zstd`) + optional
+  `mongodb_backup_compression_level` (applied to base backups and PITR slices).
   `pbm-setup` retrofits PBM onto
   an already-running cluster without reprovisioning — it creates the per-RS PBM
   user via member-cert (`__system`) auth and deploys agents with no container

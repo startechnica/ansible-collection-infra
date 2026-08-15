@@ -152,8 +152,8 @@ mongodb_pbm_cn: "mongodb-pbm"              # client-cert CN
 mongodb_pbm_mem_limit_mb: 256
 mongodb_backup_storage_type: minio          # minio|s3
 mongodb_backup_pitr: false                 # enable continuous oplog slicing (shared knob)
-mongodb_pbm_compression: zstd              # none|gzip|snappy|lz4|s2|zstd
-mongodb_pbm_compression_level: ""          # optional codec level (zstd 1–22, …)
+mongodb_backup_compression_type: zstd        # none|gzip|snappy|lz4|s2|zstd
+mongodb_backup_compression_level: ""        # optional codec level (zstd 1–22, …)
 mongodb_backup_init: true                  # base backup on provision (PITR anchor)
 ```
 
