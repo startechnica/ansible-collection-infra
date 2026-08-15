@@ -7,10 +7,10 @@
 - name: Validate PBM is enabled for PBM backup
   ansible.builtin.assert:
     that:
-      - mongodb_pbm_enabled | bool
+      - mongodb_backup_pbm_enabled | bool
     fail_msg: >-
       PBM backup requested (mongodb_backup_type=pbm or action=pbm-backup), but
-      mongodb_pbm_enabled is false. Set mongodb_pbm_enabled: true in inventory/vars.
+      mongodb_backup_pbm_enabled is false. Set mongodb_backup_pbm_enabled: true in inventory/vars.
   run_once: true
 
 - name: Resolve PBM control container + compression args

@@ -312,7 +312,7 @@
       --tlsCAFile /etc/mongo/ssl/ca.pem
       --quiet --eval "{{ _pbm_create_user_js }}"
   when:
-    - mongodb_pbm_enabled | bool
+    - mongodb_backup_pbm_enabled | bool
     - _is_sharded | bool
     - not _mongodb_init_marker.stat.exists
 
@@ -327,7 +327,7 @@
       --tlsCAFile /etc/mongo/ssl/ca.pem
       --quiet --eval "{{ _pbm_create_user_js }}"
   when:
-    - mongodb_pbm_enabled | bool
+    - mongodb_backup_pbm_enabled | bool
     - not _mongodb_init_marker.stat.exists
 
 # ── Switch to full auth mode ──

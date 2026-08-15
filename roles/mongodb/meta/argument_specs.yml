@@ -215,7 +215,7 @@ argument_specs:
         default: 9216
 
       # ── Percona Backup for MongoDB (PBM) ──
-      mongodb_pbm_enabled:
+      mongodb_backup_pbm_enabled:
         type: bool
         default: false
         description: >
@@ -225,11 +225,11 @@ argument_specs:
       mongodb_backup_pbm_image:
         type: str
         default: "docker.io/percona/percona-backup-mongodb:2.15.0"
-      mongodb_pbm_cn:
+      mongodb_backup_pbm_cn:
         type: str
         default: mongodb-pbm
         description: X.509 CN the PBM agent presents (mapped to a $external user).
-      mongodb_pbm_mem_limit_mb:
+      mongodb_backup_pbm_mem_limit_mb:
         type: int
         default: 256
       mongodb_backup_storage_type:
@@ -263,11 +263,11 @@ argument_specs:
         description: >-
           Optional codec-specific compression level (e.g. zstd 1–22, gzip 1–9).
           Empty uses the codec default. Applies to base backups and PITR slices.
-      mongodb_pbm_x509_subject:
+      mongodb_backup_pbm_x509_subject:
         type: str
         description: >
           Full X.509 subject DN the PBM $external user is created with. Defaults
-          to CN=<mongodb_pbm_cn>,OU=<client OU>,O=<org>.
+          to CN=<mongodb_backup_pbm_cn>,OU=<client OU>,O=<org>.
 
       # ── Backup ──
       mongodb_backup_type:

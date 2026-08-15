@@ -14,7 +14,7 @@
     _smoke_pbm_control: "{{ 'mongodb-pbm-config' if mongodb_cluster_type == 'sharded' else 'mongodb-pbm-shard' }}"
   when:
     - mongodb_smoke_check_pbm | bool
-    - mongodb_pbm_enabled | default(false) | bool
+    - mongodb_backup_pbm_enabled | default(false) | bool
 
 - name: "5a. PBM status (per node)"
   ansible.builtin.command: >-
@@ -25,7 +25,7 @@
   changed_when: false
   when:
     - mongodb_smoke_check_pbm | bool
-    - mongodb_pbm_enabled | default(false) | bool
+    - mongodb_backup_pbm_enabled | default(false) | bool
 
 - name: "5b. PBM backup list (any base backups exist)"
   ansible.builtin.command: >-
@@ -37,4 +37,4 @@
   run_once: true
   when:
     - mongodb_smoke_check_pbm | bool
-    - mongodb_pbm_enabled | default(false) | bool
+    - mongodb_backup_pbm_enabled | default(false) | bool

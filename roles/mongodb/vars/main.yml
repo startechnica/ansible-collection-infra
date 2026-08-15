@@ -99,7 +99,7 @@ _pbm_create_user_js: >-
       });
     } catch(re) { if (!re.message.includes('already exists')) throw re; }
     db.getSiblingDB('\$external').createUser({
-      user: '{{ mongodb_pbm_x509_subject }}',
+      user: '{{ mongodb_backup_pbm_x509_subject }}',
       roles: [
         { db: 'admin', role: 'readWrite' },
         { db: 'admin', role: 'backup' },

@@ -97,7 +97,7 @@
       --network container:{{ item.svc }} \
       --restart unless-stopped \
       --user {{ mongodb_uid }}:{{ mongodb_gid }} \
-      --memory {{ mongodb_pbm_mem_limit_mb }}m \
+      --memory {{ mongodb_backup_pbm_mem_limit_mb }}m \
       --entrypoint /bin/bash \
       -e AWS_REQUEST_CHECKSUM_CALCULATION=when_required \
       -e AWS_RESPONSE_CHECKSUM_VALIDATION=when_required \

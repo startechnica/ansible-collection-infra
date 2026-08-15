@@ -193,7 +193,7 @@ each node using its own SAN, never touches the deployed certs):
 12. **Read from replica** (doc found — replication worked end-to-end)
 13. **Smoke DB cleanup** (always — prevents test-data leakage)
 
-**PBM** (when `mongodb_pbm_enabled`):
+**PBM** (when `mongodb_backup_pbm_enabled`):
 
 14. **`pbm status` healthy** (no agents stuck or in error state)
 15. **At least one base backup exists** (init_backup worked) when
@@ -223,7 +223,7 @@ each node using its own SAN, never touches the deployed certs):
   block. On a partial failure the cleanup still runs.
 - **Idempotent on second run.** Re-running the smoke test does not break
   anything (the unique collection name avoids collisions).
-- **No `mongodb_pbm_enabled`-only run separately.** The MongoDB smoke test
+- **No `mongodb_backup_pbm_enabled`-only run separately.** The MongoDB smoke test
   handles PBM-disabled clusters cleanly (PBM assertion becomes trivially
   PASS — "disabled" is healthy too).
 

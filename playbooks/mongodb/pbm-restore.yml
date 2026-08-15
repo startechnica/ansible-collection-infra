@@ -3,7 +3,7 @@
 #
 # WHOLE-CLUSTER, in-place restore. Disruptive: PBM stops the balancer and
 # expects no active application writes during the restore. Requires
-# mongodb_pbm_enabled: true. Specify exactly one target:
+# mongodb_backup_pbm_enabled: true. Specify exactly one target:
 #
 #   # restore a specific snapshot (see `pbm list` / pbm-status.yml)
 #   ansible-playbook playbooks/mongodb/pbm-restore.yml -i inventories/<inv>.yml \

@@ -15,12 +15,12 @@
           - mongodb_backup_type == 'pbm'
         fail_msg: "mongodb_backup_type default should be pbm"
 
-    - name: Verify PBM backup fails when mongodb_pbm_enabled is false
+    - name: Verify PBM backup fails when mongodb_backup_pbm_enabled is false
       block:
         - name: Include PBM backup tasks
           ansible.builtin.include_tasks: ../roles/mongodb/tasks/pbm_backup.yml
           vars:
-            mongodb_pbm_enabled: false
+            mongodb_backup_pbm_enabled: false
       rescue:
         - name: Record expected failure
           ansible.builtin.set_fact:
@@ -30,4 +30,4 @@
       ansible.builtin.assert:
         that:
           - _pbm_backup_failed_as_expected | default(false) | bool
-        fail_msg: "PBM backup should fail when mongodb_pbm_enabled is false"
+        fail_msg: "PBM backup should fail when mongodb_backup_pbm_enabled is false"

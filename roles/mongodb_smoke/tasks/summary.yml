@@ -38,7 +38,7 @@
     _pbm_agents_running: >-
       {{ _smoke_pbm_containers.results | selectattr('containers', 'defined')
          | selectattr('containers', 'truthy') | list | length
-         if (mongodb_pbm_enabled | default(false) | bool) else 0 }}
+         if (mongodb_backup_pbm_enabled | default(false) | bool) else 0 }}
 
     # `pbm list --out json` returns {"snapshots": null} (not a missing key) right
     # after a force-resync with no backups yet. default([], true) also replaces
@@ -62,11 +62,11 @@
          if (mongodb_cluster_type == 'sharded'
              and not ((_smoke_configsvr.containers | default([]) | length) > 0)) else [])
       + (['PBM agent container down (sharded expects 2)'] | select() | list
-         if (mongodb_pbm_enabled | default(false) | bool
+         if (mongodb_backup_pbm_enabled | default(false) | bool
              and mongodb_cluster_type == 'sharded'
              and _pbm_agents_running < 2) else [])
       + (['PBM agent container down (replicaset expects 1)'] | select() | list
-         if (mongodb_pbm_enabled | default(false) | bool
+         if (mongodb_backup_pbm_enabled | default(false) | bool
              and mongodb_cluster_type == 'replicaset'
              and _pbm_agents_running < 1) else [])
       + (['mongodb_status module failed'] | select() | list if (_smoke_status.failed | default(true)) else [])
@@ -89,10 +89,10 @@
          if (not (_smoke_write.failed | default(true))
              and (_smoke_read.stdout | default('')) is search('null')) else [])
       + (['PBM status unhealthy'] | select() | list
-         if ((mongodb_pbm_enabled | default(false) | bool)
+         if ((mongodb_backup_pbm_enabled | default(false) | bool)
              and (_smoke_pbm_status.failed | default(true))) else [])
       + (['PBM has no base backups (init_backup may have failed)'] | select() | list
-         if ((mongodb_pbm_enabled | default(false) | bool)
+         if ((mongodb_backup_pbm_enabled | default(false) | bool)
              and (mongodb_backup_init | default(true) | bool)
              and not _pbm_has_backup) else [])
       + (['mongodb-backup.timer not active'] | select() | list
@@ -111,7 +111,7 @@
       - "Replica sets: {{ _rss | map(attribute='key') | list }} | primaries: {{ _rss_with_primary | map(attribute='value.primary') | list }}"
       - "mongos: port={{ ((_smoke_mongos_port.elapsed | default(999)) < 30) }} ping={{ (_smoke_ping.rc | default(1)) == 0 }}"
       - "End-to-end: write={{ not (_smoke_write.failed | default(true)) }} read={{ (_smoke_read.stdout | default('')) is not search('null') }}"
-      - "PBM: {{ 'enabled, ' ~ _pbm_agents_running ~ ' agents, has_backups=' ~ _pbm_has_backup if (mongodb_pbm_enabled | default(false) | bool) else 'disabled' }}"
+      - "PBM: {{ 'enabled, ' ~ _pbm_agents_running ~ ' agents, has_backups=' ~ _pbm_has_backup if (mongodb_backup_pbm_enabled | default(false) | bool) else 'disabled' }}"
       - "Scheduled mongodump: {{ (_smoke_mongodump_timer.status.ActiveState | default('(unknown)')) if (mongodb_backup_enabled | default(false) | bool) else 'disabled' }}"
       - "{{ 'Failures (' ~ (_failures | length) ~ '): ' ~ (_failures | join('; ')) if (_failures | length) > 0 else 'No failures.' }}"
   run_once: true

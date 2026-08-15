@@ -197,11 +197,11 @@ mongodb_exporter_port: 9216
 # NOTE: on the Community `mongo` image PBM does LOGICAL backups + logical PITR
 # only — physical backups need Percona Server for MongoDB. See
 # docs/design/mongodb-pbm.md.
-mongodb_pbm_enabled: false
+mongodb_backup_pbm_enabled: false
 # Pin the agent image (avoid :latest for reproducible/offline-friendly pulls).
 mongodb_backup_pbm_image: "docker.io/percona/percona-backup-mongodb:2.15.0"
-mongodb_pbm_cn: mongodb-pbm
-mongodb_pbm_mem_limit_mb: 256
+mongodb_backup_pbm_cn: mongodb-pbm
+mongodb_backup_pbm_mem_limit_mb: 256
 # PBM client used for the shared S3-compatible target. `minio` is the safer
 # default for MinIO/Ceph/custom gateways and proxies because it avoids the AWS
 # SDK Go v2 signing `Accept-Encoding` (a header some proxies rewrite, causing
@@ -232,7 +232,7 @@ mongodb_backup_compression_level: 3
 # the PITR window keeps a fresh floor and the bucket doesn't grow unbounded.
 # X.509 subject the PBM agent presents (mapped to a $external user with the
 # PBM role set). Mirrors mongodb_healthcheck_x509_subject / _exporter_.
-mongodb_pbm_x509_subject: "CN={{ mongodb_pbm_cn }},OU={{ mongodb_pki_client_ou }},O={{ mongodb_pki_o }}"
+mongodb_backup_pbm_x509_subject: "CN={{ mongodb_backup_pbm_cn }},OU={{ mongodb_pki_client_ou }},O={{ mongodb_pki_o }}"
 
 # ── Kernel tuning ──
 mongodb_sysctl:

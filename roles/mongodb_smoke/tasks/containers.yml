@@ -41,4 +41,4 @@
     - mongodb-pbm-config
   when:
     - mongodb_smoke_check_containers | bool
-    - mongodb_pbm_enabled | default(false) | bool
+    - mongodb_backup_pbm_enabled | default(false) | bool

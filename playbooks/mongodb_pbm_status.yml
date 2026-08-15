@@ -2,7 +2,7 @@
 # ─── MongoDB: Percona Backup (PBM) — status ─────────────────────────────────
 #
 # Show PBM agents, storage target, the PITR window, and the backup list.
-# Requires mongodb_pbm_enabled: true.
+# Requires mongodb_backup_pbm_enabled: true.
 #
 # Usage (file path, or FQCN since this playbook lives at the playbooks/ root):
 #   ansible-playbook playbooks/mongodb_pbm_status.yml -i inventories/<inv>.yml

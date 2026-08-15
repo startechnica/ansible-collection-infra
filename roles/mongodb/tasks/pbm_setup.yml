@@ -27,15 +27,15 @@
 - name: Assert PBM is enabled
   ansible.builtin.assert:
     that:
-      - mongodb_pbm_enabled | bool
-    fail_msg: "Set mongodb_pbm_enabled: true (inventory or -e) before running pbm-setup."
+      - mongodb_backup_pbm_enabled | bool
+    fail_msg: "Set mongodb_backup_pbm_enabled: true (inventory or -e) before running pbm-setup."
   run_once: true
 
 # ── 1. Generate + distribute the pbm-agent client cert ──
 - name: Generate PBM agent certificate
   ansible.builtin.include_tasks: _generate_client_cert.yml
   vars:
-    client_cn: "{{ mongodb_pbm_cn }}"
+    client_cn: "{{ mongodb_backup_pbm_cn }}"
     client_name: pbm-agent
 
 - name: Ensure SSL directory on remote hosts
