@@ -23,6 +23,7 @@
     - name: Verify MinIO is the default PBM storage backend
       ansible.builtin.assert:
         that:
+          - mongodb_backup_storage_type == 'minio'
           - mongodb_pbm_storage_type == 'minio'
 
     - name: Recreate PBM render directory
@@ -38,7 +39,7 @@
         dest: "{{ _pbm_render_dir }}/{{ item }}.yaml"
         mode: "0600"
       vars:
-        mongodb_pbm_storage_type: "{{ item }}"
+        mongodb_backup_storage_type: "{{ item }}"
       loop:
         - minio
         - s3

@@ -94,11 +94,11 @@ No new secrets: the agent authenticates by cert, like the exporter.
 ## Storage config (reuse `s3_*`, but via PBM-native S3 — not mc)
 
 PBM config is stored *in the cluster* and applied once with
-`pbm config --file`. The default `mongodb_pbm_storage_type: minio` selects
+`pbm config --file`. The default `mongodb_backup_storage_type: minio` selects
 PBM's native MinIO Go client for MinIO, Ceph, custom S3 gateways, and endpoints
 behind proxies that can rewrite headers signed by the AWS SDK. This is unrelated
 to the role's `minio/mc` backup path: PBM still talks directly to object storage
-using the shared `s3_*` credentials. Set `mongodb_pbm_storage_type: s3` for
+using the shared `s3_*` credentials. Set `mongodb_backup_storage_type: s3` for
 Amazon S3 or endpoints that require PBM's AWS SDK backend.
 
 The default configuration renders as:
@@ -150,7 +150,7 @@ mongodb_pbm_enabled: false                 # master switch
 mongodb_pbm_image: "percona/percona-backup-mongodb:2.x.y"   # pin, not :latest
 mongodb_pbm_cn: "mongodb-pbm"              # client-cert CN
 mongodb_pbm_mem_limit_mb: 256
-mongodb_pbm_storage_type: minio             # minio|s3
+mongodb_backup_storage_type: minio          # minio|s3
 mongodb_backup_pitr: false                 # enable continuous oplog slicing (shared knob)
 mongodb_pbm_compression: zstd              # none|gzip|snappy|lz4|s2|zstd
 mongodb_pbm_compression_level: ""          # optional codec level (zstd 1–22, …)
