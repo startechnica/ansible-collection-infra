@@ -133,7 +133,7 @@ Mirror the exporter sidecar wiring across both engines:
   `quadlets/mongodb-pbm-shard.container.j2` and
   `quadlets/mongodb-pbm-config.container.j2` (config one rendered only when
   sharded). `After=`/`Wants=` the corresponding mongod/configsvr unit. Image
-  `mongodb_pbm_image`, `User=` mongodb uid/gid, the `pbm-agent.pem`+`ca.pem`
+  `mongodb_backup_pbm_image`, `User=` mongodb uid/gid, the `pbm-agent.pem`+`ca.pem`
   volumes, `PBM_MONGODB_URI` env, `Memory={{ mongodb_pbm_mem_limit_mb }}m`.
 - **Docker Compose**: two new services with
   `network_mode: service:mongod` and `network_mode: service:configsvr`
@@ -147,7 +147,7 @@ PBM agents are stateless (state lives in the cluster + S3), so no data volumes.
 ```yaml
 mongodb_backup_type: pbm                  # pbm|mongodump selector
 mongodb_pbm_enabled: false                 # master switch
-mongodb_pbm_image: "percona/percona-backup-mongodb:2.x.y"   # pin, not :latest
+mongodb_backup_pbm_image: "percona/percona-backup-mongodb:2.x.y"   # pin, not :latest
 mongodb_pbm_cn: "mongodb-pbm"              # client-cert CN
 mongodb_pbm_mem_limit_mb: 256
 mongodb_backup_storage_type: minio          # minio|s3
@@ -241,5 +241,5 @@ On sharded clusters, PBM is the answer and `mongodb_backup_pitr` stays false.
 - **O3 — separate role vs. integrate:** Integrate into the `mongodb` role
   (recommended — shares certs/topology/S3/engine dispatch, like the exporter) or
   a standalone `mongodb_pbm` role? Recommendation: **integrate**.
-- **O4 — PBM version pin:** which 2.x to pin for `mongodb_pbm_image` and the
+- **O4 — PBM version pin:** which 2.x to pin for `mongodb_backup_pbm_image` and the
   matching role grants.

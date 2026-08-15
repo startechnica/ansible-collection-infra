@@ -152,7 +152,7 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 - **Percona sidecar image defaults bumped.** `mongodb_exporter_image`
-  `0.51.0` → `0.52.0`, `mongodb_pbm_image` `2.14.0` → `2.15.0`. Standalone
+  `0.51.0` → `0.52.0`, `mongodb_backup_pbm_image` `2.14.0` → `2.15.0`. Standalone
   Go binaries — unaffected by the kernel issue below.
 - **`mongodb_version` default → `8.0.28`.** Pinned to the **LTS** line that
   satisfies PBM 2.15's LTS-only support (`7.0.x`/`8.0.x` only — rapid releases

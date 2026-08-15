@@ -18,7 +18,7 @@
     mongodb_backup_compression_level: 3
     mongodb_pbm_mem_limit_mb: 256
     mongodb_backup_init: true
-    mongodb_pbm_image: docker.io/percona/percona-backup-mongodb:2.15.0
+    mongodb_backup_pbm_image: docker.io/percona/percona-backup-mongodb:2.15.0
     mongodb_backup_pitr: true
     mongodb_backup_s3_prefix: mongodb-test/pbm-root
     s3_bucket: test-backup-bucket

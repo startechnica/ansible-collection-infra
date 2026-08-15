@@ -222,7 +222,7 @@ argument_specs:
           Deploy PBM agents for cluster-consistent backups + PITR. Required for
           sharded-cluster PITR (mongodump --oplog can't run via mongos). One
           agent per local mongod (2/host sharded, 1/host replicaset).
-      mongodb_pbm_image:
+      mongodb_backup_pbm_image:
         type: str
         default: "docker.io/percona/percona-backup-mongodb:2.15.0"
       mongodb_pbm_cn:
