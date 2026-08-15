@@ -1,0 +1,43 @@
+---
+# Regression test: a successful `pbm status` exit code does not mean storage is
+# usable. PBM reports agent-level S3 failures in stdout; provisioning must warn
+# and skip storage initialization without stopping the rest of the play.
+
+- name: Exercise the PBM storage-health guard
+  hosts: localhost
+  gather_facts: false
+  vars:
+    mongodb_container_engine: podman
+    mongodb_cluster_type: sharded
+    mongodb_root_dir: /opt/mongodb
+    mongodb_uid: 999
+    mongodb_gid: 999
+    mongodb_mongod_exec_port: 27019
+    mongodb_configsvr_exec_port: 27018
+    mongodb_pbm_compression: zstd
+    mongodb_pbm_compression_level: 3
+    mongodb_pbm_mem_limit_mb: 256
+    mongodb_pbm_init_backup: true
+    mongodb_pbm_image: docker.io/percona/percona-backup-mongodb:2.15.0
+    mongodb_backup_pitr: true
+    mongodb_backup_s3_prefix: mongodb-test/pbm-root
+    s3_bucket: test-backup-bucket
+    s3_access_key: test-access-key
+    s3_secret_key: test-secret-key
+    s3_endpoint: https://s3.example.test
+    s3_region: us-east-1
+    s3_force_path_style: true
+    _pbm_status:
+      rc: 1
+      stdout: ""
+      stderr: >-
+        Error: get status: get lock data: Cannot login into S3:
+        Access Denied
+  tasks:
+    - name: Include the storage-health guard
+      ansible.builtin.include_tasks: ../roles/mongodb/tasks/pbm_storage_guard.yml
+
+    - name: Verify failed S3 access is nonfatal and recorded
+      ansible.builtin.assert:
+        that:
+          - not (_pbm_storage_available | bool)

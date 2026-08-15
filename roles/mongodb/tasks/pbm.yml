@@ -135,12 +135,35 @@
   changed_when: false
   retries: 15
   delay: 10
-  until: _pbm_status.rc == 0
+  until: >-
+    _pbm_status.rc == 0
+    or 'FAILED status:' in (_pbm_status.stdout | default('', true))
+    or 'FAILED status:' in (_pbm_status.stderr | default('', true))
+    or 'ERROR with storage:' in (_pbm_status.stdout | default('', true))
+    or 'ERROR with storage:' in (_pbm_status.stderr | default('', true))
+    or 'cannot login into s3' in (_pbm_status.stdout | default('', true) | lower)
+    or 'cannot login into s3' in (_pbm_status.stderr | default('', true) | lower)
+    or 'cannot login to s3' in (_pbm_status.stdout | default('', true) | lower)
+    or 'cannot login to s3' in (_pbm_status.stderr | default('', true) | lower)
+  failed_when: >-
+    _pbm_status.rc != 0
+    and 'FAILED status:' not in (_pbm_status.stdout | default('', true))
+    and 'FAILED status:' not in (_pbm_status.stderr | default('', true))
+    and 'ERROR with storage:' not in (_pbm_status.stdout | default('', true))
+    and 'ERROR with storage:' not in (_pbm_status.stderr | default('', true))
+    and 'cannot login into s3' not in (_pbm_status.stdout | default('', true) | lower)
+    and 'cannot login into s3' not in (_pbm_status.stderr | default('', true) | lower)
+    and 'cannot login to s3' not in (_pbm_status.stdout | default('', true) | lower)
+    and 'cannot login to s3' not in (_pbm_status.stderr | default('', true) | lower)
   run_once: true
 
 - name: Show PBM status
   ansible.builtin.debug:
     msg: "{{ _pbm_status.stdout_lines | default(['(pbm status unavailable)']) }}"
+  run_once: true
+
+- name: Check PBM agents can access configured storage
+  ansible.builtin.include_tasks: pbm_storage_guard.yml
   run_once: true
 
 # ── Initialize storage + lay down a base backup ──
@@ -159,7 +182,9 @@
   delay: 5
   until: _pbm_resync.rc == 0
   run_once: true
-  when: mongodb_pbm_init_backup | bool
+  when:
+    - mongodb_pbm_init_backup | bool
+    - _pbm_storage_available | bool
 
 - name: Check for an existing PBM backup
   ansible.builtin.command: >
@@ -168,7 +193,9 @@
   register: _pbm_list
   changed_when: false
   run_once: true
-  when: mongodb_pbm_init_backup | bool
+  when:
+    - mongodb_pbm_init_backup | bool
+    - _pbm_storage_available | bool
 
 - name: Take initial PBM base backup (storage init + PITR anchor)
   ansible.builtin.command: >
@@ -179,6 +206,7 @@
   run_once: true
   when:
     - mongodb_pbm_init_backup | bool
+    - _pbm_storage_available | bool
     # `pbm list --out json` returns {"snapshots": null} (not a missing key) when
     # storage was just resynced and holds no backups. A bare default([]) only
     # fills UNDEFINED, not an explicit null, so `null | length` crashes — the
