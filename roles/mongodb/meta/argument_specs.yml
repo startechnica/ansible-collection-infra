@@ -39,16 +39,16 @@ argument_specs:
         description:
           - Open-ended lower bound of the kernel range where MongoDB's vendored-TCMalloc/rseq ABI violation bites.
           - Kernels at/above this value are affected (no upper-bound escape); kernels below are always fine.
-          - This is only half the gate — the refuse is also version-gated (see `mongodb_kernel_guard_min_version`).
-          - Preflight blocks only when `host kernel >= mongodb_unsupported_kernel` AND `mongodb_version >= mongodb_kernel_guard_min_version`.
+          - "The compatibility gate is version-independent: MongoDB 8.0.28 is also affected."
+          - Preflight blocks whenever `host kernel >= mongodb_unsupported_kernel`.
           - See https://jira.mongodb.org/browse/SERVER-121912.
 
       mongodb_kernel_guard_min_version:
         type: str
         default: "8.3"
         description:
-          - The MongoDB version line that ADDED the hard startup refuse (log id 12257600) on kernels >= `mongodb_unsupported_kernel`. Deployments below this version run fine on affected kernels.
-          - Verified 2026-08 on kernel 7.1.3 — mongo 8.3.7 hard-refuses, mongo 8.2.7 runs healthy. Combined with `mongodb_unsupported_kernel` to form the two-axis compatibility gate.
+          - "DEPRECATED / INERT. Retained only for inventories that set the former version-gated compatibility guard."
+          - The guard now applies to every MongoDB version, including the 8.0 LTS line.
           - See https://jira.mongodb.org/browse/SERVER-121912.
 
       mongodb_fixed_kernel:

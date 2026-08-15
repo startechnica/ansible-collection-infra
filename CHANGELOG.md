@@ -145,29 +145,22 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   `0.51.0` → `0.52.0`, `mongodb_pbm_image` `2.14.0` → `2.15.0`. Standalone
   Go binaries — unaffected by the kernel issue below.
 - **`mongodb_version` default → `8.0.28`.** Pinned to the **LTS** line that
-  satisfies all three version-selection constraints documented in the README
-  gotchas: (1) kernel gate (`< 8.3`), (2) PBM 2.15 LTS-only support
-  (`7.0.x`/`8.0.x` only — rapid releases `8.1`/`8.2`/`8.3` rejected at the
-  agent), and (3) sharded-cluster PITR (mongodump --oplog can't run via
-  mongos, only PBM handles it). On a sharded cluster on kernel ≥ 6.19 (e.g.
-  FCOS 44 = 7.1.3), 8.0.x is the only MongoDB line that supports PBM and
-  therefore PITR.
+  satisfies PBM 2.15's LTS-only support (`7.0.x`/`8.0.x` only — rapid releases
+  `8.1`/`8.2`/`8.3` are rejected at the agent) and sharded-cluster PITR
+  (mongodump --oplog can't run via mongos; PBM is required). This does **not**
+  make 8.0.28 compatible with Linux kernels >= 6.19; those hosts must use a
+  supported kernel/OS before deploying MongoDB.
 
 ### Fixed
-- **Kernel-compatibility gate is now a two-axis (kernel × MongoDB version)
-  check.** The vendored-TCMalloc/rseq incompatibility on Linux kernel `>= 6.19`
-  is real, open-ended (no `7.0.14+` escape), **but version-gated**: the hard
-  startup refuse (`MongoDB cannot start: Linux kernel versions 6.19 and
-  newer...`, log id 12257600) was introduced in the **8.3** line. Verified on
-  kernel `7.1.3`: mongo `8.3.7` hard-refuses and crash-loops, mongo `8.2.7`
-  runs healthy. Preflight now blocks **only** when kernel
-  `>= mongodb_unsupported_kernel` (6.19) **AND** `mongodb_version >=
-  mongodb_kernel_guard_min_version` (new, default `8.3`). `mongodb_fixed_kernel`
-  is retained but **inert**. Supersedes two earlier wrong takes on this gate
-  in the same dev cycle (a bounded `7.0.14+`-fixed range, then a version-blind
-  open-ended floor that wrongly blocked 8.2). On an affected kernel, pin
-  `mongodb_version < 8.3`, a kernel `< 6.19` (via `content_library_item_name`),
-  or a non-affected OS.
+- **Kernel-compatibility gate blocks every MongoDB version on Linux kernel
+  `>= 6.19`.** The vendored-TCMalloc/rseq incompatibility is open-ended (no
+  `7.0.14+` escape) and affects the 8.0 LTS line, including `8.0.28`. Preflight
+  now fails before starting containers, rather than allowing mongod to
+  crash-loop and producing a misleading port-listener timeout. The former
+  version-gated `mongodb_kernel_guard_min_version` and `mongodb_fixed_kernel`
+  variables are retained but **inert** for inventory compatibility. On an
+  affected host, use a kernel `< 6.19` (via `content_library_item_name`) or a
+  non-affected OS; choosing an older MongoDB version is not a resolution.
   Tracking: [SERVER-121912](https://jira.mongodb.org/browse/SERVER-121912).
 - **PBM 2.15 doesn't support MongoDB rapid releases — now caught at preflight.**
   PBM 2.15 only certifies against MongoDB LTS releases (`7.0.x`, `8.0.x`);

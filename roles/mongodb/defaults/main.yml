@@ -8,23 +8,20 @@ mongodb_version: "8.0.28"
 mongodb_cluster_type: sharded
 mongodb_cluster_name: "MongoDB Cluster"
 
-# Kernel-compatibility gate — a TWO-AXIS check (kernel AND MongoDB version).
-# MongoDB's VENDORED tcmalloc has an rseq ABI violation, and from a certain
-# build on, mongod HARD-REFUSES to start on Linux kernels 6.19+ (open-ended,
-# no kernel upper-bound escape). But the refuse is VERSION-GATED: it was added
-# in the 8.3 line. Verified 2026-08 on FCOS 44 (kernel 7.1.3):
-#   * mongo 8.3.7 → hard-refuses (log id 12257600), crash-loops.
-#   * mongo 8.2.7 → healthy, stays up.
-# So a host on kernel >= 6.19 is only blocked when running MongoDB >= 8.3.
-# Compatible when: kernel < mongodb_unsupported_kernel OR
-#                  mongodb_version < mongodb_kernel_guard_min_version.
-# Tracking: https://jira.mongodb.org/browse/SERVER-121912. Flip
-# `mongodb_skip_kernel_check` to bypass.
-mongodb_unsupported_kernel: "6.19"            # kernel broken at/above here (open-ended)
-mongodb_kernel_guard_min_version: "8.3"       # MongoDB line that ADDED the refuse
-# DEPRECATED / INERT: the gate no longer uses this. An earlier revision treated
-# 7.0.14+ as fixed (a brief upstream window that was reverted); kept defined
-# only so inventories that set it don't error. Safe to ignore.
+# Kernel-compatibility gate. MongoDB's vendored tcmalloc has an rseq ABI
+# incompatibility with Linux kernels 6.19+; mongod can crash-loop before it
+# opens a listener. This affects the 8.0 LTS line too (including 8.0.28), so
+# the guard is intentionally independent of `mongodb_version`.
+#
+# No fixed kernel upper bound is known. Keep hosts below this floor, or use a
+# supported OS/kernel combination. Tracking:
+# https://jira.mongodb.org/browse/SERVER-121912.
+mongodb_unsupported_kernel: "6.19" # kernel broken at/above here (open-ended)
+# DEPRECATED / INERT. Retained only so inventories that set the former
+# version-based guard do not fail argument validation.
+mongodb_kernel_guard_min_version: "8.3"
+# DEPRECATED / INERT. An earlier revision treated 7.0.14+ as fixed; retain
+# only so inventories that set it do not fail argument validation.
 mongodb_fixed_kernel: "7.0.14"
 mongodb_skip_kernel_check: false
 

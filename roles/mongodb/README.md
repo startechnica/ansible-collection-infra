@@ -288,23 +288,19 @@ MongoDB version, kernel version, and PBR/PBM cluster-consistent PITR form a
 three-way interaction that is easy to get wrong. **All three apply at once**
 when sizing a cluster — pick a version that satisfies them together.
 
-#### 1. Kernel gate (Linux kernel ≥ 6.19 vs MongoDB ≥ 8.3)
+#### 1. Kernel gate (Linux kernel ≥ 6.19 vs every MongoDB version)
 
 `mongod` hard-refuses to start (`MongoDB cannot start: Linux kernel versions
 6.19 and newer has a known incompatibility...`) from a bug in MongoDB's
 **vendored TCMalloc** (rseq ABI violation). The kernel side is **open-ended**
-(every kernel `>= 6.19` is affected — `7.0.14` does **not** resolve it), but
-the refuse is **version-gated**: the hard startup check was added in the
-**8.3** line. Verified on kernel `7.1.3`: mongo `8.3.7` hard-refuses,
-`8.2.7` healthy. The `preflight` task
-([tasks/preflight.yml](tasks/preflight.yml)) blocks only when **both** axes hit
-— kernel `>= 6.19` (`mongodb_unsupported_kernel`) **and** MongoDB `>= 8.3`
-(`mongodb_kernel_guard_min_version`):
+(every kernel `>= 6.19` is affected — `7.0.14` does **not** resolve it), and
+the affected versions include **8.0.28**, the role default. The `preflight`
+task ([tasks/preflight.yml](tasks/preflight.yml)) therefore blocks every
+MongoDB version on kernels `>= 6.19` (`mongodb_unsupported_kernel`):
 
 | | kernel `< 6.19` | kernel `>= 6.19` (e.g. FCOS 44 = 7.1.3) |
 |---|---|---|
-| **MongoDB `< 8.3`** (e.g. 8.2.7, 8.0.28) | ✅ works | ✅ works |
-| **MongoDB `>= 8.3`** (e.g. 8.3.7) | ✅ works | ❌ hard-refuse |
+| **Any MongoDB version** (including 8.0.28) | ✅ works | ❌ unsupported / may crash-loop |
 
 #### 2. PBM 2.15 LTS-only support (PBM 2.15 doesn't support 8.2)
 
@@ -353,28 +349,24 @@ The intersection of all three constraints, expressed as valid deployments:
 | **Sharded, no PITR, recent kernel, FCOS pin not possible** | sharded | `>= 6.19` | `8.0.x` LTS | ❌ | ✅ full backups only |
 | **Replica set, PITR** | replicaset | any | `7.0.x` / `8.0.x` LTS | ❌ (mongodump handles it) | ✅ full + PITR |
 | **Anything on a kernel `< 6.19`** | either | `< 6.19` | any | ✅ if PBM-supported | ✅ no kernel constraint |
-| MongoDB `>= 8.3` on `>= 6.19` kernel | either | `>= 6.19` | `8.3.x` | ❌ | ❌ mongod hard-refuses |
+| Any MongoDB version on `>= 6.19` kernel | either | `>= 6.19` | any | ❌ | ❌ mongod may crash-loop before binding |
 
-**On a sharded cluster on a kernel ≥ 6.19 (e.g. FCOS 44 = 7.1.3), MongoDB
-8.0.x is the only version that supports PBM and therefore PITR.** This is the
-default for `artaku-db-idc3d.yml` and the right pick for sharded DR.
+**No MongoDB version is supported on a kernel ≥ 6.19.** For a sharded cluster,
+run a kernel below that boundary and use 8.0.x for PBM-backed PITR.
 
 #### Resolutions
 
-- **Pin MongoDB 8.0.x** (the default LTS that satisfies everything). Used by
-  `inventories/artaku-db-idc3d.yml` on the DR cluster.
 - **Pin an FCOS build with kernel `< 6.19`** (via `content_library_item_name`) —
   e.g. FCOS `43.20260217.3.1` ships 6.18. Pinning the FCOS major alone is NOT
   enough — the kernel bump lands within a single major release.
 - **Run MongoDB on a different OS** (Ubuntu 24.04 ships 6.8).
-- **Bypass with `mongodb_skip_kernel_check: true`** — only if you're sure the
-  combination works. mongod crash-loops if it genuinely doesn't. Don't leave it
-  on as a "make it run anyway" switch.
+- **Bypass with `mongodb_skip_kernel_check: true`** only after validating an
+  upstream-supported workaround. It does not make an affected kernel safe and
+  should not be used as a "make it run anyway" switch.
 
-> **Note:** an earlier version of this role first treated kernel `7.0.14+` as
-> fixed (a reverted upstream window), then over-corrected to block *all* 8.x
-> on `>= 6.19`. Both were wrong. `mongodb_fixed_kernel` is now **inert**; the
-> gate is the two-axis check above.
+> **Note:** `mongodb_kernel_guard_min_version` and `mongodb_fixed_kernel` are
+> now **inert** compatibility variables. They remain accepted so existing
+> inventories do not fail, but the guard is the kernel-only check above.
 - **FCV (featureCompatibilityVersion)** is NOT auto-bumped on version upgrade. After a major upgrade (6→7, 7→8), run `db.adminCommand({setFeatureCompatibilityVersion: "7.0"})` manually after a soak period.
 - **Auto-generated admin password persists** — once `admin.password` exists in the artifacts dir, it's reused on every run. Delete the file if you want a fresh password.
 - **Cert rotation is zero-downtime** — renew-certs.yml uses a rolling restart, one node at a time. The CA is NOT rotated unless you explicitly do so (breaking change).

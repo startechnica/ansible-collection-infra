@@ -87,6 +87,7 @@
         ownca_privatekey_path: "{{ patroni_local_certs_dir }}/ca/ca.key"
         ownca_not_after: "+{{ tls_cert_days | default(365) }}d"
         ownca_digest: "{{ tls_signature_digest | default('sha256') }}"
+        provider: ownca
 
     - name: "Create new cert :: verify chain against the deployed CA"
       ansible.builtin.command: >-
