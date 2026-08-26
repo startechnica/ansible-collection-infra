@@ -11,10 +11,11 @@ surface.
 - **Patroni-managed PostgreSQL** with automatic failover and leader election via etcd.
 - **3-layer client routing** — vip-manager (floating IP) → HAProxy (health-aware primary/replica split) → PgBouncer (per-node connection pool) → PostgreSQL.
 - **TLS everywhere** — etcd peers, etcd clients, Patroni REST API, PostgreSQL clients, replication. ECDSA by default (P-384), sha384 digest.
+- **Client-facing TLS terminated at PgBouncer** — HAProxy is `mode tcp` and relays the handshake through, so client TLS is negotiated with PgBouncer. `pgbouncer_client_tls_sslmode` defaults to `prefer` (TLS when the client asks, plaintext otherwise); set `require` to force it.
 - **Auto-generated postgres password** when empty, persisted to controller's artifacts dir.
 - **Extensions** — `pg_stat_statements` loaded by default; add others (pgaudit, postgis, timescaledb, ...) via `patroni_extensions` **only when the `patroni_image` actually bundles the corresponding shared library**.
 - **Application DB/user provisioning** via `patroni_databases` (uses `community.postgresql` modules through HAProxy to the current primary).
-- **Backups** — pg_basebackup (local) or WAL-G (continuous + archive to S3).
+- **Backups** — pg_basebackup (local) or WAL-G (continuous + archive to S3 or native Google Cloud Storage, selected by `walg_storage_type`).
 - **Day-2 playbooks** — backup, verify-backup, PITR, rolling restart, switchover, renew-certs, rotate-passwords, add/remove node.
 
 ## Requirements
@@ -99,11 +100,21 @@ patroni_databases:
           - { privs: "CONNECT", on: "database" }
           - { privs: "SELECT", on: "all-tables" }
 
-# --- (optional) WAL-G / S3 — enables continuous archiving + PITR ---
+# --- (optional) WAL-G — enables continuous archiving + PITR ---
+# S3 backend (default): AWS S3, MinIO, Ceph, any S3-compatible gateway.
 s3_bucket: "backups"
 s3_endpoint: "https://s3.example.com"
 s3_access_key: "{{ vault_s3_access_key }}"
 s3_secret_key: "{{ vault_s3_secret_key }}"
+
+# Native Google Cloud Storage instead — swap the block above for:
+#   walg_storage_type: gcs
+#   walg_gcs_bucket: "pg-backups"
+#   walg_gcs_service_account_json: "{{ vault_walg_gcs_service_account_json }}"
+# The credentials value is the service-account JSON key GCP hands you at
+# "Create key → JSON" (raw string or parsed mapping — both work). Note that
+# etcd snapshots always upload to S3, so keep the s3_* vars if you want those
+# off-host too.
 
 # --- (optional) PostgreSQL extensions ---
 # Default: [pg_stat_statements]. Extensions you add MUST be bundled in the
@@ -362,12 +373,14 @@ patroni_standby_primary_slot: dr_slot   # optional: hold WAL on the primary
   **primary** so it admits their `replication` connections.
 - **Primary-side firewall** — add the standby IPs to the primary's
   `firewall_service_source_map` for `postgresql-direct` (port 55432).
-- **WAL-G fallback** — the standby must share the primary's `s3_bucket`; set
-  `patroni_standby_primary_walg_prefix` to the primary's `patroni_walg_s3_prefix`
-  (default `patroni-walg-<primary_scope>`) so wal-fetch reaches the primary's archive.
+- **WAL-G fallback** — the standby must share the primary's `walg_storage_type` **and**
+  bucket (`s3_bucket`, or `walg_gcs_bucket` on the GCS backend); set
+  `patroni_standby_primary_walg_prefix` to the primary's `patroni_walg_s3_prefix` /
+  `walg_gcs_prefix` (default `patroni-walg-<primary_scope>`) so wal-fetch reaches the
+  primary's archive.
   Each cluster's own WAL-G and etcd-snapshot paths are already scope-namespaced by default
-  (`patroni_walg_s3_prefix` / `patroni_etcd_s3_prefix` = `patroni-walg-<scope>` /
-  `patroni-etcd-<scope>`), so clusters sharing a bucket don't collide.
+  (`patroni_walg_s3_prefix` / `walg_gcs_prefix` / `patroni_etcd_s3_prefix` =
+  `patroni-walg-<scope>` / `patroni-etcd-<scope>`), so clusters sharing a bucket don't collide.
 
 **Promotion (DR activation):** run
 `playbooks/patroni/standby-promote.yml` — it removes `standby_cluster` from DCS, so Patroni
@@ -386,10 +399,12 @@ Inputs are validated by [meta/argument_specs.yml](meta/argument_specs.yml). High
 | Passwords | `postgresql_postgres_password` (auto-gen), `postgresql_replication_password` (empty = cert auth) |
 | Ports | `postgresql_port` (55432), `haproxy_primary_port` (5432), `pgbouncer_port` (6543), `patroni_api_port` (8008), `etcd_client_port` (2379) |
 | TLS | `tls_key_type`, `tls_key_curve`, `tls_signature_digest`, `tls_cert_days` |
+| Client TLS | `pgbouncer_client_tls_sslmode` (`prefer`; `require` forces TLS), `pgbouncer_client_tls_protocols`, `pgbouncer_client_tls_ciphers` |
 | Extensions | `patroni_extensions` |
 | App DBs | `patroni_databases` (list of {name, owner, users[{name, password, roles, grants}]}) |
-| Backup | `patroni_backup_dir`, `wal_archive_dir`, `walg_retention` |
-| S3 | `s3_bucket`, `s3_endpoint`, `s3_access_key`, `s3_secret_key` |
+| Backup | `patroni_backup_dir`, `wal_archive_dir`, `walg_retention`, `walg_storage_type` (`s3`\|`gcs`) |
+| S3 | `s3_bucket`, `s3_endpoint`, `s3_access_key`, `s3_secret_key`, `patroni_walg_s3_prefix` |
+| GCS | `walg_gcs_bucket`, `walg_gcs_service_account_json` (vault the service-account key), `walg_gcs_prefix` |
 | Memory (auto) | `pg_shared_buffers`, `pg_effective_cache`, `pg_work_mem`, `pg_maint_mem` |
 
 ## Artifacts (controller-side)
@@ -404,7 +419,10 @@ Written to `playbooks/artifacts/<inventory-stem>/patroni/`:
 
 - **`'patroni_vip_address' is undefined`** — set `patroni_vip_address` in the inventory, or set `vip_manager: none` to skip the floating-IP layer.
 - **etcd quorum lost after node removal** — refuses to remove if fewer than 3 nodes would remain. Add a node before shrinking below 3.
-- **WAL-G backup fails** — check S3 credentials (`s3_*`). Backup falls back to `pg_basebackup` when S3 isn't set.
+- **WAL-G backup fails** — check the credentials for the active backend: `s3_*` on `walg_storage_type: s3`, `walg_gcs_service_account_json` on `gcs`. Backup falls back to `pg_basebackup` when no bucket is set.
+- **WAL-G on GCS fails with a credentials error** — the service-account key is mounted read-only at `/etc/walg/credentials.json` inside the patroni container. Verify with `podman exec patroni cat /etc/walg/credentials.json` (empty/missing means the host file at `/opt/walg/gcs/credentials.json` isn't patroni-readable), and confirm the service account has `roles/storage.objectAdmin` on `walg_gcs_bucket` — wal-g needs list, read, write, **and** delete (retention prunes old backups).
+- **`server does not support SSL` / `SSL is not enabled on the server`** — the client's TLS request reached PgBouncer while `pgbouncer_client_tls_sslmode` was `disable`. Every published connection string uses `sslmode=verify-ca`, and HAProxy (`mode tcp`) relays the handshake straight through to PgBouncer, so client TLS lives or dies on that setting. Default is `prefer`; check the rendered `/opt/pgbouncer/pgbouncer.ini`.
+- **Client TLS fails with `verify-full`** — the pgbouncer leaf's SANs cover node IPs, hostnames, and localhost but **not** `patroni_vip_address`, so a client connecting through the VIP can't match a hostname. Use `sslmode=verify-ca` (validates the CA chain, no hostname check) — what the credential artifacts already publish — or add the VIP to the SAN list in `tls_certificates.yml` and reissue.
 - **`patronictl remove` hangs** — it's interactive; our `remove-node.yml` sets `failed_when: false` so the play continues. If etcd has stale registration, run `patronictl -c /etc/patroni/patroni.yml remove <scope>` manually on a survivor.
 - **`pkg_resources` deprecation warning** — harmless; some transitive dep (WAL-G?) imports it via setuptools. Noise, not a failure.
 - **Standby cluster not catching up** — check, in order: (1) TLS trust — with `sslmode: verify-ca` the standby needs the primary's CA (set `patroni_shared_ca_dir` on both, or relax to `patroni_standby_primary_sslmode: require`); (2) the primary admits the standby IPs — `patroni_replication_cidrs` on the primary + its firewall for port 55432; (3) matching `postgresql_replication_password`; (4) `patronictl list` on the standby should show a `Standby Leader` — if leader election fails outright, the scope likely collides with the primary's.

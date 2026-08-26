@@ -12,6 +12,55 @@
   run_once: true
   no_log: true
 
+- name: Assert walg_storage_type is a supported backend
+  ansible.builtin.assert:
+    that:
+      - walg_storage_type in ['s3', 'gcs']
+    fail_msg: >-
+      walg_storage_type='{{ walg_storage_type }}' is not supported. Use 's3'
+      (AWS S3, MinIO, Ceph, any S3-compatible endpoint) or 'gcs' (native
+      Google Cloud Storage).
+    quiet: true
+
+# ── GCS backend: service-account key ────────────────────────────────────
+# WAL-G's GCS driver reads credentials from a JSON key file, not from env
+# vars, so the key gets its own 0600 file that the patroni container mounts
+# read-only. Accepts the raw JSON string from GCP or an already-parsed
+# YAML/JSON mapping, so inventory can vault it either way.
+
+- name: Assert GCS backend has bucket + credentials
+  ansible.builtin.assert:
+    that:
+      - walg_gcs_bucket | length > 0
+      - walg_gcs_service_account_json | length > 0
+    fail_msg: >-
+      walg_storage_type=gcs requires both walg_gcs_bucket and
+      walg_gcs_service_account_json (the service-account JSON key — keep it in
+      Ansible Vault). Fill both, or switch walg_storage_type back to 's3'.
+    quiet: true
+  when: walg_storage_type == 'gcs'
+
+- name: Deploy WAL-G GCS service-account key
+  ansible.builtin.copy:
+    content: >-
+      {{ walg_gcs_service_account_json | to_nice_json
+         if walg_gcs_service_account_json is mapping
+         else walg_gcs_service_account_json }}
+    dest: "{{ walg_gcs_service_account_file }}"
+    owner: "{{ patroni_uid }}"
+    group: "{{ patroni_gid }}"
+    mode: "0600"
+  no_log: true
+  notify: restart walg
+  when: walg_storage_type == 'gcs'
+
+- name: Remove WAL-G GCS service-account key (S3 backend active)
+  ansible.builtin.file:
+    path: "{{ walg_gcs_service_account_file }}"
+    state: absent
+  notify: restart walg
+  when: walg_storage_type != 'gcs'
+
 - name: Deploy walg.env
   ansible.builtin.template:
     src: walg.env.j2

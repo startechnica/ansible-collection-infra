@@ -55,14 +55,15 @@
 
 # A standby with neither a reachable stream source nor WAL-G has no way to get
 # data. We can't test reachability here, but with walg disabled the ONLY source
-# is the stream — warn so a misconfig (no S3, unreachable primary) is visible.
+# is the stream — warn so a misconfig (no bucket, unreachable primary) is visible.
 - name: "Standby: warn when WAL-G fallback is unavailable"
   ansible.builtin.debug:
     msg: >-
       WARNING: standby has walg_enabled=false — its only data source is the
       live stream from {{ patroni_standby_primary_host }}. If that primary is
       unreachable at bootstrap the basebackup clone will fail with no fallback.
-      Configure S3/WAL-G (shared with the primary) for a wal-fetch fallback.
+      Configure WAL-G against the primary's object storage (same
+      walg_storage_type and bucket) for a wal-fetch fallback.
   when:
     - patroni_standby_enabled | default(false) | bool
     - not (walg_enabled | default(false) | bool)

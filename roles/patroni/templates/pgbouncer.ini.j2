@@ -92,6 +92,40 @@ stats_period = 60
 ; users allowed to view pgbouncer stats
 stats_users = {{ pgbouncer_stats_users }}
 
+; ── TLS from clients (clients → PgBouncer) ─────────────────────────
+; PgBouncer terminates client TLS for the whole stack. HAProxy is
+; `mode tcp` with no TLS on its bind, so a client hitting 5432/5433
+; is relayed byte-for-byte and handshakes against PgBouncer — not
+; PostgreSQL. PgBouncer's built-in default is `disable`, which is why
+; the sslmode=verify-ca URLs in db-connections.txt need this block to
+; work at all.
+;
+; `prefer` accepts TLS and plaintext both, so turning this on doesn't
+; cut off existing plaintext clients. See pgbouncer_client_tls_sslmode
+; in defaults/main.yml for the ladder up to `require`.
+client_tls_sslmode = {{ pgbouncer_client_tls_sslmode }}
+{% if pgbouncer_client_tls_sslmode != 'disable' %}
+
+; The cert PgBouncer presents to clients — the same leaf used for
+; server_tls_* below. Its SANs cover node IPs, hostnames, and localhost
+; but NOT patroni_vip_address, so clients reaching the cluster through
+; the VIP must use sslmode=verify-ca (validates the CA chain) rather
+; than verify-full (also matches hostname against the SANs).
+client_tls_cert_file = /etc/certs/pgbouncer.crt
+client_tls_key_file = /etc/certs/pgbouncer.key
+
+; Validates CLIENT certificates. Only consulted under verify-ca /
+; verify-full, where presenting a client cert becomes mandatory;
+; ignored (and harmless) under prefer / require.
+client_tls_ca_file = /etc/certs/ca.crt
+
+; `secure` = tlsv1.2 + tlsv1.3
+client_tls_protocols = {{ pgbouncer_client_tls_protocols }}
+
+; TLS <= 1.2 only; 1.3 suites are negotiated independently
+client_tls_ciphers = {{ pgbouncer_client_tls_ciphers }}
+{% endif %}
+
 ; ── TLS to upstream PostgreSQL ─────────────────────────────────────
 ; `prefer` = use TLS if PG offers it, fall back to plain otherwise.
 ; PG's pg_hba allows both hostssl and host on 127.0.0.1/32, so this

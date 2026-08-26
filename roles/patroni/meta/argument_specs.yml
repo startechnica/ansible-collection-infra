@@ -66,10 +66,11 @@ argument_specs:
         type: str
         default: ""
         description: >-
-          S3 key prefix (under the shared s3_bucket) of the PRIMARY's WAL-G
-          archive for the standby's wal-fetch fallback — set to the primary's
-          patroni_walg_s3_prefix (default patroni-walg-<primary_scope>). Empty =
-          bucket root. The standby must share the primary's s3_bucket.
+          Object-storage key prefix (under the shared bucket) of the PRIMARY's
+          WAL-G archive for the standby's wal-fetch fallback — set to the
+          primary's patroni_walg_s3_prefix / walg_gcs_prefix (default
+          patroni-walg-<primary_scope>). Empty = bucket root. Backend-agnostic:
+          the standby must share the primary's walg_storage_type and bucket.
       patroni_shared_ca_dir:
         type: str
         default: ""
@@ -206,6 +207,35 @@ argument_specs:
           PgBouncer (localhost) and cluster members are always allowed.
           Use this for ops VPN / jump-host access; leave empty for
           PgBouncer-only ingress (recommended).
+
+      # ── PgBouncer client-facing TLS (clients → PgBouncer) ──
+      pgbouncer_client_tls_sslmode:
+        type: str
+        default: prefer
+        choices: [disable, allow, prefer, require, verify-ca, verify-full]
+        description: >-
+          What PgBouncer requires of connecting clients. PgBouncer terminates
+          client TLS for the whole stack — HAProxy is mode tcp with no TLS on
+          its bind, so clients handshake against PgBouncer, not PostgreSQL.
+          `prefer` (default) accepts TLS and plaintext both, so it is
+          non-breaking; `require` forces TLS. verify-ca/verify-full are
+          identical in PgBouncer and additionally make a valid CLIENT
+          certificate mandatory — issue per-app certs and switch auth_type to
+          `cert` before selecting either.
+      pgbouncer_client_tls_protocols:
+        type: str
+        default: secure
+        description: >-
+          TLS versions accepted from clients. `secure` = tlsv1.2 + tlsv1.3
+          (PgBouncer's own default, pinned here); `all` also admits
+          tlsv1.0/tlsv1.1. A specific version may also be named.
+      pgbouncer_client_tls_ciphers:
+        type: str
+        default: default
+        description: >-
+          Cipher list for TLS 1.2 and below (TLS 1.3 suites negotiate
+          separately). Shortcuts default/secure/fast/normal, or an OpenSSL
+          cipher string.
 
       # ── Ports ──
       pgbouncer_port:
@@ -348,6 +378,55 @@ argument_specs:
       walg_compression:
         type: str
         default: lz4
+      walg_storage_type:
+        type: str
+        default: s3
+        choices: [s3, gcs]
+        description: >-
+          WAL-G object-storage backend. `s3` uses the shared s3_* vars (AWS S3,
+          MinIO, Ceph, any S3-compatible gateway); `gcs` uses the native Google
+          Cloud Storage JSON API via the walg_gcs_* vars. Selects the WAL-G
+          archive target only — etcd snapshots always upload to s3_bucket.
+      walg_gcs_bucket:
+        type: str
+        default: ""
+        description: GCS bucket for the WAL-G archive. Required when walg_storage_type is gcs.
+      walg_gcs_service_account_json:
+        type: raw
+        default: ""
+        description: >-
+          Google service-account JSON key granting WAL-G access to
+          walg_gcs_bucket — the file GCP produces at "Create key → JSON".
+          Accepts the raw JSON string or an already-parsed mapping. Required
+          when walg_storage_type is gcs. Keep it in Ansible Vault; the role
+          writes it to walg_gcs_service_account_file (0600, patroni-owned) and
+          mounts it read-only into the patroni container.
+      walg_gcs_prefix:
+        type: str
+        default: patroni-walg-{{ patroni_scope }}
+        description: >-
+          GCS object prefix (under walg_gcs_bucket) for this cluster's base
+          backups + WAL archive. Same scope-namespacing rationale as
+          patroni_walg_s3_prefix. Set "" to use the bucket root.
+      walg_gcs_service_account_dir:
+        type: str
+        default: /opt/walg/gcs
+        description: >-
+          Host directory holding the rendered service-account key. Bind-mounted
+          (as a directory, so a re-rendered key's new inode is picked up)
+          read-only into the patroni container at walg_gcs_service_account_mount.
+      walg_gcs_service_account_file:
+        type: str
+        default: /opt/walg/gcs/credentials.json
+        description: Host file the role renders the service-account key to (0600, patroni-owned).
+      walg_gcs_service_account_mount:
+        type: str
+        default: /etc/walg
+        description: Container-side bind-mount target for walg_gcs_service_account_dir.
+      walg_gcs_service_account_path:
+        type: str
+        default: /etc/walg/credentials.json
+        description: Container-side path wal-g reads via GOOGLE_APPLICATION_CREDENTIALS.
       patroni_walg_s3_prefix:
         type: str
         default: patroni-walg-{{ patroni_scope }}

@@ -56,10 +56,12 @@ patroni_standby_primary_sslmode: "verify-ca"
 # is unavailable.
 patroni_standby_create_replica_methods:
   - basebackup
-# S3 key prefix (under the shared s3_bucket) of the PRIMARY's WAL-G archive, for
-# the standby's wal-fetch fallback. Set this to the primary's patroni_walg_s3_prefix
-# (default "patroni-walg-<primary_scope>"). Empty = bucket root. The standby must
-# share the primary's s3_bucket for the fallback to reach the archive.
+# Object-storage key prefix (under the shared bucket) of the PRIMARY's WAL-G
+# archive, for the standby's wal-fetch fallback. Set this to the primary's
+# patroni_walg_s3_prefix / walg_gcs_prefix (default "patroni-walg-<primary_scope>").
+# Empty = bucket root. Backend-agnostic: the standby must share the primary's
+# walg_storage_type AND bucket (s3_bucket or walg_gcs_bucket) for the fallback
+# to reach the archive.
 patroni_standby_primary_walg_prefix: ""
 
 # Shared CA for cross-cluster TLS trust. Empty (default) = each cluster mints its
@@ -228,6 +230,14 @@ s3_force_path_style: "true"
 walg_retention: 7
 walg_compression: "lz4"
 
+# WAL-G object-storage backend: `s3` (AWS S3, MinIO, Ceph, any S3-compatible
+# gateway — driven by the shared s3_* vars) or `gcs` (native Google Cloud
+# Storage JSON API — driven by the walg_gcs_* vars below). This selects the
+# WAL-G archive target only; etcd snapshots always upload to S3 (s3_bucket),
+# so a GCS-backed cluster that also wants remote etcd snapshots still needs
+# the s3_* vars filled in.
+walg_storage_type: "s3"
+
 # WAL-G S3 key prefix (under s3_bucket) for THIS cluster's base backups + WAL
 # archive. Defaults to a scope-namespaced path ("patroni-walg-<patroni_scope>")
 # so multiple Patroni clusters can share one bucket without colliding at the
@@ -235,6 +245,36 @@ walg_compression: "lz4"
 # wal-fetch fallback (patroni_standby_primary_walg_prefix) points at the
 # PRIMARY's prefix within the same bucket.
 patroni_walg_s3_prefix: "patroni-walg-{{ patroni_scope }}"
+
+# ── Native GCS backend (used only when walg_storage_type == 'gcs') ──────
+# WAL-G authenticates to GCS with a service-account key, not HMAC keys, so
+# the whole JSON key file is the input here (the file GCP hands you at
+# "Create key → JSON"). Accepts either the raw JSON string or an already
+# parsed YAML/JSON mapping. KEEP THIS IN ANSIBLE VAULT — it is a private key.
+# The role writes it to walg_gcs_service_account_file (0600, patroni-owned) and
+# mounts its parent directory read-only into the patroni container, where
+# GOOGLE_APPLICATION_CREDENTIALS points wal-g at it.
+walg_gcs_bucket: ""
+walg_gcs_service_account_json: ""
+
+# GCS object prefix (under walg_gcs_bucket) for THIS cluster — same
+# scope-namespacing rationale as patroni_walg_s3_prefix. Set to "" to use the
+# bucket root (gs://{{ walg_gcs_bucket }}).
+walg_gcs_prefix: "patroni-walg-{{ patroni_scope }}"
+
+# Where the service-account key lands, host side and container side. The
+# DIRECTORY is what gets bind-mounted, not the bare file: re-rendering the key
+# replaces the inode, which a file bind-mount would not follow, leaving the
+# running container on a stale copy.
+#
+#   _dir    host directory   — bind-mount source, 0700 patroni-owned
+#   _file   host file        — what the role renders the key to, 0600
+#   _mount  container dir    — bind-mount target, read-only
+#   _path   container file   — what GOOGLE_APPLICATION_CREDENTIALS points at
+walg_gcs_service_account_dir: "{{ walg_dir }}/gcs"
+walg_gcs_service_account_file: "{{ walg_gcs_service_account_dir }}/credentials.json"
+walg_gcs_service_account_mount: "/etc/walg"
+walg_gcs_service_account_path: "{{ walg_gcs_service_account_mount }}/credentials.json"
 
 # WAL-G backup schedule — systemd OnCalendar expression (see `man
 # systemd.time`). Replaces the in-container sleep loop. Examples:
@@ -252,11 +292,12 @@ walg_schedule: "*-*-* 02:00:00"
 walg_auth_user: "walg"
 walg_auth_password: ""
 
-# WAL-G (PostgreSQL WAL archiving + base backups to S3). Defaults to
-# enabled, but only takes effect when S3 is configured (s3_bucket set).
-# Set to false in inventory to keep S3 for etcd-snapshot uploads only
-# while skipping WAL-G entirely (no walg.env, no walg-init container,
-# no walg-cron timer, no postgres archive_command).
+# WAL-G (PostgreSQL WAL archiving + base backups to object storage).
+# Defaults to enabled, but only takes effect when the selected backend has
+# a bucket configured: s3_bucket for walg_storage_type=s3, walg_gcs_bucket
+# for walg_storage_type=gcs. Set to false in inventory to keep S3 for
+# etcd-snapshot uploads only while skipping WAL-G entirely (no walg.env, no
+# walg-init container, no walg-cron timer, no postgres archive_command).
 walg_enabled: true
 
 # etcd snapshots — driven by a systemd timer (no cron dependency; FCOS
@@ -360,3 +401,37 @@ pgbouncer_admin_users: "pgbouncer"
 # and a SHOW-only credential leak doesn't expose pg_shadow access.
 pgbouncer_stats_users: "pgbouncer_stats"
 pgbouncer_default_pool_size: 20
+
+# ── PgBouncer client-facing TLS (clients → PgBouncer) ──────────────────
+# Counterpart to the server_tls_* block (PgBouncer → PostgreSQL) already in
+# pgbouncer.ini.j2. PgBouncer terminates client TLS for the WHOLE stack:
+# HAProxy runs `mode tcp` with no TLS on its bind, so a client connecting to
+# haproxy_primary_port / haproxy_replicas_port passes straight through and
+# completes its TLS handshake against PgBouncer, not PostgreSQL.
+#
+#   disable       plain TCP only; a client's TLS request is ignored
+#   allow         TLS when the client asks for it, plaintext otherwise
+#   prefer        identical to allow (PgBouncer treats them the same)
+#   require       client MUST use TLS; client certs are not validated
+#   verify-ca     client must use TLS *and present a valid client cert*
+#   verify-full   identical to verify-ca (PgBouncer treats them the same)
+#
+# `prefer` is the default here because it is non-breaking: existing plaintext
+# clients keep working while TLS-capable ones get an encrypted session. Set
+# `require` to force TLS once every client is known to speak it.
+#
+# NOTE: verify-ca / verify-full make a CLIENT certificate mandatory on every
+# connection — that means issuing a per-application cert from this cluster's
+# CA and generally switching `auth_type` to `cert`. Don't flip to those
+# without that groundwork or every app locks itself out.
+pgbouncer_client_tls_sslmode: "prefer"
+
+# TLS versions accepted from clients. `secure` = tlsv1.2 + tlsv1.3. This is
+# already PgBouncer's own default; pinned explicitly so an upstream default
+# change can't silently re-admit TLS 1.0/1.1. `all` allows tlsv1.0/tlsv1.1.
+pgbouncer_client_tls_protocols: "secure"
+
+# Cipher list for TLS 1.2 and below (TLS 1.3 suites are negotiated
+# separately and unaffected). Shortcuts: default / secure / fast / normal,
+# or any OpenSSL cipher string.
+pgbouncer_client_tls_ciphers: "default"

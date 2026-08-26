@@ -212,10 +212,11 @@ See [VIP manager choice](../roles/patroni/README.md#vip-manager-choice).
 
 ---
 
-### `WAL-G backup fails` after S3 credentials rotation
+### `WAL-G backup fails` after storage credentials rotation
 
 **Cause:** the `walg.env` file in the container isn't refreshed until the
-next playbook run rewrites it.
+next playbook run rewrites it. Same for the GCS service-account key at
+`/opt/walg/gcs/credentials.json` when `walg_storage_type: gcs`.
 
 **Fix:**
 ```bash
@@ -223,7 +224,32 @@ ansible-playbook playbooks/patroni/install.yml -i inventories/<inv>.yml \
   --tags patroni
 ```
 Or just re-run `deploy.yml` — the config-render step is idempotent and will
-replace `walg.env` with the new creds.
+replace `walg.env` (and the GCS key) with the new creds, then restart patroni
+so wal-g picks them up.
+
+---
+
+### `WAL-G on GCS` can't authenticate
+
+**Cause:** wal-g reads the service account from the JSON key file that
+`GOOGLE_APPLICATION_CREDENTIALS` points at — not from env vars. The key is
+rendered to `/opt/walg/gcs/credentials.json` on the host (0600,
+patroni-owned) and bind-mounted read-only into the patroni container at
+`/etc/walg/credentials.json`.
+
+**Fix:** check, in order:
+```bash
+# 1. Key reached the container?
+podman exec patroni cat /etc/walg/credentials.json | head -3
+# 2. Env var points at it?
+podman exec patroni printenv GOOGLE_APPLICATION_CREDENTIALS WALG_GS_PREFIX
+# 3. wal-g can actually list the archive?
+podman exec patroni /opt/walg/wal-g backup-list
+```
+An empty file in step 1 means the host file isn't readable by the patroni UID.
+A permission error in step 3 means the service account lacks
+`roles/storage.objectAdmin` on `walg_gcs_bucket` — wal-g needs list, read,
+write, **and** delete (`walg_retention` prunes old backups).
 
 ---
 

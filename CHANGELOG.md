@@ -23,6 +23,43 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   `mongodb_network` still names the docker-compose network (docker engine only).
 
 ### Added
+- **Client-facing TLS on PgBouncer (`pgbouncer_client_tls_sslmode`).**
+  `pgbouncer.ini` carried a `server_tls_*` block (PgBouncer → PostgreSQL) but
+  no `client_tls_*` block, so PgBouncer fell back to its built-in default of
+  `disable` and refused every client TLS request. Because HAProxy runs in
+  `mode tcp` with no TLS on its bind, it relays the handshake byte-for-byte to
+  PgBouncer — meaning **PgBouncer terminates client TLS for the whole stack**,
+  and the `sslmode=verify-ca` URLs published in `db-connections.txt` could not
+  succeed on any of the HAProxy or pooler ports. The template now renders
+  `client_tls_sslmode` plus the cert material (`client_tls_cert_file` /
+  `_key_file` reuse the existing pgbouncer leaf; `client_tls_ca_file` is the
+  cluster CA). Default is `prefer` — TLS when the client asks for it,
+  plaintext otherwise — so the change is non-breaking for existing plaintext
+  clients while making the published TLS connection strings work. Set
+  `require` to force TLS. New knobs: `pgbouncer_client_tls_protocols`
+  (default `secure` = tlsv1.2 + tlsv1.3, pinned against upstream default
+  drift) and `pgbouncer_client_tls_ciphers` (default `default`). Note that
+  `verify-ca`/`verify-full` are identical in PgBouncer and make a valid
+  *client* certificate mandatory — issue per-app certs and move `auth_type` to
+  `cert` before selecting either. Regression coverage:
+  `tests/pgbouncer_client_tls.yml`.
+- **Selectable WAL-G object-storage backend (`walg_storage_type: s3|gcs`).**
+  Defaults to `s3` (unchanged behavior — AWS S3, MinIO, Ceph, any
+  S3-compatible gateway via the shared `s3_*` vars). Set it to `gcs` to
+  archive Patroni's base backups + WAL to native Google Cloud Storage:
+  `walg_gcs_bucket`, `walg_gcs_prefix` (scope-namespaced by default, matching
+  `patroni_walg_s3_prefix`), and `walg_gcs_service_account_json` — the
+  service-account JSON key, accepted as a raw string or a parsed mapping, and
+  meant to live in Ansible Vault. WAL-G's GCS driver reads credentials from a
+  key *file*, so the role renders it to `/opt/walg/gcs/credentials.json`
+  (0600, patroni-owned) and bind-mounts that directory read-only into the
+  patroni container at `/etc/walg`, with `GOOGLE_APPLICATION_CREDENTIALS`
+  pointing at it — the private key never enters `walg.env` or container
+  inspect output. `walg_enabled` now resolves against the *selected* backend's
+  bucket (`walg_gcs_bucket` on gcs, `s3_bucket` on s3); the standby
+  `wal-fetch` fallback (`patroni_standby_primary_walg_prefix`) works on both.
+  etcd snapshots are unaffected and still upload to `s3_bucket`. Regression
+  coverage: `tests/walg_storage_config.yml`.
 - **Unified MongoDB backup engine selector (`mongodb_backup_type: mongodump|pbm`).**
   Configures the active backup engine for both scheduled and on-demand backups.
   When set to `pbm`, `mongodb_action: backup` and scheduled timers dispatch to
@@ -162,6 +199,13 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   supported kernel/OS before deploying MongoDB.
 
 ### Fixed
+- **Patroni's rendered `docker-compose.yml` was invalid YAML whenever WAL-G was
+  enabled (docker engine only).** The patroni service's `depends_on` mixed the
+  short list form (`- etcd`) with the `walg-init` mapping entry that carries
+  `condition: service_completed_successfully` — a block sequence and a block
+  mapping at the same level, which no YAML parser accepts, so `docker compose
+  up` refused the file. Both entries now use the long mapping form. The podman
+  (Quadlet) path was never affected.
 - **Kernel-compatibility gate blocks every MongoDB version on Linux kernel
   `>= 6.19`.** The vendored-TCMalloc/rseq incompatibility is open-ended (no
   `7.0.14+` escape) and affects the 8.0 LTS line, including `8.0.28`. Preflight

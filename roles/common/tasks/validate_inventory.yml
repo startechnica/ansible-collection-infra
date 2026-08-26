@@ -224,6 +224,35 @@
     success_msg: "S3 backup target configured ({{ s3_endpoint | default('') }} bucket={{ s3_bucket | default('') }})."
   when: s3_bucket | default('') | length > 0
 
+# ── WAL-G object-storage backend (patroni) ──
+
+- name: Assert walg_storage_type is a supported backend
+  ansible.builtin.assert:
+    that:
+      - walg_storage_type | default('s3') in ['s3', 'gcs']
+    fail_msg: >-
+      walg_storage_type='{{ walg_storage_type | default('s3') }}' is not supported.
+      Use 's3' (AWS S3, MinIO, Ceph, any S3-compatible endpoint) or 'gcs'
+      (native Google Cloud Storage).
+    success_msg: "WAL-G storage backend: {{ walg_storage_type | default('s3') }}."
+
+# Fails fast on the controller instead of surfacing as a wal-push error after
+# the cluster is already up. Mirrors the S3 all-or-nothing assert above.
+- name: Assert WAL-G GCS config is complete
+  ansible.builtin.assert:
+    that:
+      - walg_gcs_bucket | default('') | length > 0
+      - walg_gcs_service_account_json | default('') | length > 0
+    fail_msg: >-
+      walg_storage_type=gcs requires walg_gcs_bucket and walg_gcs_service_account_json
+      (the service-account JSON key — keep it in Ansible Vault). Fill both, set
+      walg_enabled=false to skip WAL-G, or switch walg_storage_type back to 's3'.
+    success_msg: >-
+      WAL-G GCS target configured (gs://{{ walg_gcs_bucket | default('') }}/{{ walg_gcs_prefix | default('') }}).
+  when:
+    - walg_storage_type | default('s3') == 'gcs'
+    - walg_enabled | default(true) | bool
+
 # ── Patroni ──
 
 - name: Assert patroni_scope is set when using patroni
@@ -361,6 +390,12 @@
       - "NetBox enrichment: {{ 'on' if netbox_enabled | default(false) | bool else 'off' }}"
       - "Cluster scope: {{ instance_cluster_name | default('(instance_folder: ' ~ (instance_folder | default('(unscoped)')) ~ ')') }}"
       - "S3 backups: {{ 'configured' if s3_bucket | default('') | length > 0 else 'disabled' }}"
+      - >-
+        WAL-G archive: {{
+          ('gs://' ~ (walg_gcs_bucket | default('')) ~ '/' ~ (walg_gcs_prefix | default('')))
+          if walg_storage_type | default('s3') == 'gcs'
+          else (('s3://' ~ s3_bucket ~ '/' ~ (patroni_walg_s3_prefix | default('')))
+                if s3_bucket | default('') | length > 0 else 'disabled') }}
       - >-
         VIP manager: {{ vip_manager | default('(none)') }}{{
           ' patroni_vip_address=' ~ patroni_vip_address

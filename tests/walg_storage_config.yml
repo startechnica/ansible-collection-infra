@@ -1,0 +1,138 @@
+---
+# Regression coverage for the WAL-G storage backend selector. S3 and native GCS
+# use different WAL-G env vars (AWS_* + WALG_S3_PREFIX vs
+# GOOGLE_APPLICATION_CREDENTIALS + WALG_GS_PREFIX), and the standby wal-fetch
+# fallback has to override the prefix identically on both.
+#
+# Run from collection root:
+#   ansible-playbook tests/walg_storage_config.yml
+
+- name: Render WAL-G storage configurations
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  vars_files:
+    - ../roles/patroni/defaults/main.yml
+  vars:
+    _walg_render_dir: /tmp/walg-storage-config-test
+
+  tasks:
+    - name: Set WAL-G storage test inputs
+      ansible.builtin.set_fact:
+        patroni_scope: test-pg
+        postgresql_port: 5432
+        walg_auth_password: test-walg-password
+        s3_endpoint: https://s3.example.test:9443
+        s3_bucket: test-backup-bucket
+        s3_access_key: test-access-key
+        s3_secret_key: test-secret-key
+        walg_gcs_bucket: test-gcs-bucket
+        walg_gcs_service_account_json: '{"type":"service_account","client_email":"walg@test.iam.gserviceaccount.com"}'
+
+    - name: Verify S3 is the default WAL-G storage backend
+      ansible.builtin.assert:
+        that:
+          - walg_storage_type == 's3'
+          - walg_gcs_prefix == 'patroni-walg-test-pg'
+          - patroni_walg_s3_prefix == 'patroni-walg-test-pg'
+
+    - name: Recreate WAL-G render directory
+      ansible.builtin.file:
+        path: "{{ _walg_render_dir }}"
+        state: "{{ item }}"
+        mode: "0755"
+      loop: [absent, directory]
+
+    - name: Render each supported WAL-G storage backend
+      ansible.builtin.template:
+        src: ../roles/patroni/templates/walg.env.j2
+        dest: "{{ _walg_render_dir }}/{{ item }}.env"
+        mode: "0600"
+      vars:
+        walg_storage_type: "{{ item }}"
+      loop:
+        - s3
+        - gcs
+
+    # Standby overrides the prefix with the PRIMARY's on both backends — the
+    # bug this guards against is the override only being wired into one branch.
+    - name: Render each backend in standby mode
+      ansible.builtin.template:
+        src: ../roles/patroni/templates/walg.env.j2
+        dest: "{{ _walg_render_dir }}/{{ item }}-standby.env"
+        mode: "0600"
+      vars:
+        walg_storage_type: "{{ item }}"
+        patroni_standby_enabled: true
+        patroni_standby_primary_walg_prefix: patroni-walg-primary-pg/
+      loop:
+        - s3
+        - gcs
+
+    - name: Read rendered WAL-G configurations
+      ansible.builtin.slurp:
+        src: "{{ _walg_render_dir }}/{{ item }}.env"
+      loop:
+        - s3
+        - gcs
+        - s3-standby
+        - gcs-standby
+      register: _walg_rendered
+
+    # Parse `KEY=value` lines (skipping comments/blanks) into a dict per file so
+    # assertions read as config lookups rather than substring searches.
+    - name: Parse rendered WAL-G env files
+      ansible.builtin.set_fact:
+        _env_s3: "{{ dict(_walg_rendered.results[0].content | b64decode | regex_findall('(?m)^([A-Z_][A-Z0-9_]*)=(.*)$')) }}"
+        _env_gcs: "{{ dict(_walg_rendered.results[1].content | b64decode | regex_findall('(?m)^([A-Z_][A-Z0-9_]*)=(.*)$')) }}"
+        _env_s3_standby: "{{ dict(_walg_rendered.results[2].content | b64decode | regex_findall('(?m)^([A-Z_][A-Z0-9_]*)=(.*)$')) }}"
+        _env_gcs_standby: "{{ dict(_walg_rendered.results[3].content | b64decode | regex_findall('(?m)^([A-Z_][A-Z0-9_]*)=(.*)$')) }}"
+
+    - name: Verify S3 backend configuration
+      ansible.builtin.assert:
+        that:
+          - _env_s3.WALG_S3_PREFIX == 's3://test-backup-bucket/patroni-walg-test-pg'
+          - _env_s3.AWS_ACCESS_KEY_ID == s3_access_key
+          - _env_s3.AWS_SECRET_ACCESS_KEY == s3_secret_key
+          - _env_s3.AWS_ENDPOINT == s3_endpoint
+          - _env_s3.AWS_REGION == s3_region
+          - _env_s3.AWS_S3_FORCE_PATH_STYLE == s3_force_path_style
+          - _env_s3.WALG_GS_PREFIX is not defined
+          - _env_s3.GOOGLE_APPLICATION_CREDENTIALS is not defined
+
+    - name: Verify native GCS backend configuration
+      ansible.builtin.assert:
+        that:
+          - _env_gcs.WALG_GS_PREFIX == 'gs://test-gcs-bucket/patroni-walg-test-pg'
+          - _env_gcs.GOOGLE_APPLICATION_CREDENTIALS == walg_gcs_service_account_path
+          # The private key must never land in the env file — it is mounted as
+          # a 0600 file instead, so it stays out of `podman inspect` output.
+          - _env_gcs.WALG_S3_PREFIX is not defined
+          - _env_gcs.AWS_ACCESS_KEY_ID is not defined
+          - _env_gcs.AWS_SECRET_ACCESS_KEY is not defined
+
+    - name: Verify both backends share the PG connection settings
+      ansible.builtin.assert:
+        that:
+          - _env_s3.PGDATABASE == 'postgres'
+          - _env_gcs.PGDATABASE == 'postgres'
+          - _env_s3.PGUSER == walg_auth_user
+          - _env_gcs.PGUSER == walg_auth_user
+          - _env_s3.WALG_COMPRESSION_METHOD == walg_compression
+          - _env_gcs.WALG_COMPRESSION_METHOD == walg_compression
+
+    - name: Verify standby wal-fetch fallback overrides the prefix on both backends
+      ansible.builtin.assert:
+        that:
+          # Trailing slash on the input prefix is stripped, on both backends.
+          - _env_s3_standby.WALG_S3_PREFIX == 's3://test-backup-bucket/patroni-walg-primary-pg'
+          - _env_gcs_standby.WALG_GS_PREFIX == 'gs://test-gcs-bucket/patroni-walg-primary-pg'
+
+    - name: Verify an empty prefix renders as the bucket root
+      ansible.builtin.assert:
+        that:
+          - _root_s3.WALG_S3_PREFIX == 's3://test-backup-bucket'
+          - _root_gcs.WALG_GS_PREFIX == 'gs://test-gcs-bucket'
+      vars:
+        _root_s3: "{{ dict(lookup('template', '../roles/patroni/templates/walg.env.j2', template_vars={'walg_storage_type': 's3', 'patroni_walg_s3_prefix': ''}) | regex_findall('(?m)^([A-Z_][A-Z0-9_]*)=(.*)$')) }}"
+        _root_gcs: "{{ dict(lookup('template', '../roles/patroni/templates/walg.env.j2', template_vars={'walg_storage_type': 'gcs', 'walg_gcs_prefix': ''}) | regex_findall('(?m)^([A-Z_][A-Z0-9_]*)=(.*)$')) }}"

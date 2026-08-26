@@ -8,7 +8,7 @@
 # This task is the bridge that makes flipping walg_enabled idempotent
 # *after* bootstrap — it works in both directions:
 #
-#   walg_enabled false → true  :  switch archiving to WAL-G/S3
+#   walg_enabled false → true  :  switch archiving to WAL-G/object storage
 #   walg_enabled true  → false :  roll back to local file archiving
 #
 # Idempotent: reads current DCS config first, only pushes edit-config
