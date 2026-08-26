@@ -7,7 +7,8 @@ NetBox as source of truth. Ships:
   - **instance_cloud_init** — cloud-init phase sub-role (inject/poweron/cleanup)
   - **instance_ignition** — ignition phase sub-role (prepare/render/inject/poweron/cleanup)
 - **netbox_lookup / netbox_register** — query and register VMs in NetBox
-- **mongodb** — sharded or replica-set MongoDB with TLS (x509 auth), exporter, backups (local + S3), PITR
+- **mongodb** — sharded or replica-set MongoDB with TLS (x509 auth), exporter,
+  backups (local + S3, or native GCS through PBM), PITR
 - **patroni** — HA PostgreSQL with etcd, HAProxy, PgBouncer, vip-manager, WAL-G backups (S3 or GCS), PITR
 - **grafana_alloy** — Grafana Alloy collector (logs→Loki, metrics→Prometheus, traces→Tempo); docker or podman
 - **preflight** — shared cluster preflight (venv, Docker, RAM, kernel modules)

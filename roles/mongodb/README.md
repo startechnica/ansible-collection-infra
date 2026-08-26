@@ -195,8 +195,22 @@ mongodb_backup_pitr: true         # continuous oplog slicing → restore to a ti
 On the next provision run the role deploys one `pbm-agent` next to every
 data-bearing `mongod` (two per host on sharded clusters: the shard mongod +
 the configsvr; one per host on replica sets), authenticating with an X.509
-client cert (`CN=mongodb-pbm`) and storing backups in the shared `s3_*` target
-via PBM's native S3 support.
+client cert (`CN=mongodb-pbm`) and storing backups through PBM's selected native
+object-storage client.
+
+The default `mongodb_backup_storage_type: minio` uses the shared `s3_*`
+settings for MinIO and compatible gateways. Use `s3` for Amazon S3. For native
+Google Cloud Storage JSON API access, use a service-account key (store the
+private key in Ansible Vault):
+
+```yaml
+mongodb_backup_storage_type: gcs
+mongodb_backup_gcs_bucket: my-mongodb-backups
+mongodb_backup_gcs_client_email: pbm@my-project.iam.gserviceaccount.com
+mongodb_backup_gcs_private_key: "{{ vault_gcs_private_key }}"
+# Optional; defaults to a slug derived from mongodb_cluster_name
+mongodb_backup_gcs_prefix: mongodb-production
+```
 
 **Retrofit onto a running cluster (no reprovision):** the per-RS PBM user is
 created during initial bootstrap, so enabling PBM on an already-built cluster
@@ -260,7 +274,7 @@ Inputs are validated by [meta/argument_specs.yml](meta/argument_specs.yml). High
 | App DBs | `mongodb_databases` (list of {name, users[{name, password, roles[]}]}) |
 | Backup local | `mongodb_backup_type`, `mongodb_backup_dir`, `mongodb_backup_retain_days`, `mongodb_backup_pitr`, `mongodb_backup_enabled`, `mongodb_backup_schedule`, `mongodb_backup_mode` |
 | Backup S3 | `s3_bucket`, `s3_endpoint`, `s3_access_key`, `s3_secret_key`, `mongodb_backup_s3_prefix` |
-| PBM (sharded PITR) | `mongodb_backup_pbm_enabled`, `mongodb_backup_init`, `mongodb_backup_pbm_image`, `mongodb_backup_storage_type`, `mongodb_backup_compression_type`, `mongodb_backup_compression_level`, `mongodb_backup_pbm_mem_limit_mb` (schedule/retention via `mongodb_backup_schedule`/`mongodb_backup_retain_days`) |
+| PBM (sharded PITR) | `mongodb_backup_pbm_enabled`, `mongodb_backup_init`, `mongodb_backup_pbm_image`, `mongodb_backup_storage_type`, `mongodb_backup_gcs_bucket`, `mongodb_backup_gcs_client_email`, `mongodb_backup_gcs_private_key`, `mongodb_backup_gcs_prefix`, `mongodb_backup_compression_type`, `mongodb_backup_compression_level`, `mongodb_backup_pbm_mem_limit_mb` (schedule/retention via `mongodb_backup_schedule`/`mongodb_backup_retain_days`) |
 | Monitoring | `mongodb_exporter_enabled`, `mongodb_exporter_port` |
 | Uninstall | `mongodb_destroy_prune`, `mongodb_skip_confirm` |
 

@@ -66,10 +66,12 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   Percona Backup for MongoDB (PBM); when `mongodump`, traditional containerized
   mongodump is used.
 - **Selectable PBM object-storage client.** New
-  `mongodb_backup_storage_type: minio|s3` setting defaults to PBM's native MinIO
-  client for MinIO and other S3-compatible endpoints, avoiding AWS SDK request
-  signing incompatibilities with proxies that rewrite signed headers. Set it to
-  `s3` for Amazon S3 or endpoints that require PBM's AWS SDK backend.
+  `mongodb_backup_storage_type: minio|s3|gcs` setting defaults to PBM's native
+  MinIO client for MinIO and other S3-compatible endpoints, avoiding AWS SDK
+  request signing incompatibilities with proxies that rewrite signed headers.
+  Set it to `s3` for Amazon S3 or endpoints that require PBM's AWS SDK backend.
+  Native Google Cloud Storage JSON API support uses `gcs` with service-account
+  credentials and a GCS bucket/prefix.
 - **Patroni standby-cluster support (DR / off-site replica).** New opt-in
   (`patroni_standby_enabled: true`) that deploys a full Patroni cluster whose
   leader is a **Standby Leader** continuously replaying a *remote* primary —

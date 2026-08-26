@@ -1,7 +1,7 @@
 ---
-# `pbm status` can report agent-level S3 failures after the agents register.
+# `pbm status` can report agent-level storage failures after agents register.
 # Keep MongoDB provisioning available, but suppress PBM operations that require
-# storage until the S3 endpoint or credentials are fixed and the role is rerun.
+# storage until the target or credentials are fixed and the role is rerun.
 - name: Record PBM storage availability
   ansible.builtin.set_fact:
     _pbm_storage_available: >-
@@ -21,8 +21,9 @@
     msg: |
       PBM agents registered but cannot access the configured backup storage.
       MongoDB provisioning will continue, but PBM storage initialization and
-      the initial backup will be skipped. Resolve the S3 endpoint, credentials,
-      and bucket policy, then rerun the playbook to initialize PBM storage.
+      the initial backup will be skipped. Resolve the storage endpoint,
+      credentials, and bucket policy, then rerun the playbook to initialize PBM
+      storage.
 
         PBM stdout:
         {{ _pbm_status.stdout | default('(no output)', true) | indent(6, true) }}
@@ -30,7 +31,11 @@
         PBM stderr:
         {{ _pbm_status.stderr | default('(no output)', true) | indent(6, true) }}
 
-      The S3 identity must be allowed to list the PBM prefix and read, write,
-      and delete objects beneath:
-        s3://{{ s3_bucket }}/{{ mongodb_backup_s3_prefix }}/pbm/
+      The storage identity must be allowed to list the PBM prefix and read,
+      write, and delete objects beneath:
+        {{
+          ('gs://' ~ mongodb_backup_gcs_bucket ~ '/' ~ mongodb_backup_gcs_prefix ~ '/pbm/')
+          if mongodb_backup_storage_type == 'gcs'
+          else ('s3://' ~ s3_bucket ~ '/' ~ mongodb_backup_s3_prefix ~ '/pbm/')
+        }}
   when: not (_pbm_storage_available | bool)

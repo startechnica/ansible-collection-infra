@@ -14,6 +14,21 @@
 # directConnection — PBM reuses URI options for its multi-host config-RS
 # connection, where directConnection is rejected).
 
+- name: Validate native GCS configuration
+  ansible.builtin.assert:
+    that:
+      - mongodb_backup_gcs_bucket | length > 0
+      - mongodb_backup_gcs_client_email | length > 0
+      - mongodb_backup_gcs_private_key | length > 0
+    fail_msg: >-
+      mongodb_backup_storage_type is 'gcs', but one or more of
+      {mongodb_backup_gcs_bucket, mongodb_backup_gcs_client_email,
+      mongodb_backup_gcs_private_key} is empty. Supply a Google Cloud
+      service-account JSON key (preferably through Ansible Vault).
+    success_msg: "PBM GCS target: bucket={{ mongodb_backup_gcs_bucket }}"
+  run_once: true
+  when: mongodb_backup_storage_type == 'gcs'
+
 # ── Per-node agent inventory (port from the exec_port vars: 27017 for docker's
 #    shared netns, the real host port for podman's Network=host) ──
 - name: Build PBM agent list for this node

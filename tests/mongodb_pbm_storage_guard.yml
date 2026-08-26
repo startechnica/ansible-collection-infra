@@ -1,7 +1,7 @@
 ---
 # Regression test: a successful `pbm status` exit code does not mean storage is
-# usable. PBM reports agent-level S3 failures in stdout; provisioning must warn
-# and skip storage initialization without stopping the rest of the play.
+# usable. PBM reports agent-level storage failures in stdout; provisioning must
+# warn and skip storage initialization without stopping the rest of the play.
 
 - name: Exercise the PBM storage-health guard
   hosts: localhost

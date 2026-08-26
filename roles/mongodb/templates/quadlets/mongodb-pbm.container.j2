@@ -4,7 +4,8 @@
 #   - config agent → manages local configsvr (replSet {{ mongodb_config_replset }})
 # Network=host like the rest of the stack; the agent connects to its local node
 # on the node's host port, authenticating by X.509 client cert
-# (CN={{ mongodb_pbm_cn }}). State lives in the cluster + S3, so no data volume.
+# (CN={{ mongodb_pbm_cn }}). State lives in the cluster + object storage, so no
+# data volume.
 # NOTE: no directConnection — PBM reuses the URI options when building its
 # internal connection to the config replica set (multiple hosts), and
 # directConnection there errors "a direct connection cannot be made if multiple

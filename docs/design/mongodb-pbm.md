@@ -89,9 +89,10 @@ Follow the healthcheck/exporter client-cert pattern exactly:
    (`directConnection=true` so the agent talks to *its* node, not whoever's
    primary).
 
-No new secrets: the agent authenticates by cert, like the exporter.
+No new MongoDB authentication secrets: the agent authenticates by cert, like
+the exporter. Native GCS storage adds a Google service-account private key.
 
-## Storage config (reuse `s3_*`, but via PBM-native S3 — not mc)
+## Storage config (PBM-native object-storage clients — not mc)
 
 PBM config is stored *in the cluster* and applied once with
 `pbm config --file`. The default `mongodb_backup_storage_type: minio` selects
@@ -99,7 +100,10 @@ PBM's native MinIO Go client for MinIO, Ceph, custom S3 gateways, and endpoints
 behind proxies that can rewrite headers signed by the AWS SDK. This is unrelated
 to the role's `minio/mc` backup path: PBM still talks directly to object storage
 using the shared `s3_*` credentials. Set `mongodb_backup_storage_type: s3` for
-Amazon S3 or endpoints that require PBM's AWS SDK backend.
+Amazon S3 or endpoints that require PBM's AWS SDK backend. Set it to `gcs` for
+PBM's native Google Cloud Storage JSON API client and provide
+`mongodb_backup_gcs_bucket`, `mongodb_backup_gcs_client_email`, and
+`mongodb_backup_gcs_private_key` from a service-account JSON key.
 
 The default configuration renders as:
 
@@ -121,9 +125,27 @@ pitr:
   compression: "{{ mongodb_backup_compression_type }}"
 ```
 
-Both backends pass credentials as discrete fields rather than splicing them into
-a URL. The `minio` backend expects `endpoint` as `host[:port]` plus a separate
-`secure` boolean; the `s3` backend receives the URL-shaped `endpointUrl`.
+Both S3-compatible backends pass credentials as discrete fields rather than
+splicing them into a URL. The `minio` backend expects `endpoint` as
+`host[:port]` plus a separate `secure` boolean; the `s3` backend receives the
+URL-shaped `endpointUrl`.
+
+The native GCS configuration renders as:
+
+```yaml
+storage:
+  type: gcs
+  gcs:
+    bucket: "{{ mongodb_backup_gcs_bucket }}"
+    prefix: "{{ mongodb_backup_gcs_prefix }}/pbm"
+    credentials:
+      clientEmail: "{{ mongodb_backup_gcs_client_email }}"
+      privateKey: "<JSON-escaped service-account private key>"
+```
+
+PBM 2.12 deprecated GCS HMAC credentials. The role therefore supports the
+preferred service-account JSON fields and preserves private-key newlines by
+JSON-quoting the value in the generated YAML.
 
 ## Deployment (respect `mongodb_container_engine`)
 
@@ -150,7 +172,7 @@ mongodb_backup_pbm_enabled: false          # master switch
 mongodb_backup_pbm_image: "percona/percona-backup-mongodb:2.x.y"   # pin, not :latest
 mongodb_backup_pbm_cn: "mongodb-pbm"       # client-cert CN
 mongodb_backup_pbm_mem_limit_mb: 256
-mongodb_backup_storage_type: minio          # minio|s3
+mongodb_backup_storage_type: minio          # minio|s3|gcs
 mongodb_backup_pitr: false                 # enable continuous oplog slicing (shared knob)
 mongodb_backup_compression_type: zstd        # none|gzip|snappy|lz4|s2|zstd
 mongodb_backup_compression_level: ""        # optional codec level (zstd 1–22, …)

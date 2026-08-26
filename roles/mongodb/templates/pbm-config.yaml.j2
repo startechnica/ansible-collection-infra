@@ -1,8 +1,7 @@
 # {{ ansible_managed }}
 # Percona Backup for MongoDB — storage + PITR configuration.
 # Applied cluster-wide once via `pbm config --file`; PBM persists it inside the
-# cluster. This rendered file is the declarative source of truth. Reuses the
-# shared s3_* vars (PBM's native clients — not the mc client path).
+# cluster. This rendered file is the declarative source of truth.
 storage:
   type: {{ mongodb_backup_storage_type }}
 {% if mongodb_backup_storage_type == 'minio' %}
@@ -18,7 +17,7 @@ storage:
     credentials:
       access-key-id: "{{ s3_access_key }}"
       secret-access-key: "{{ s3_secret_key }}"
-{% else %}
+{% elif mongodb_backup_storage_type == 's3' %}
   s3:
     region: "{{ s3_region }}"
     endpointUrl: "{{ s3_endpoint }}"
@@ -28,6 +27,14 @@ storage:
     credentials:
       access-key-id: "{{ s3_access_key }}"
       secret-access-key: "{{ s3_secret_key }}"
+{% elif mongodb_backup_storage_type == 'gcs' %}
+  gcs:
+    bucket: {{ mongodb_backup_gcs_bucket | to_json }}
+    prefix: {{ (mongodb_backup_gcs_prefix ~ '/pbm') | to_json }}
+    credentials:
+      clientEmail: {{ mongodb_backup_gcs_client_email | to_json }}
+      # JSON quoting preserves the service-account key's embedded newlines.
+      privateKey: {{ mongodb_backup_gcs_private_key | to_json }}
 {% endif %}
 pitr:
   enabled: {{ 'true' if mongodb_backup_pitr | bool else 'false' }}

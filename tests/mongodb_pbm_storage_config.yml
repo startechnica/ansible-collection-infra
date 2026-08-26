@@ -1,6 +1,6 @@
 ---
-# Regression coverage for the PBM storage backend selector. The MinIO client
-# and AWS S3 client use different PBM configuration keys and endpoint formats.
+# Regression coverage for the PBM storage backend selector. MinIO, AWS S3, and
+# native GCS use different PBM configuration sections and credential fields.
 
 - name: Render PBM storage configurations
   hosts: localhost
@@ -19,6 +19,13 @@
         s3_access_key: test-access-key
         s3_secret_key: test-secret-key
         mongodb_backup_s3_prefix: mongodb-test
+        mongodb_backup_gcs_bucket: test-gcs-bucket
+        mongodb_backup_gcs_client_email: pbm@test-project.iam.gserviceaccount.com
+        mongodb_backup_gcs_private_key: |-
+          -----BEGIN PRIVATE KEY-----
+          test-private-key
+          -----END PRIVATE KEY-----
+        mongodb_backup_gcs_prefix: mongodb-gcs-test
 
     - name: Verify MinIO is the default PBM storage backend
       ansible.builtin.assert:
@@ -42,6 +49,7 @@
       loop:
         - minio
         - s3
+        - gcs
 
     - name: Read rendered PBM storage configurations
       ansible.builtin.slurp:
@@ -49,12 +57,14 @@
       loop:
         - minio
         - s3
+        - gcs
       register: _pbm_rendered
 
     - name: Parse rendered PBM storage configurations
       ansible.builtin.set_fact:
         _pbm_minio_config: "{{ _pbm_rendered.results[0].content | b64decode | from_yaml }}"
         _pbm_s3_config: "{{ _pbm_rendered.results[1].content | b64decode | from_yaml }}"
+        _pbm_gcs_config: "{{ _pbm_rendered.results[2].content | b64decode | from_yaml }}"
 
     - name: Verify MinIO backend configuration
       ansible.builtin.assert:
@@ -80,3 +90,14 @@
           - _pbm_s3_config.storage.s3.credentials['access-key-id'] == s3_access_key
           - _pbm_s3_config.storage.s3.credentials['secret-access-key'] == s3_secret_key
           - _pbm_s3_config.storage.minio is not defined
+
+    - name: Verify native GCS backend configuration
+      ansible.builtin.assert:
+        that:
+          - _pbm_gcs_config.storage.type == 'gcs'
+          - _pbm_gcs_config.storage.gcs.bucket == mongodb_backup_gcs_bucket
+          - _pbm_gcs_config.storage.gcs.prefix == 'mongodb-gcs-test/pbm'
+          - _pbm_gcs_config.storage.gcs.credentials.clientEmail == mongodb_backup_gcs_client_email
+          - _pbm_gcs_config.storage.gcs.credentials.privateKey == mongodb_backup_gcs_private_key
+          - _pbm_gcs_config.storage.s3 is not defined
+          - _pbm_gcs_config.storage.minio is not defined

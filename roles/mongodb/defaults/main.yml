@@ -191,8 +191,8 @@ mongodb_exporter_port: 9216
 # every data-bearing mongod: in sharded mode that's two agents per host (the
 # shard mongod + the configsvr); in replicaset mode it's one (the mongod).
 # Agents authenticate via X.509 client cert (CN=mongodb_pbm_cn) and store
-# backups in the shared s3_* target. PBM's MinIO client is the default for
-# S3-compatible services; the AWS SDK-backed S3 client remains selectable.
+# backups in object storage. PBM's MinIO client is the default for S3-compatible
+# services; the AWS SDK-backed S3 client and native GCS client remain selectable.
 #
 # NOTE: on the Community `mongo` image PBM does LOGICAL backups + logical PITR
 # only — physical backups need Percona Server for MongoDB. See
@@ -202,12 +202,20 @@ mongodb_backup_pbm_enabled: false
 mongodb_backup_pbm_image: "docker.io/percona/percona-backup-mongodb:2.15.0"
 mongodb_backup_pbm_cn: mongodb-pbm
 mongodb_backup_pbm_mem_limit_mb: 256
-# PBM client used for the shared S3-compatible target. `minio` is the safer
-# default for MinIO/Ceph/custom gateways and proxies because it avoids the AWS
-# SDK Go v2 signing `Accept-Encoding` (a header some proxies rewrite, causing
-# SignatureDoesNotMatch). Set `s3` for Amazon S3 or when the endpoint requires
-# PBM's AWS SDK backend.
+# PBM object-storage client. `minio` is the safer default for MinIO/Ceph/custom
+# gateways and proxies because it avoids the AWS SDK Go v2 signing
+# `Accept-Encoding` (a header some proxies rewrite, causing
+# SignatureDoesNotMatch). Set `s3` for Amazon S3 or endpoints requiring PBM's
+# AWS SDK backend, or `gcs` for native Google Cloud Storage JSON API access.
 mongodb_backup_storage_type: minio
+# Native GCS settings (used only when mongodb_backup_storage_type is `gcs`).
+# PBM 2.12+ deprecates GCS HMAC credentials, so the role accepts the preferred
+# service-account JSON key fields. Keep the private key in Ansible Vault.
+mongodb_backup_gcs_bucket: ""
+mongodb_backup_gcs_client_email: ""
+mongodb_backup_gcs_private_key: ""
+# PBM data is stored under "<prefix>/pbm", matching the S3 layout.
+mongodb_backup_gcs_prefix: "mongodb-{{ mongodb_cluster_name | lower | regex_replace('[^a-z0-9]+', '-') | regex_replace('(^-|-$)', '') }}"
 # PBM continuous oplog slicing (restore to any timestamp in the window) is
 # gated on the shared mongodb_backup_pitr knob — the same switch that enables
 # mongodump --oplog for replica-set backups. One PITR intent, one knob.
