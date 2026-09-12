@@ -28,4 +28,4 @@
         name: common
         tasks_from: inherit_localhost_vars
   roles:
-    - role: startechnica.infra.patroni_smoke
+    - role: patroni_smoke

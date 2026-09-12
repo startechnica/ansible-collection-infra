@@ -28,4 +28,4 @@
         name: common
         tasks_from: inherit_localhost_vars
   roles:
-    - role: startechnica.infra.mongodb_smoke
+    - role: mongodb_smoke
