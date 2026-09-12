@@ -242,13 +242,13 @@
       - "Patroni smoke test verdict: {{ _verdict }}"
       - "Scope: {{ patroni_scope }} | topology: {{ 'standby' if _is_standby else 'primary' }} | leader: {{ _leader_member or '(none)' }}"
       - "Cluster: {{ _n_members }} / {{ _n_expected }} members (Leader: {{ _n_leaders }}, Replica: {{ _n_replicas }})"
-         - >-
-            Containers running: {{ _smoke_required_container_checks.results | default([], true)
-            | selectattr('containers', 'defined') | selectattr('containers', 'truthy')
-            | list | length }} / {{ _patroni_smoke_required_effective
-            | default(patroni_smoke_required_containers) | length }} required
-         - "Etcd: {{ _etcd_healthy_count }} healthy / {{ _etcd_members | length }} members"
-         - "HAProxy: {{ 'skipped' if not (patroni_smoke_check_haproxy | bool) else 'primary=' ~ _smoke_haproxy_primary_up ~ ' replica=' ~ _smoke_haproxy_replica_up }}"
+      - >-
+        Containers running: {{ _smoke_required_container_checks.results | default([], true)
+        | selectattr('containers', 'defined') | selectattr('containers', 'truthy')
+        | list | length }} / {{ _patroni_smoke_required_effective
+        | default(patroni_smoke_required_containers) | length }} required
+      - "Etcd: {{ _etcd_healthy_count }} healthy / {{ _etcd_members | length }} members"
+      - "HAProxy: {{ 'skipped' if not (patroni_smoke_check_haproxy | bool) else 'primary=' ~ _smoke_haproxy_primary_up ~ ' replica=' ~ _smoke_haproxy_replica_up }}"
       - "VIP {{ patroni_vip_address | default('(none)') }}: held by {{ _smoke_n_vip_holders }} node(s)"
       - "Postgres: select_ok={{ not (_smoke_select.failed | default(true)) }} write+repl={{ (_replicas_with_row | length) }} of {{ _replica_rows | length }} replicas see the row"
       - "WAL-G: {{ 'enabled' if (walg_enabled | default(false)) else 'disabled' }}"
