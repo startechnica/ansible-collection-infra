@@ -185,7 +185,7 @@ cluster-consistent PITR on a **sharded** cluster. For that, enable **PBM**:
 
 ```yaml
 mongodb_backup_pbm_enabled: true
-mongodb_backup_pitr: true         # continuous oplog slicing → restore to a timestamp
+mongodb_backup_pitr_enabled: true         # continuous oplog slicing → restore to a timestamp
 # Scheduled base backups + retention reuse the shared backup knobs:
 #   mongodb_backup_schedule (when to run a pbm backup; empty disables the timer)
 #   mongodb_backup_retain_days (pbm cleanup prunes older base backups + oplog)
@@ -221,10 +221,10 @@ recreating any mongod/mongos container**:
 
 ```bash
 ansible-playbook playbooks/mongodb_pbm_setup.yml -i inventories/<inv>.yml \
-  -e mongodb_backup_pbm_enabled=true -e mongodb_backup_pitr=true
+  -e mongodb_backup_pbm_enabled=true -e mongodb_backup_pitr_enabled=true
 # or by FQCN (this play lives at the playbooks/ root):
 ansible-playbook startechnica.infra.mongodb_pbm_setup -i inventories/<inv>.yml \
-  -e mongodb_backup_pbm_enabled=true -e mongodb_backup_pitr=true
+  -e mongodb_backup_pbm_enabled=true -e mongodb_backup_pitr_enabled=true
 ```
 
 Day-2:
@@ -239,7 +239,7 @@ ansible-playbook playbooks/mongodb/pbm-restore.yml -i inventories/<inv>.yml \
 **Constraints:** on the Community `mongo` image PBM does **logical** backups +
 logical PITR only (physical backups need Percona Server for MongoDB). PBM
 restore is **whole-cluster and in-place** (disruptive — no scratch-inspect
-mode like `pitr.yml`). Don't run PBM PITR and `mongodb_backup_pitr` on the same
+mode like `pitr.yml`). Don't run PBM PITR and `mongodb_backup_pitr_enabled` on the same
 cluster. Design notes: [docs/design/mongodb-pbm.md](../../docs/design/mongodb-pbm.md).
 
 ## Day-2 operations
@@ -273,7 +273,7 @@ Inputs are validated by [meta/argument_specs.yml](meta/argument_specs.yml). High
 | TLS | `tls_key_type`, `tls_key_curve`, `ssl_days`, `ssl_ca_days` |
 | Admin | `mongodb_admin_user`, `mongodb_admin_password` (auto-gen if empty) |
 | App DBs | `mongodb_databases` (list of {name, users[{name, password, roles[]}]}) |
-| Backup local | `mongodb_backup_type`, `mongodb_backup_dir`, `mongodb_backup_retain_days`, `mongodb_backup_pitr`, `mongodb_backup_enabled`, `mongodb_backup_schedule`, `mongodb_backup_mode` |
+| Backup local | `mongodb_backup_type`, `mongodb_backup_dir`, `mongodb_backup_retain_days`, `mongodb_backup_pitr_enabled`, `mongodb_backup_enabled`, `mongodb_backup_schedule`, `mongodb_backup_mode` |
 | Backup S3 | `s3_bucket`, `s3_endpoint`, `s3_access_key`, `s3_secret_key`, `mongodb_backup_s3_prefix` |
 | PBM (sharded PITR) | `mongodb_backup_pbm_enabled`, `mongodb_backup_init`, `mongodb_backup_pbm_image`, `mongodb_backup_storage_type`, `mongodb_backup_gcs_bucket`, `mongodb_backup_gcs_service_account`, `mongodb_backup_gcs_prefix`, `mongodb_backup_compression_type`, `mongodb_backup_compression_level`, `mongodb_backup_pbm_mem_limit_mb` (schedule/retention via `mongodb_backup_schedule`/`mongodb_backup_retain_days`) |
 | Monitoring | `mongodb_exporter_enabled`, `mongodb_exporter_port` |
@@ -347,7 +347,7 @@ On a **sharded** cluster, `mongodump --oplog` is rejected via `mongos`. The
 Failed: can't use --oplog option when dumping from a mongos
 ```
 
-when `mongodb_backup_pitr: true` is set on `mongodb_cluster_type: sharded`.
+when `mongodb_backup_pitr_enabled: true` is set on `mongodb_cluster_type: sharded`.
 The only path to PITR on sharded is **PBM**, which runs one agent per replica
 set and produces cluster-consistent slices. On a **replica-set** cluster
 this constraint does not apply — `mongodump --oplog` works directly against

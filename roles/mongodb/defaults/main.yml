@@ -127,13 +127,13 @@ mongodb_databases: []
 mongodb_backup_type: pbm
 mongodb_backup_dir: "{{ mongodb_root_dir }}/backups"
 mongodb_backup_retain_days: 7
-## @param mongodb_backup_pitr [default: false] Pass --oplog to mongodump so the
-## backup captures oplog entries for the dump window, making it usable for
-## point-in-time recovery via playbooks/mongodb/pitr.yml. Only valid for
-## replica-set deployments dumped from a mongod — mongodump --oplog is rejected
-## against a mongos, so leave this false on sharded clusters. Also incompatible
-## with per-db/collection backups (full cluster dump only).
-mongodb_backup_pitr: false
+## @param mongodb_backup_pitr_enabled [default: false] Pass --oplog to
+## mongodump so the backup captures oplog entries for the dump window, making
+## it usable for point-in-time recovery via playbooks/mongodb/pitr.yml. Only
+## valid for replica-set deployments dumped from a mongod — mongodump --oplog
+## is rejected against a mongos, so leave this false on sharded clusters. Also
+## incompatible with per-db/collection backups (full cluster dump only).
+mongodb_backup_pitr_enabled: false
 
 # Scheduled backup — host-level systemd timer + oneshot service, same pattern
 # as patroni's walg-cron.timer (no crond dependency; FCOS doesn't ship it).
@@ -219,8 +219,8 @@ mongodb_backup_gcs_service_account: ""
 # PBM data is stored under "<prefix>/pbm", matching the S3 layout.
 mongodb_backup_gcs_prefix: "mongodb-{{ mongodb_cluster_name | lower | regex_replace('[^a-z0-9]+', '-') | regex_replace('(^-|-$)', '') }}"
 # PBM continuous oplog slicing (restore to any timestamp in the window) is
-# gated on the shared mongodb_backup_pitr knob — the same switch that enables
-# mongodump --oplog for replica-set backups. One PITR intent, one knob.
+# gated on the shared mongodb_backup_pitr_enabled knob — the same switch that
+# enables mongodump --oplog for replica-set backups. One PITR intent, one knob.
 # On provision/setup, force a storage resync (clears "storage is not
 # initialized") and lay down a base backup if none exists yet — PBM needs one
 # before PITR can start slicing. Idempotent: skipped when a backup already
@@ -235,9 +235,10 @@ mongodb_backup_compression_level: 3
 # ones: the timer fires on `mongodb_backup_schedule` (empty disables it) and a
 # post-backup `pbm cleanup` prunes base backups + their oplog chunks older than
 # `mongodb_backup_retain_days`. One schedule + one retention window for both the
-# mongodump path and PBM. Enabling PITR (mongodb_backup_pitr) without a schedule
-# leaves you a single base-backup anchor that never rotates — set a schedule so
-# the PITR window keeps a fresh floor and the bucket doesn't grow unbounded.
+# mongodump path and PBM. Enabling PITR (mongodb_backup_pitr_enabled) without a
+# schedule leaves you a single base-backup anchor that never rotates — set a
+# schedule so the PITR window keeps a fresh floor and the bucket doesn't grow
+# unbounded.
 # X.509 subject the PBM agent presents (mapped to a $external user with the
 # PBM role set). Mirrors mongodb_healthcheck_x509_subject / _exporter_.
 mongodb_backup_pbm_x509_subject: "CN={{ mongodb_backup_pbm_cn }},OU={{ mongodb_pki_client_ou }},O={{ mongodb_pki_o }}"

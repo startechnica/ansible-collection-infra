@@ -35,7 +35,7 @@ TLS_MOUNT="-v {{ mongodb_tls_dir }}/ca.pem:/tls/ca.pem:ro"
 TLS_ARGS="--tls --tlsCAFile /tls/ca.pem"
 {% endif %}
 OPLOG_ARG=""
-{% if mongodb_backup_pitr %}
+{% if mongodb_backup_pitr_enabled %}
 OPLOG_ARG="--oplog"
 {% endif %}
 

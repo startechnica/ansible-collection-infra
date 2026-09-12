@@ -244,10 +244,11 @@
 # ── Scheduled `pbm backup` + retention (host-level systemd timer, one node) ──
 # Reuses the shared backup knobs: fires on mongodb_backup_schedule, prunes via
 # mongodb_backup_retain_days when mongodb_backup_type is 'pbm'. PBM backup is a
-# cluster operation, so a single node owns the timer (run_once). PITR (continuous
-# oplog slicing) is independent and runs on every agent when mongodb_backup_pitr
-# is true. ExecStartPost runs `pbm cleanup` (deletes base backups AND their oplog
-# chunks older than the retention window) only after a successful backup.
+# cluster operation, so a single node owns the timer (run_once). PITR
+# (continuous oplog slicing) is independent and runs on every agent when
+# mongodb_backup_pitr_enabled is true. ExecStartPost runs `pbm cleanup`
+# (deletes base backups AND their oplog chunks older than the retention
+# window) only after a successful backup.
 - name: Set scheduled PBM backup desired state
   ansible.builtin.set_fact:
     _pbm_backup_timer: >-

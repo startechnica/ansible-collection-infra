@@ -7,8 +7,9 @@
 # This playbook deliberately does NOT overwrite the live cluster.
 #
 # Prerequisites:
-#   - The base backup must have been taken with `--oplog` (mongodb_backup_pitr:
-#     true), so it contains oplog.bson — or you have a separate oplog.bson.
+#   - The base backup must have been taken with `--oplog`
+#     (mongodb_backup_pitr_enabled: true), so it contains oplog.bson — or you
+#     have a separate oplog.bson.
 #     Note: --oplog backups only work on replica-set deployments, not sharded
 #     clusters dumped via mongos.
 #   - The oplog window between the backup and `target_time` must still be

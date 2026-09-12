@@ -300,6 +300,16 @@ argument_specs:
       mongodb_backup_retain_days:
         type: int
         default: 7
+      mongodb_backup_pitr_enabled:
+        type: bool
+        default: false
+        description: >-
+          Point-in-time recovery switch shared by both backup engines. With
+          mongodump it passes --oplog so dumps are usable by
+          playbooks/mongodb/pitr.yml (replica-set only; mongodump --oplog is
+          rejected against a mongos). With PBM it enables continuous oplog
+          slicing. On a sharded cluster it requires mongodb_backup_pbm_enabled,
+          which preflight enforces.
       mongodb_backup_mode:
         type: str
         choices: [local, s3]

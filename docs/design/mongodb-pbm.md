@@ -21,7 +21,7 @@ scratch-restore/verify flow. It does **not** give us point-in-time recovery on a
 **sharded** cluster, because:
 
 - `mongodump --oplog` is rejected against a `mongos` (only valid against a
-  `mongod` replica-set member or standalone). Hence `mongodb_backup_pitr`
+  `mongod` replica-set member or standalone). Hence `mongodb_backup_pitr_enabled`
   defaults to `false` and is documented as replica-set-only.
 - Consistent PITR across shards needs **coordinated per-shard oplog capture**
   with the balancer stopped — impossible to assemble from a single mongos dump.
@@ -121,7 +121,7 @@ storage:
       access-key-id: "{{ s3_access_key }}"
       secret-access-key: "{{ s3_secret_key }}"
 pitr:
-  enabled: "{{ mongodb_backup_pitr | bool }}"
+  enabled: "{{ mongodb_backup_pitr_enabled | bool }}"
   compression: "{{ mongodb_backup_compression_type }}"
 ```
 
@@ -165,18 +165,18 @@ Mirror the exporter sidecar wiring across both engines:
 
 PBM agents are stateless (state lives in the cluster + S3), so no data volumes.
 
-## New variables (`mongodb_pbm_*`)
+## New variables (`mongodb_backup_*`)
 
 ```yaml
-mongodb_backup_type: pbm                  # pbm|mongodump selector
+mongodb_backup_type: pbm                   # pbm|mongodump selector
 mongodb_backup_pbm_enabled: false          # master switch
 mongodb_backup_pbm_image: "percona/percona-backup-mongodb:2.x.y"   # pin, not :latest
 mongodb_backup_pbm_cn: "mongodb-pbm"       # client-cert CN
 mongodb_backup_pbm_mem_limit_mb: 256
-mongodb_backup_storage_type: minio          # minio|s3|gcs
-mongodb_backup_pitr: false                 # enable continuous oplog slicing (shared knob)
-mongodb_backup_compression_type: zstd        # none|gzip|snappy|lz4|s2|zstd
-mongodb_backup_compression_level: ""        # optional codec level (zstd 1–22, …)
+mongodb_backup_storage_type: minio         # minio|s3|gcs
+mongodb_backup_pitr_enabled: false         # enable continuous oplog slicing (shared knob)
+mongodb_backup_compression_type: zstd      # none|gzip|snappy|lz4|s2|zstd
+mongodb_backup_compression_level: ""       # optional codec level (zstd 1–22, …)
 mongodb_backup_init: true                  # base backup on provision (PITR anchor)
 ```
 
@@ -232,13 +232,13 @@ Both can run. Guidance to document:
 
 | Need | Use |
 |---|---|
-| Replica-set PITR, scratch-restore/inspect single DB | existing `mongodump` + `pitr.yml` (`mongodb_backup_pitr: true`) |
-| **Sharded** cluster-consistent backup + PITR | **PBM** (`mongodb_backup_pbm_enabled: true`, `mongodb_backup_pitr: true`) |
+| Replica-set PITR, scratch-restore/inspect single DB | existing `mongodump` + `pitr.yml` (`mongodb_backup_pitr_enabled: true`) |
+| **Sharded** cluster-consistent backup + PITR | **PBM** (`mongodb_backup_pbm_enabled: true`, `mongodb_backup_pitr_enabled: true`) |
 | Quick ad-hoc logical dump of one DB to S3 | existing `mongodump` |
 
 Recommend **not** enabling both PITR mechanisms on the same cluster
 simultaneously (two oplog consumers = wasted IO + confusing recovery story).
-On sharded clusters, PBM is the answer and `mongodb_backup_pitr` stays false.
+On sharded clusters, PBM is the answer and `mongodb_backup_pitr_enabled` stays false.
 
 ## Phased implementation
 
@@ -249,7 +249,7 @@ On sharded clusters, PBM is the answer and `mongodb_backup_pitr` stays false.
    scheduled timer + `pbm cleanup` retention via the shared
    `mongodb_backup_schedule` / `mongodb_backup_retain_days` knobs (reuse the
    systemd-timer pattern from `backup_schedule.yml`).
-3. **Phase 3 — PITR + restore:** `mongodb_backup_pitr`, `pbm-restore.yml`,
+3. **Phase 3 — PITR + restore:** `mongodb_backup_pitr_enabled`, `pbm-restore.yml`,
    restore-to-timestamp, retention (`pbm delete` / retention policy).
 4. **Phase 4 — docs:** role README section, UPGRADING note, decision table
    above, the Community-vs-PSMDB constraint.

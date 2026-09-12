@@ -17,7 +17,7 @@
         uid: "{{ mongodb_uid }}"
         gid: "{{ mongodb_gid }}"
         retain_days: "{{ mongodb_backup_retain_days }}"
-        oplog: "{{ mongodb_backup_pitr }}"
+        oplog: "{{ mongodb_backup_pitr_enabled }}"
         tls: "{{ mongos_tls_mode == 'requireTLS' }}"
         tls_host_ca_file: "{{ mongodb_tls_dir }}/ca.pem"
       register: _backup

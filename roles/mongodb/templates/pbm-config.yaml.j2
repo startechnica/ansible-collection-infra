@@ -38,7 +38,7 @@ storage:
       privateKey: {{ _gcs_sa.private_key | to_json }}
 {% endif %}
 pitr:
-  enabled: {{ 'true' if mongodb_backup_pitr | bool else 'false' }}
+  enabled: {{ 'true' if mongodb_backup_pitr_enabled | bool else 'false' }}
   compression: {{ mongodb_backup_compression_type }}
 {% if mongodb_backup_compression_level | string | length > 0 %}
   compressionLevel: {{ mongodb_backup_compression_level }}

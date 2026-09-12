@@ -138,7 +138,7 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   values (`patroni_walg_s3_prefix: ""`, `patroni_etcd_s3_prefix: etcd-snapshots`)
   or take a fresh base backup at the new prefix before relying on PITR.
 - **Percona Backup for MongoDB (PBM) — sharded-cluster PITR.** New opt-in
-  (`mongodb_pbm_enabled: true`) that deploys one `pbm-agent` next to every
+  (`mongodb_backup_pbm_enabled: true`) that deploys one `pbm-agent` next to every
   data-bearing `mongod` (two per host on sharded clusters: shard + configsvr;
   one per host on replica sets), reading each replica set's oplog directly —
   the cluster-consistent backup + PITR that `mongodump --oplog` via `mongos`
@@ -190,7 +190,7 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   archive; `-e backup_name=mongodump_…` selects a specific one. `backup_path`
   is no longer required when `backup_source=s3`.
 - **MongoDB backup PITR + TLS support** — `mongodb_backup` gained an `oplog`
-  param (wired via `mongodb_backup_pitr`, default `false`) that passes
+  param (wired via `mongodb_backup_pitr_enabled`, default `false`) that passes
   `--oplog` so dumps are usable by `playbooks/mongodb/pitr.yml`. Only valid
   for replica-set deployments — `mongodump --oplog` is rejected against a
   mongos, so keep it off on sharded clusters. Both
@@ -280,16 +280,17 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   agent: backup hangs at "starting" and fails 30s later with "PBM does not
   support minor versions of MongoDB" — silent until the first timer tick at
   02:00. New preflight check fails fast with a clear message when
-  `mongodb_pbm_enabled: true` is combined with a non-LTS MongoDB version, so
-  this is caught at provision time instead.
+  `mongodb_backup_pbm_enabled: true` is combined with a non-LTS MongoDB
+  version, so this is caught at provision time instead.
   ([Percona compatibility matrix](https://docs.percona.com/percona-backup-mongodb/details/versions.html))
 - **`mongodump --oplog` on a sharded cluster is a dead flag — now caught at
   preflight.** On `mongodb_cluster_type: sharded`, setting
-  `mongodb_backup_pitr: true` WITHOUT also setting `mongodb_pbm_enabled: true`
-  causes the scheduled backup to fail at the first 02:00 timer tick with
-  "can't use --oplog option when dumping from a mongos" — mongodump cannot
-  produce cluster-consistent PITR on sharded, only PBM can. New preflight
-  check fails fast with a clear message for this invalid combination.
+  `mongodb_backup_pitr_enabled: true` WITHOUT also setting
+  `mongodb_backup_pbm_enabled: true` causes the scheduled backup to fail at
+  the first 02:00 timer tick with "can't use --oplog option when dumping from
+  a mongos" — mongodump cannot produce cluster-consistent PITR on sharded,
+  only PBM can. New preflight check fails fast with a clear message for this
+  invalid combination.
 - **PBM initial base-backup crashed on a freshly-resynced cluster** — `pbm list
   --out json` returns `{"snapshots": null}` (an explicit null, not a missing
   key) right after a storage force-resync with no backups yet, so the

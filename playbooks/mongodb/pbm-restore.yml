@@ -9,7 +9,7 @@
 #   ansible-playbook playbooks/mongodb/pbm-restore.yml -i inventories/<inv>.yml \
 #     -e pbm_backup=2026-06-09T03:00:05Z
 #
-#   # point-in-time restore (requires mongodb_backup_pitr: true)
+#   # point-in-time restore (requires mongodb_backup_pitr_enabled: true)
 #   ansible-playbook playbooks/mongodb/pbm-restore.yml -i inventories/<inv>.yml \
 #     -e pbm_target='2026-06-09T12:30:00'
 

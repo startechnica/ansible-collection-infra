@@ -83,32 +83,34 @@
     _pbm_supported_mms: "{{ (_pbm_major, _pbm_minor) in [(7, 0), (8, 0)] }}"
   when: mongodb_backup_pbm_enabled | bool
 
-# On a SHARDED cluster, mongodump --oplog (the path that mongodb_backup_pitr
-# toggles) is rejected via mongos: "can't use --oplog option when dumping from
-# a mongos". The only path to PITR on sharded is PBM. So if the operator sets
-# backup_pitr=true on a sharded cluster WITHOUT enabling PBM, the scheduled
-# backup fails at the first 02:00 timer tick — fail-fast here instead.
-- name: Assert sharded cluster can actually do PITR (PBM enabled or backup_pitr off)
+# On a SHARDED cluster, mongodump --oplog (the path that
+# mongodb_backup_pitr_enabled toggles) is rejected via mongos: "can't use
+# --oplog option when dumping from a mongos". The only path to PITR on sharded
+# is PBM. So if the operator enables PITR on a sharded cluster WITHOUT enabling
+# PBM, the scheduled backup fails at the first 02:00 timer tick — fail-fast
+# here instead.
+- name: Assert sharded cluster can actually do PITR (PBM enabled or PITR off)
   ansible.builtin.assert:
     that:
-      - not ((mongodb_cluster_type == 'sharded') and (mongodb_backup_pitr | bool) and not (mongodb_backup_pbm_enabled | bool))
+      - not ((mongodb_cluster_type == 'sharded') and (mongodb_backup_pitr_enabled | bool) and not (mongodb_backup_pbm_enabled | bool))
     fail_msg: |
-      On a sharded cluster, `mongodb_backup_pitr: true` requires
-      `mongodb_backup_pbm_enabled: true`. mongodump --oplog (the path backup_pitr
-      toggles) is rejected via mongos with "can't use --oplog option when
-      dumping from a mongos", and mongodump cannot produce cluster-consistent
-      PITR on sharded — only PBM can (one agent per replica set).
+      On a sharded cluster, `mongodb_backup_pitr_enabled: true` requires
+      `mongodb_backup_pbm_enabled: true`. mongodump --oplog (what the PITR
+      switch toggles without PBM) is rejected via mongos with "can't use
+      --oplog option when dumping from a mongos", and mongodump cannot produce
+      cluster-consistent PITR on sharded — only PBM can (one agent per replica
+      set).
 
       Current configuration:
-        mongodb_cluster_type    = {{ mongodb_cluster_type }}
-        mongodb_backup_pitr     = {{ mongodb_backup_pitr }}
-        mongodb_backup_pbm_enabled     = {{ mongodb_backup_pbm_enabled }}
+        mongodb_cluster_type        = {{ mongodb_cluster_type }}
+        mongodb_backup_pitr_enabled = {{ mongodb_backup_pitr_enabled }}
+        mongodb_backup_pbm_enabled  = {{ mongodb_backup_pbm_enabled }}
 
       Pick one:
-        1. Enable PBM (`mongodb_backup_pbm_enabled: true`) — requires an LTS MongoDB
-           version (8.0.x or 7.0.x).
-        2. Disable PITR (`mongodb_backup_pitr: false`) — daily full mongodump
-           backups still work, but no PITR on this cluster.
+        1. Enable PBM (`mongodb_backup_pbm_enabled: true`) — requires an LTS
+           MongoDB version (8.0.x or 7.0.x).
+        2. Disable PITR (`mongodb_backup_pitr_enabled: false`) — daily full
+           mongodump backups still work, but no PITR on this cluster.
     success_msg: "PITR configuration is consistent with the cluster topology."
 
 - name: Check admin password is set
