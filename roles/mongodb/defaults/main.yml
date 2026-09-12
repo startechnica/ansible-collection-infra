@@ -209,11 +209,13 @@ mongodb_backup_pbm_mem_limit_mb: 256
 # AWS SDK backend, or `gcs` for native Google Cloud Storage JSON API access.
 mongodb_backup_storage_type: minio
 # Native GCS settings (used only when mongodb_backup_storage_type is `gcs`).
-# PBM 2.12+ deprecates GCS HMAC credentials, so the role accepts the preferred
-# service-account JSON key fields. Keep the private key in Ansible Vault.
+# PBM 2.12+ deprecates GCS HMAC credentials, so the role authenticates with a
+# service-account key: the whole JSON key file GCP produces at "Create key →
+# JSON", as the raw JSON string or an already-parsed mapping. The role passes
+# its client_email and private_key to PBM. KEEP THIS IN ANSIBLE VAULT — it is a
+# private key.
 mongodb_backup_gcs_bucket: ""
-mongodb_backup_gcs_client_email: ""
-mongodb_backup_gcs_private_key: ""
+mongodb_backup_gcs_service_account: ""
 # PBM data is stored under "<prefix>/pbm", matching the S3 layout.
 mongodb_backup_gcs_prefix: "mongodb-{{ mongodb_cluster_name | lower | regex_replace('[^a-z0-9]+', '-') | regex_replace('(^-|-$)', '') }}"
 # PBM continuous oplog slicing (restore to any timestamp in the window) is

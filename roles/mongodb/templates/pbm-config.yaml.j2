@@ -28,13 +28,14 @@ storage:
       access-key-id: "{{ s3_access_key }}"
       secret-access-key: "{{ s3_secret_key }}"
 {% elif mongodb_backup_storage_type == 'gcs' %}
+{%   set _gcs_sa = mongodb_backup_gcs_service_account if mongodb_backup_gcs_service_account is mapping else (mongodb_backup_gcs_service_account | from_json) %}
   gcs:
     bucket: {{ mongodb_backup_gcs_bucket | to_json }}
     prefix: {{ (mongodb_backup_gcs_prefix ~ '/pbm') | to_json }}
     credentials:
-      clientEmail: {{ mongodb_backup_gcs_client_email | to_json }}
+      clientEmail: {{ _gcs_sa.client_email | to_json }}
       # JSON quoting preserves the service-account key's embedded newlines.
-      privateKey: {{ mongodb_backup_gcs_private_key | to_json }}
+      privateKey: {{ _gcs_sa.private_key | to_json }}
 {% endif %}
 pitr:
   enabled: {{ 'true' if mongodb_backup_pitr | bool else 'false' }}

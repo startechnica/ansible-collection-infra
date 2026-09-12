@@ -102,8 +102,8 @@ to the role's `minio/mc` backup path: PBM still talks directly to object storage
 using the shared `s3_*` credentials. Set `mongodb_backup_storage_type: s3` for
 Amazon S3 or endpoints that require PBM's AWS SDK backend. Set it to `gcs` for
 PBM's native Google Cloud Storage JSON API client and provide
-`mongodb_backup_gcs_bucket`, `mongodb_backup_gcs_client_email`, and
-`mongodb_backup_gcs_private_key` from a service-account JSON key.
+`mongodb_backup_gcs_bucket` plus `mongodb_backup_gcs_service_account` (the
+service-account JSON key, as a raw JSON string or a parsed mapping).
 
 The default configuration renders as:
 
@@ -139,13 +139,14 @@ storage:
     bucket: "{{ mongodb_backup_gcs_bucket }}"
     prefix: "{{ mongodb_backup_gcs_prefix }}/pbm"
     credentials:
-      clientEmail: "{{ mongodb_backup_gcs_client_email }}"
-      privateKey: "<JSON-escaped service-account private key>"
+      clientEmail: "<client_email from mongodb_backup_gcs_service_account>"
+      privateKey: "<JSON-escaped private_key from mongodb_backup_gcs_service_account>"
 ```
 
-PBM 2.12 deprecated GCS HMAC credentials. The role therefore supports the
-preferred service-account JSON fields and preserves private-key newlines by
-JSON-quoting the value in the generated YAML.
+PBM 2.12 deprecated GCS HMAC credentials. The role therefore takes the
+service-account JSON key, extracts its `client_email` and `private_key` into
+PBM's credential fields, and preserves private-key newlines by JSON-quoting the
+value in the generated YAML.
 
 ## Deployment (respect `mongodb_container_engine`)
 

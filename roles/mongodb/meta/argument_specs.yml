@@ -247,16 +247,15 @@ argument_specs:
         description: >-
           Google Cloud Storage bucket used by PBM when
           mongodb_backup_storage_type is gcs.
-      mongodb_backup_gcs_client_email:
-        type: str
-        default: ""
-        description: Service-account client_email used for native PBM GCS access.
-      mongodb_backup_gcs_private_key:
-        type: str
+      mongodb_backup_gcs_service_account:
+        type: raw
         default: ""
         description: >-
-          Service-account private_key used for native PBM GCS access. Store
-          this value in Ansible Vault.
+          Google service-account JSON key granting PBM access to
+          mongodb_backup_gcs_bucket — the file GCP produces at "Create key →
+          JSON". Accepts the raw JSON string or an already-parsed mapping; the
+          role passes its client_email and private_key to PBM. Required when
+          mongodb_backup_storage_type is gcs. Store this value in Ansible Vault.
       mongodb_backup_gcs_prefix:
         type: str
         description: >-

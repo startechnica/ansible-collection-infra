@@ -20,12 +20,12 @@
         s3_secret_key: test-secret-key
         mongodb_backup_s3_prefix: mongodb-test
         mongodb_backup_gcs_bucket: test-gcs-bucket
-        mongodb_backup_gcs_client_email: pbm@test-project.iam.gserviceaccount.com
-        mongodb_backup_gcs_private_key: |-
-          -----BEGIN PRIVATE KEY-----
-          test-private-key
-          -----END PRIVATE KEY-----
+        # Raw JSON string, as pasted from the key file GCP produces.
+        mongodb_backup_gcs_service_account: |-
+          {"type": "service_account", "project_id": "test-project", "client_email": "pbm@test-project.iam.gserviceaccount.com", "private_key": "-----BEGIN PRIVATE KEY-----\ntest-private-key\n-----END PRIVATE KEY-----\n"}
         mongodb_backup_gcs_prefix: mongodb-gcs-test
+        _gcs_test_client_email: pbm@test-project.iam.gserviceaccount.com
+        _gcs_test_private_key: "-----BEGIN PRIVATE KEY-----\ntest-private-key\n-----END PRIVATE KEY-----\n"
 
     - name: Verify MinIO is the default PBM storage backend
       ansible.builtin.assert:
@@ -97,7 +97,22 @@
           - _pbm_gcs_config.storage.type == 'gcs'
           - _pbm_gcs_config.storage.gcs.bucket == mongodb_backup_gcs_bucket
           - _pbm_gcs_config.storage.gcs.prefix == 'mongodb-gcs-test/pbm'
-          - _pbm_gcs_config.storage.gcs.credentials.clientEmail == mongodb_backup_gcs_client_email
-          - _pbm_gcs_config.storage.gcs.credentials.privateKey == mongodb_backup_gcs_private_key
+          - mongodb_backup_gcs_service_account is string
+          - _pbm_gcs_config.storage.gcs.credentials.clientEmail == _gcs_test_client_email
+          - _pbm_gcs_config.storage.gcs.credentials.privateKey == _gcs_test_private_key
           - _pbm_gcs_config.storage.s3 is not defined
           - _pbm_gcs_config.storage.minio is not defined
+
+    - name: Render native GCS configuration from a parsed service-account mapping
+      ansible.builtin.set_fact:
+        _pbm_gcs_mapping_config: >-
+          {{ lookup('ansible.builtin.template', '../roles/mongodb/templates/pbm-config.yaml.j2',
+                    template_vars={'mongodb_backup_storage_type': 'gcs',
+                                   'mongodb_backup_gcs_service_account': mongodb_backup_gcs_service_account | from_json})
+             | from_yaml }}
+
+    - name: Verify native GCS configuration from a parsed mapping
+      ansible.builtin.assert:
+        that:
+          - _pbm_gcs_mapping_config.storage.gcs.credentials.clientEmail == _gcs_test_client_email
+          - _pbm_gcs_mapping_config.storage.gcs.credentials.privateKey == _gcs_test_private_key

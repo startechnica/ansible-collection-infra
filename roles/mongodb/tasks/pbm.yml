@@ -18,14 +18,26 @@
   ansible.builtin.assert:
     that:
       - mongodb_backup_gcs_bucket | length > 0
-      - mongodb_backup_gcs_client_email | length > 0
-      - mongodb_backup_gcs_private_key | length > 0
+      - mongodb_backup_gcs_service_account | length > 0
+      - >-
+        mongodb_backup_gcs_service_account is mapping
+        or (mongodb_backup_gcs_service_account | string | trim).startswith('{')
+      - _gcs_sa.client_email | default('') | length > 0
+      - _gcs_sa.private_key | default('') | length > 0
     fail_msg: >-
-      mongodb_backup_storage_type is 'gcs', but one or more of
-      {mongodb_backup_gcs_bucket, mongodb_backup_gcs_client_email,
-      mongodb_backup_gcs_private_key} is empty. Supply a Google Cloud
-      service-account JSON key (preferably through Ansible Vault).
+      mongodb_backup_storage_type is 'gcs', but mongodb_backup_gcs_bucket is
+      empty or mongodb_backup_gcs_service_account is not a service-account JSON
+      key carrying client_email and private_key. Supply the key GCP produces at
+      "Create key → JSON" (preferably through Ansible Vault).
     success_msg: "PBM GCS target: bucket={{ mongodb_backup_gcs_bucket }}"
+  vars:
+    # Resolved lazily and only reached once the key is a non-empty JSON object
+    # (conditions stop at the first failure). Keep it out of success_msg: task
+    # args are templated before the conditions run.
+    _gcs_sa: >-
+      {{ mongodb_backup_gcs_service_account
+         if mongodb_backup_gcs_service_account is mapping
+         else (mongodb_backup_gcs_service_account | from_json) }}
   run_once: true
   when: mongodb_backup_storage_type == 'gcs'
 
