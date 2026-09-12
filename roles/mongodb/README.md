@@ -184,7 +184,7 @@ The `mongodump` path above gives PITR **only on replica-set** deployments —
 cluster-consistent PITR on a **sharded** cluster. For that, enable **PBM**:
 
 ```yaml
-mongodb_pbm_enabled: true
+mongodb_backup_pbm_enabled: true
 mongodb_backup_pitr: true         # continuous oplog slicing → restore to a timestamp
 # Scheduled base backups + retention reuse the shared backup knobs:
 #   mongodb_backup_schedule (when to run a pbm backup; empty disables the timer)
@@ -220,10 +220,10 @@ recreating any mongod/mongos container**:
 
 ```bash
 ansible-playbook playbooks/mongodb_pbm_setup.yml -i inventories/<inv>.yml \
-  -e mongodb_pbm_enabled=true -e mongodb_backup_pitr=true
+  -e mongodb_backup_pbm_enabled=true -e mongodb_backup_pitr=true
 # or by FQCN (this play lives at the playbooks/ root):
 ansible-playbook startechnica.infra.mongodb_pbm_setup -i inventories/<inv>.yml \
-  -e mongodb_pbm_enabled=true -e mongodb_backup_pitr=true
+  -e mongodb_backup_pbm_enabled=true -e mongodb_backup_pitr=true
 ```
 
 Day-2:
@@ -250,7 +250,7 @@ cluster. Design notes: [docs/design/mongodb-pbm.md](../../docs/design/mongodb-pb
 | Verify the latest backup restores cleanly | `playbooks/mongodb/verify-backup.yml` |
 | Restore from a specific mongodump | `playbooks/mongodb/restore.yml -e restore_path=...` |
 | Point-in-time recovery (oplog replay, replica-set only) | `playbooks/mongodb/pitr.yml -e backup_path=... -e target_time=...` (or `-e backup_source=s3`) |
-| Enable PBM on a running cluster (no reprovision) | `playbooks/mongodb_pbm_setup.yml -e mongodb_pbm_enabled=true` (FQCN: `startechnica.infra.mongodb_pbm_setup`) |
+| Enable PBM on a running cluster (no reprovision) | `playbooks/mongodb_pbm_setup.yml -e mongodb_backup_pbm_enabled=true` (FQCN: `startechnica.infra.mongodb_pbm_setup`) |
 | PBM backup (sharded-safe, cluster-consistent) | `playbooks/mongodb/pbm-backup.yml` |
 | PBM restore / PITR (sharded) | `playbooks/mongodb/pbm-restore.yml -e pbm_backup=<name>` or `-e pbm_target='YYYY-MM-DDThh:mm:ss'` |
 | PBM status (agents, storage, PITR window, backups) | `playbooks/mongodb_pbm_status.yml` (FQCN: `startechnica.infra.mongodb_pbm_status`) |
@@ -318,7 +318,7 @@ MongoDB version on kernels `>= 6.19` (`mongodb_unsupported_kernel`):
 
 #### 2. PBM 2.15 LTS-only support (PBM 2.15 doesn't support 8.2)
 
-PBM (`mongodb_pbm_enabled`) only certifies against MongoDB **LTS** releases:
+PBM (`mongodb_backup_pbm_enabled`) only certifies against MongoDB **LTS** releases:
 `7.0.x` and `8.0.x`. It rejects mid-train **rapid releases** (`8.1`, `8.2`,
 `8.3`, …) at the agent — the connection succeeds but the backup hangs at
 "starting" and 30s later fails with:

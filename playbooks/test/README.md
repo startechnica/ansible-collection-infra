@@ -21,7 +21,7 @@ plus a `summary.yml` aggregator. Adding a new component (e.g. a future
 
 - After the first `deploy.yml` on a new inventory
 - After any day-2 operation that could perturb the cluster
-  (rolling restart, switchover, cert renewal, mongodb_pbm_enabled flip)
+  (rolling restart, switchover, cert renewal, mongodb_backup_pbm_enabled flip)
 - Before declaring a maintenance window closed
 - As a sanity check after fixing anything that touched the deploy
 

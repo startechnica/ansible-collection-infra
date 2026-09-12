@@ -193,9 +193,9 @@ Add to `roles/mongodb/tasks/`:
 
 - `pbm.yml` — render agent units (engine dispatch), apply `pbm config` once,
   enable PITR if requested, start agents. Included from `main.yml` during
-  `provision` when `mongodb_pbm_enabled`. Idempotent: `pbm config` is declarative.
+  `provision` when `mongodb_backup_pbm_enabled`. Idempotent: `pbm config` is declarative.
 - Extend `init_cluster.yml` — create the `$external` PBM user + role.
-- Extend `certificates.yml` — emit `pbm-agent.pem` when `mongodb_pbm_enabled`.
+- Extend `certificates.yml` — emit `pbm-agent.pem` when `mongodb_backup_pbm_enabled`.
 - Extend `uninstall.yml` — stop/remove agent units + cert.
 
 New `mongodb_action` values routed in `main.yml` (thin wrappers over the `pbm`

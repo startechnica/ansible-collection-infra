@@ -190,7 +190,7 @@ mongodb_exporter_port: 9216
 # (where mongodump --oplog can't run via mongos). One pbm-agent runs next to
 # every data-bearing mongod: in sharded mode that's two agents per host (the
 # shard mongod + the configsvr); in replicaset mode it's one (the mongod).
-# Agents authenticate via X.509 client cert (CN=mongodb_pbm_cn) and store
+# Agents authenticate via X.509 client cert (CN=mongodb_backup_pbm_cn) and store
 # backups in object storage. PBM's MinIO client is the default for S3-compatible
 # services; the AWS SDK-backed S3 client and native GCS client remain selectable.
 #
