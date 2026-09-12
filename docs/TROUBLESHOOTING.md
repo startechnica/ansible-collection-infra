@@ -203,10 +203,10 @@ Then fix `patroni_extensions` and re-run `playbooks/patroni/install.yml`.
 
 ### `'patroni_vip_address' is undefined` at validation stage
 
-**Cause:** `vip_manager` is set (default: `vip-manager`) but `patroni_vip_address` address
+**Cause:** `patroni_vip_engine` is set (default: `vip-manager`) but `patroni_vip_address` address
 isn't.
 
-**Fix:** add `patroni_vip_address: 10.x.y.z` to your inventory, OR set `vip_manager: none`
+**Fix:** add `patroni_vip_address: 10.x.y.z` to your inventory, OR set `patroni_vip_engine: none`
 if you're behind an external load balancer and don't need the floating IP.
 See [VIP manager choice](../roles/patroni/README.md#vip-manager-choice).
 

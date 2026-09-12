@@ -39,7 +39,7 @@
     patroni_vip_enabled: "{{ patroni_vip_address | length > 0 }}"
     use_vip_manager: >-
       {{ (patroni_vip_address | length > 0)
-         and (vip_manager == 'vip-manager') }}
+         and (patroni_vip_engine == 'vip-manager') }}
 
 # Separate task: this reads walg_storage_configured, set above. set_fact does
 # not guarantee intra-task ordering, so it can't live in the same dict.

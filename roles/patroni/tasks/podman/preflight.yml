@@ -8,13 +8,13 @@
   ansible.builtin.assert:
     that:
       - patroni_vip_mask | string | length > 0
-      - vip_manager in ['vip-manager', 'keepalived']
+      - patroni_vip_engine in ['vip-manager', 'keepalived']
     fail_msg: >-
       patroni_vip_address='{{ patroni_vip_address }}' is set but patroni_vip_mask is empty or
-      vip_manager='{{ vip_manager }}' is not
+      patroni_vip_engine='{{ patroni_vip_engine }}' is not
       'vip-manager' / 'keepalived'. Set patroni_vip_mask (e.g. 24) and a valid
-      vip_manager, or unset 'patroni_vip_address' to disable the floating-IP service.
-    success_msg: "VIP {{ patroni_vip_address }}/{{ patroni_vip_mask }} configured for {{ vip_manager }}."
+      patroni_vip_engine, or unset 'patroni_vip_address' to disable the floating-IP service.
+    success_msg: "VIP {{ patroni_vip_address }}/{{ patroni_vip_mask }} configured for {{ patroni_vip_engine }}."
   when: patroni_vip_address | length > 0
   run_once: true
 

@@ -14,7 +14,7 @@ probe.
 
 | Area | Checks | When it applies |
 |---|---|---|
-| Containers | `etcd`, `patroni`, and `haproxy` are present and running on every node. The selected VIP implementation is added dynamically: `vip-manager` for `vip_manager: vip-manager`, `keepalived` for `vip_manager: keepalived`, and neither when no `patroni_vip_address` is configured. | Always for core containers; optional services are feature-gated. |
+| Containers | `etcd`, `patroni`, and `haproxy` are present and running on every node. The selected VIP implementation is added dynamically: `vip-manager` for `patroni_vip_engine: vip-manager`, `keepalived` for `patroni_vip_engine: keepalived`, and neither when no `patroni_vip_address` is configured. | Always for core containers; optional services are feature-gated. |
 | etcd | Per-member TLS endpoint health and endpoint-status JSON; the summary requires exactly one leader. | `patroni_smoke_check_etcd` |
 | Patroni | `patronictl list --format json`, expected member count, one leader (or standby leader), REST `/health`, and replica-lag threshold. | `patroni_smoke_check_patroni` |
 | PostgreSQL | VIP TCP reachability, `SELECT 1`, primary is not in recovery, replication HBA rules, then a write through the VIP followed by replica reads. The smoke table is removed in an `always` block. | Requires a configured VIP and PostgreSQL credentials. |
@@ -107,7 +107,7 @@ patroni_smoke_check_users_and_dbs: true
   `<patroni_local_certs_dir>/_smoke_new_cert/`. Both are cleaned up by the role.
 - A disabled VIP skips VIP-dependent PostgreSQL and VIP ownership checks. This
   is expected for clusters intentionally configured without a floating IP.
-- The active VIP implementation is selected from `vip_manager` and
+- The active VIP implementation is selected from `patroni_vip_engine` and
   `patroni_vip_address`; a `keepalived` result is only expected when keepalived
   is the configured strategy.
 

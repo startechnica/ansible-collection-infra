@@ -76,12 +76,12 @@ patroni_shared_ca_dir: ""
 # `postgresql-direct` (port 55432). Empty = same-cluster peers only.
 patroni_replication_cidrs: []
 
-# VIP manager: "vip-manager" (default), "keepalived", or any other value to disable.
-vip_manager: "vip-manager"
+# VIP engine: "vip-manager" (default), "keepalived", or any other value to disable.
+patroni_vip_engine: "vip-manager"
 
 # Floating IP served by vip-manager/keepalived on the current primary.
 # Empty (default) disables the VIP service entirely (no vip-manager, no
-# keepalived). Set per inventory to enable; vip_manager picks the implementation.
+# keepalived). Set per inventory to enable; patroni_vip_engine picks the implementation.
 # patroni_vip_iface is auto-detected from node_ip at runtime; override to force a specific NIC.
 patroni_vip_address: ""
 patroni_vip_mask: 32

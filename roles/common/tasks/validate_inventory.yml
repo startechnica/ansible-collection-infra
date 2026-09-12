@@ -1,7 +1,7 @@
 ---
 # Inventory preconditions — run on localhost, read-only, no side effects.
 # Catches concrete foot-guns we've actually seen: S3 all-or-nothing,
-# patroni_scope unset, vip_manager without patroni_vip_address, malformed databases[], etc.
+# patroni_scope unset, patroni_vip_engine without patroni_vip_address, malformed databases[], etc.
 
 # Publish slug-resolved values as host facts on localhost so the asserts
 # below read bare `instance_init_type` / `container_engine` / etc. and
@@ -270,16 +270,16 @@
     - patroni_enabled | default(true) | bool
     - patroni_scope is defined or (instances is defined and instances | length > 0 and 'patroni' in (instance_tags | default([])))
 
-- name: Assert vip_manager choice when VIP is configured
+- name: Assert patroni_vip_engine choice when VIP is configured
   ansible.builtin.assert:
     that:
-      - vip_manager | default('vip-manager') in ['vip-manager', 'keepalived']
+      - patroni_vip_engine | default('vip-manager') in ['vip-manager', 'keepalived']
     fail_msg: >-
-      patroni_vip_address='{{ patroni_vip_address | default('') }}' is set but vip_manager='{{ vip_manager | default('vip-manager') }}'
+      patroni_vip_address='{{ patroni_vip_address | default('') }}' is set but patroni_vip_engine='{{ patroni_vip_engine | default('vip-manager') }}'
       is not 'vip-manager' or 'keepalived'. Pick one, or unset 'patroni_vip_address' to disable
       the VIP service entirely.
       (patroni_vip_mask / patroni_vip_iface fall back to role defaults — no need to set them.)
-    success_msg: "VIP {{ patroni_vip_address | default('') }} configured via {{ vip_manager | default('vip-manager') }}."
+    success_msg: "VIP {{ patroni_vip_address | default('') }} configured via {{ patroni_vip_engine | default('vip-manager') }}."
   when:
     - patroni_enabled | default(true) | bool
     - patroni_scope is defined
@@ -397,7 +397,7 @@
           else (('s3://' ~ s3_bucket ~ '/' ~ (patroni_walg_s3_prefix | default('')))
                 if s3_bucket | default('') | length > 0 else 'disabled') }}
       - >-
-        VIP manager: {{ vip_manager | default('(none)') }}{{
+        VIP engine: {{ patroni_vip_engine | default('(none)') }}{{
           ' patroni_vip_address=' ~ patroni_vip_address
           if patroni_vip_address | default('') | length > 0 else '' }}
       - >-

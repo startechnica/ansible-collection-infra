@@ -86,7 +86,7 @@ all:
     patroni_scope: <your-project>-pg # must be unique per etcd DCS
     postgresql_postgres_password: "{{ vault_postgres_password }}"
     pgversion: 16
-    vip_manager: vip-manager # keepalived | none | vip-manager
+    patroni_vip_engine: vip-manager # keepalived | none | vip-manager
     patroni_vip_address: 10.147.8.60
     # patroni_vip_mask + patroni_vip_iface inferred from instance_networks + node IP
 

@@ -312,7 +312,7 @@ NetBox connection + vCenter credentials are best kept in
   channel resolved empty. Set `instance_platform_preset: fedora-coreos` (or the
   correct preset) in the inventory.
 - **Patroni stage fails on `patroni_vip_address` undefined** — add `patroni_vip_address:` to the inventory's
-  Patroni section or set `vip_manager: "none"` to skip.
+  Patroni section or set `patroni_vip_engine: "none"` to skip.
 - **Patroni standby cluster won't replicate** — a standby (`patroni_standby_enabled: true`)
   needs, on both ends: TLS trust (shared `patroni_shared_ca_dir` for `verify-ca`, or
   `patroni_standby_primary_sslmode: require`), the primary admitting the standby IPs

@@ -89,7 +89,7 @@ argument_specs:
           add these IPs to the primary's firewall for `postgresql-direct` (55432).
 
       # ── Floating IP ──
-      vip_manager:
+      patroni_vip_engine:
         type: str
         default: vip-manager
         choices: [vip-manager, keepalived, none]
@@ -100,7 +100,7 @@ argument_specs:
         description: >-
           Floating IP address. Empty (default) disables the VIP service
           entirely (no vip-manager, no keepalived). Set to enable; choose
-          which manager runs via `vip_manager`. Must be unused on the same
+          which manager runs via `patroni_vip_engine`. Must be unused on the same
           subnet as the cluster.
       patroni_vip_mask:
         type: int

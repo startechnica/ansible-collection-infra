@@ -19,7 +19,7 @@ sense — it's a **bag of named task files** you pick from via `tasks_from:`.
 | `wait_for_ssh` | `hosts: localhost` | Port-probe + known_hosts refresh for a group of hosts. Uses `ssh-keygen -R` + `ssh-keyscan` so freshly-recreated VMs (same IP, new host key) don't trigger "REMOTE HOST IDENTIFICATION HAS CHANGED". |
 | `inherit_localhost_vars` | any play context | Copies non-magic vars from `hostvars['localhost']` onto the current host via a temp-file + `include_vars` trick. Used as a pre_task to surface controller-side facts (artifacts_dir, instance_tags, etc.) inside service roles. |
 | `build_host_groups` | `hosts: localhost` | Consumes the `instances` list and dispatches entries into `cluster_nodes` + (optionally) `mongodb_nodes` / `patroni_nodes` groups via `add_host`. Connection params (user, key, port) are stitched in from `default_user` and `instance_ssh_configs`. |
-| `validate_inventory` | `hosts: localhost` | Fail-fast assertions — catches S3 all-or-nothing, missing `patroni_scope`, `vip_manager` without `patroni_vip_address`, malformed `databases[]`, etc. Invoked as Stage 0 of `deploy.yml` via the `always` tag. |
+| `validate_inventory` | `hosts: localhost` | Fail-fast assertions — catches S3 all-or-nothing, missing `patroni_scope`, `patroni_vip_engine` without `patroni_vip_address`, malformed `databases[]`, etc. Invoked as Stage 0 of `deploy.yml` via the `always` tag. |
 
 Each one has a detailed comment header inside its task file and is
 documented with `argument_specs` in [meta/argument_specs.yml](meta/argument_specs.yml).

@@ -75,11 +75,11 @@ Required variables (under the host group or `cloud_init.vars`):
 # --- Cluster identity ---
 patroni_scope: myproject-pg        # unique per Patroni cluster sharing etcd
 
-# --- Floating IP (required when vip_manager is enabled) ---
+# --- Floating IP (required when patroni_vip_engine is enabled) ---
 patroni_vip_address: "10.0.0.100"
 # patroni_vip_mask: 24                     # default
 # patroni_vip_iface: ens192                # auto-detected
-# vip_manager: vip-manager         # default; set to "none" to disable the VIP layer
+# patroni_vip_engine: vip-manager          # default; set to "none" to disable the VIP layer
 
 # --- Passwords (auto-generated when empty) ---
 # postgresql_postgres_password: ""
@@ -271,7 +271,7 @@ postgres_exporter :9187 (optional Prometheus target)
 
 ### VIP manager choice
 
-`vip_manager` picks how the floating IP moves between nodes on failover:
+`patroni_vip_engine` picks how the floating IP moves between nodes on failover:
 
 | Value | Mechanism | When to choose |
 |---|---|---|
@@ -439,7 +439,7 @@ Inputs are validated by [meta/argument_specs.yml](meta/argument_specs.yml). High
 | Category | Key variables |
 |---|---|
 | Identity | `patroni_scope`, `postgresql_version` |
-| VIP | `vip_manager`, `patroni_vip_address`, `patroni_vip_mask`, `patroni_vip_iface` |
+| VIP | `patroni_vip_engine`, `patroni_vip_address`, `patroni_vip_mask`, `patroni_vip_iface` |
 | Passwords | `postgresql_postgres_password` (auto-gen), `postgresql_replication_password` (empty = cert auth) |
 | Ports | `postgresql_port` (55432), `haproxy_primary_port` (5432), `pgbouncer_port` (6543), `patroni_api_port` (8008), `etcd_client_port` (2379) |
 | TLS | `tls_key_type`, `tls_key_curve`, `tls_signature_digest`, `tls_cert_days` |
@@ -463,7 +463,7 @@ Written to `playbooks/artifacts/<inventory-stem>/patroni/`:
 
 ## Troubleshooting
 
-- **`'patroni_vip_address' is undefined`** — set `patroni_vip_address` in the inventory, or set `vip_manager: none` to skip the floating-IP layer.
+- **`'patroni_vip_address' is undefined`** — set `patroni_vip_address` in the inventory, or set `patroni_vip_engine: none` to skip the floating-IP layer.
 - **etcd quorum lost after node removal** — refuses to remove if fewer than 3 nodes would remain. Add a node before shrinking below 3.
 - **WAL-G backup fails** — check the credentials for the active backend: `s3_*` on `walg_storage_type: s3`, `walg_gcs_service_account_json` on `gcs`. Backup falls back to `pg_basebackup` when no bucket is set.
 - **WAL-G on GCS fails with a credentials error** — the service-account key is mounted read-only at `/etc/walg/credentials.json` inside the patroni container. Verify with `podman exec patroni cat /etc/walg/credentials.json` (empty/missing means the host file at `/opt/walg/gcs/credentials.json` isn't patroni-readable), and confirm the service account has `roles/storage.objectAdmin` on `walg_gcs_bucket` — wal-g needs list, read, write, **and** delete (retention prunes old backups).

@@ -21,6 +21,15 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   inventory that set `s3_prefix` must rename it to `mongodb_backup_s3_prefix`; to
   keep the previous location, set `mongodb_backup_s3_prefix: "mongodb/{{ mongodb_network }}"`.
   `mongodb_network` still names the docker-compose network (docker engine only).
+- **Renamed `vip_manager` → `patroni_vip_engine`.** Moves the Patroni VIP
+  selector into the role's `patroni_vip_*` namespace, next to
+  `patroni_vip_address`, `patroni_vip_mask` and `patroni_vip_iface`. Values are
+  unchanged (`vip-manager` default, `keepalived`, `none`). There is no alias:
+  a leftover `vip_manager` is ignored and the role falls back to
+  `vip-manager`, which silently switches a keepalived cluster — and on podman
+  the old keepalived Quadlet is not removed, so keepalived and vip-manager
+  would both manage the VIP. Any inventory that set `vip_manager` must rename
+  it before the next run. Migration: [docs/UPGRADING.md](docs/UPGRADING.md).
 
 ### Added
 - **Per-database PgBouncer pool modes (`pgbouncer_database_overrides`).**

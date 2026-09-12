@@ -19,7 +19,7 @@ patroni_smoke_cert_min_days: 30
 # Containers that must be running on every patroni_node for the smoke test
 # to pass. These are the always-on core; the VIP container (vip-manager OR
 # keepalived, never both) is appended dynamically in tasks/containers.yml
-# based on vip_manager + patroni_vip_address. pgbouncer/postgres-exporter/
+# based on patroni_vip_engine + patroni_vip_address. pgbouncer/postgres-exporter/
 # walg-init are gated on their own enabled flags — see tasks/containers.yml.
 patroni_smoke_required_containers:
   - etcd
