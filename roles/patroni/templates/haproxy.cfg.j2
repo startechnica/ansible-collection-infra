@@ -7,23 +7,49 @@ defaults
     log global
     retries 3
 
-    timeout client 300s
-    timeout connect 10s
-    timeout server 300s
+    # INACTIVITY timers — time since application data last moved in that
+    # direction. In mode tcp `timeout tunnel` below takes over as soon as no
+    # analyser remains attached to the connection, and nothing here attaches
+    # one: the pg listeners have no tcp-request content / inspect-delay rules
+    # and no TLS on their bind lines. So client/server effectively govern only
+    # the mode-http `listen stats` block, and stand as backstops should a
+    # tcp-request rule ever be added. `timeout connect` is the one that bounds
+    # backend connection setup.
+    timeout client {{ haproxy_client_timeout }}
+    timeout connect {{ haproxy_connect_timeout }}
+    timeout server {{ haproxy_server_timeout }}
     timeout check {{ haproxy_check_timeout }}
 
-    # Cap half-closed (FIN sent, peer hasn't closed back) connections so
-    # FDs from abrupt client/PgBouncer disconnects free quickly instead
-    # of waiting out the full `timeout client/server` (300s).
-    timeout client-fin 30s
-    timeout server-fin 30s
+    # In mode tcp this supersedes timeout client/server once no analyser is
+    # attached, which is what lets legitimately idle sessions survive:
+    #   * LISTEN/NOTIFY clients sit silent between notifications, sometimes
+    #     for hours. NOTIFY is not queued for absent listeners, so a
+    #     proxy-side disconnect loses every notification in the gap —
+    #     silently, with no error until the client next touches the socket.
+    #   * Long statements (CREATE INDEX, analytical queries, pg_dump) move
+    #     no bytes while running. PgBouncer intentionally doesn't cap them
+    #     (query_timeout = 0), so this is the only limit in the path.
+    timeout tunnel {{ haproxy_tunnel_timeout }}
 
-    # Enable kernel TCP keepalives on both client- and server-side
-    # sockets. With os_tuning.yml's tcp_keepalive_time=60 / intvl=10 /
-    # probes=6, a dead peer (NAT timeout, crashed PgBouncer/PG) is
-    # detected ~2 min after the connection goes idle — important for
-    # PgBouncer's pooled server connections that can sit idle up to
-    # `server_lifetime=3600s` between uses.
+    # Cap half-closed (FIN sent, peer hasn't closed back) connections so
+    # FDs from abrupt client/PgBouncer disconnects free quickly. These
+    # explicitly OVERRIDE `timeout tunnel` once a connection is shut down in
+    # one direction, so they — not the 24h above — are what bounds FIN_WAIT.
+    # Without them a lossy-network disconnect holds its slot for the full
+    # tunnel window.
+    timeout client-fin {{ haproxy_client_fin_timeout }}
+    timeout server-fin {{ haproxy_server_fin_timeout }}
+
+    # Kernel TCP keepalives on both client- and server-side sockets. With
+    # os_tuning.yml's tcp_keepalive_time=60 / intvl=10 / probes=6, a dead
+    # peer (NAT timeout, crashed PgBouncer/PG) is detected ~2 min after the
+    # connection goes idle — important for PgBouncer's pooled server
+    # connections that can sit idle up to `server_lifetime=3600s`.
+    #
+    # NOTE: keepalives do NOT reset the inactivity timers above — a probe is
+    # an empty ACK with no application data. Dead peers are reaped here, by
+    # the kernel; the timeouts above are a separate backstop. That split is
+    # why `timeout tunnel` can safely be hours long.
     option clitcpka
     option srvtcpka
 

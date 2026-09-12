@@ -4,6 +4,51 @@
 # edoburu/pgbouncer) — bind-mounts preserve host UID into the container,
 # so root-owned mode 0600 would lock pgbouncer out of its own auth file.
 
+# A malformed override doesn't fail loudly — PgBouncer either rejects the
+# config at startup or, worse, the entry never matches and the database
+# silently inherits `*`. Catch both classes on the controller instead.
+- name: Validate pgbouncer_database_overrides
+  ansible.builtin.assert:
+    that:
+      - pgbouncer_database_overrides | rejectattr('name', 'defined') | list | length == 0
+      - pgbouncer_database_overrides | selectattr('name', 'eq', '*') | list | length == 0
+      - >-
+        pgbouncer_database_overrides | map(attribute='name') | list | unique | length
+        == pgbouncer_database_overrides | length
+      - >-
+        pgbouncer_database_overrides | selectattr('pool_mode', 'defined')
+        | rejectattr('pool_mode', 'in', ['session', 'transaction', 'statement'])
+        | list | length == 0
+    fail_msg: >-
+      pgbouncer_database_overrides is malformed. Every item needs a `name`
+      (the database name the client requests); names must be unique; `*` is
+      reserved for the fallback entry the template renders itself; and
+      pool_mode, when set, must be one of session/transaction/statement.
+      Got: {{ pgbouncer_database_overrides }}
+    success_msg: >-
+      PgBouncer pool modes: default={{ pgbouncer_pool_mode }}{{
+        ', overrides=' ~ (pgbouncer_database_overrides
+          | map(attribute='name') | join(', '))
+        if pgbouncer_database_overrides | length > 0 else ' (no overrides)' }}
+    quiet: true
+  run_once: true
+
+# Transaction pooling breaks LISTEN/NOTIFY, session-level SET, cross-transaction
+# advisory locks, WITH HOLD cursors, and temp tables — silently, at runtime.
+# As the GLOBAL default that hits every database not listed above, which is the
+# opposite of what the override mechanism is for.
+- name: Warn when transaction pooling is the global default
+  ansible.builtin.debug:
+    msg: >-
+      WARNING: pgbouncer_pool_mode=transaction applies to every database not
+      named in pgbouncer_database_overrides. Anything relying on LISTEN/NOTIFY
+      (e.g. GitLab Praefect), session-level SET, advisory locks held across
+      transactions, WITH HOLD cursors, or temp tables will misbehave with no
+      error. Prefer pgbouncer_pool_mode=session and opt specific databases
+      into transaction pooling via pgbouncer_database_overrides.
+  run_once: true
+  when: pgbouncer_pool_mode == 'transaction'
+
 - name: Deploy pgbouncer config files
   ansible.builtin.template:
     src: "{{ item.src }}"

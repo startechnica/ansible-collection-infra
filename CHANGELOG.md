@@ -23,6 +23,35 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   `mongodb_network` still names the docker-compose network (docker engine only).
 
 ### Added
+- **Per-database PgBouncer pool modes (`pgbouncer_database_overrides`).**
+  PgBouncer resolves an exact database name before its `*` fallback, so a
+  single pooler can serve databases needing different pool modes. Each list
+  item renders one `[databases]` entry (`name`, plus optional `dbname` alias,
+  `pool_mode`, `pool_size`, `min_pool_size`, `reserve_pool`,
+  `max_db_connections`); the list is empty by default, so existing renders are
+  byte-identical.
+
+  The motivating case is GitLab, where two components have contradictory
+  documented requirements: GitLab Rails *requires* `pool_mode = transaction`,
+  while Praefect *requires* session pooling for the LISTEN/NOTIFY connection
+  it uses for read-distribution cache invalidation ("with PgBouncer this
+  feature is only available with `session` pool mode"). Listing only GitLab's
+  databases as transaction-pooled serves both from one PgBouncer — Praefect
+  needs no entry at all, inheriting `session` from `*`, and can drop its
+  separate `database.session_pooled` connection.
+
+  Note the intended direction: keep `pgbouncer_pool_mode: session` (the
+  default) global and opt databases *into* transaction pooling. Session mode
+  is always correct, merely less efficient; transaction mode silently breaks
+  LISTEN/NOTIFY, session-level `SET`, advisory locks held across transactions,
+  `WITH HOLD` cursors, and temp tables. With session as the fallback a
+  forgotten database costs connections (visible); with transaction as the
+  fallback it corrupts behavior (not visible). The role now warns when
+  `pgbouncer_pool_mode` is `transaction` globally, and validates overrides on
+  the controller — missing `name`, a reserved `*` name, duplicates, and
+  invalid pool modes all fail before render, since each would otherwise
+  surface only as a database quietly inheriting the wrong mode. Regression
+  coverage: `tests/pgbouncer_database_overrides.yml`.
 - **Client-facing TLS on PgBouncer (`pgbouncer_client_tls_sslmode`).**
   `pgbouncer.ini` carried a `server_tls_*` block (PgBouncer → PostgreSQL) but
   no `client_tls_*` block, so PgBouncer fell back to its built-in default of
@@ -201,6 +230,32 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   supported kernel/OS before deploying MongoDB.
 
 ### Fixed
+- **HAProxy dropped idle LISTEN/NOTIFY sessions and long-running statements
+  after 5 minutes.** `timeout client` / `timeout server` were hardcoded to
+  `300s` in the `defaults` block, and in `mode tcp` those are *inactivity*
+  timers — time since application data last moved. A LISTEN/NOTIFY client is
+  idle by design (it issues `LISTEN chan` and then waits, sometimes for hours),
+  so it was disconnected every 5 minutes of quiet. Because NOTIFY is not queued
+  for absent listeners, every notification published during the gap was lost,
+  with no error surfaced until the client next touched the socket. The same
+  timer cut any statement running longer than 300s without sending bytes
+  (`CREATE INDEX`, analytical queries, `pg_dump` through the proxy) — PgBouncer
+  deliberately doesn't cap those (`query_timeout = 0`), so HAProxy was the only
+  limit in the path. The existing `option clitcpka` / `srvtcpka` keepalives did
+  not help: a keepalive probe is an empty ACK carrying no application data, so
+  it does not reset HAProxy's inactivity timers (the old comment above those
+  options was easy to misread as implying otherwise; it now says so explicitly).
+  Adds `timeout tunnel` (default `24h`), which in `mode tcp` supersedes
+  client/server once a connection is established — connection *setup* stays
+  bounded by the unchanged 300s while established sessions get the long leash.
+  A long tunnel timeout is safe here precisely because the keepalives reap
+  genuinely dead peers in ~2 min. All six timeouts are now variables rather
+  than hardcoded: `haproxy_client_timeout`, `haproxy_server_timeout`,
+  `haproxy_connect_timeout`, `haproxy_tunnel_timeout`,
+  `haproxy_client_fin_timeout`, `haproxy_server_fin_timeout` — defaults match
+  the previous hardcoded values, so the only behavior change is that idle
+  established sessions now survive. Regression coverage:
+  `tests/haproxy_timeouts.yml`.
 - **Patroni's rendered `docker-compose.yml` was invalid YAML whenever WAL-G was
   enabled (docker engine only).** The patroni service's `depends_on` mixed the
   short list form (`- etcd`) with the `walg-init` mapping entry that carries

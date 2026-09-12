@@ -388,6 +388,50 @@ promotes the Standby Leader to a real primary. Afterward set
 `patroni_standby_enabled: false` in the inventory so a later provision doesn't re-attach it.
 You now have two independent primaries — fence the old one to avoid split-brain.
 
+## Per-database pool modes
+
+PgBouncer resolves an **exact** database name before falling back to its `*` entry, so one
+pooler can serve databases that need different pool modes. `pgbouncer_database_overrides`
+renders those explicit `[databases]` lines:
+
+```yaml
+pgbouncer_pool_mode: session          # global default — leave it here
+pgbouncer_database_overrides:
+  - { name: gitlabhq_production,    pool_mode: transaction }
+  - { name: gitlabhq_production_ci, pool_mode: transaction }
+```
+
+**Keep `session` global and opt databases *into* transaction pooling, not the reverse.**
+Session mode is always correct, merely less efficient. Transaction mode silently breaks
+LISTEN/NOTIFY, session-level `SET`, advisory locks held across transactions, `WITH HOLD`
+cursors, and temp tables. With session as the fallback, a database you forget to list costs
+connections — visible. With transaction as the fallback, it corrupts behavior — not visible.
+The role emits a warning if `pgbouncer_pool_mode` is `transaction` globally.
+
+### GitLab + Praefect
+
+These two have contradictory documented requirements — GitLab Rails
+[requires](https://docs.gitlab.com/administration/postgresql/pgbouncer/) `pool_mode = transaction`,
+while Praefect
+[requires](https://docs.gitlab.com/administration/gitaly/praefect/configure/) session pooling
+for the LISTEN/NOTIFY connection behind its read-distribution cache ("with PgBouncer this
+feature is only available with `session` pool mode"). The override list resolves both from one
+PgBouncer: list GitLab's databases as above and **give Praefect no entry at all** — it inherits
+`session` from `*`, so its main `[database]` connection supports LISTEN and you can drop
+`database.session_pooled` entirely.
+
+Two things to get right:
+
+- **`name` is the database name the client requests**, not a label. If GitLab connects to
+  `gitlabhq_production` and you key the entry `gitlab_main`, it never matches and falls through
+  to `*` — silently, at session mode. Use `dbname:` to point an alias at a differently-named
+  physical database.
+- **Decomposed databases need both entries.** GitLab 16+ splits `main` and `ci`; listing only
+  the first leaves the CI database in session mode.
+
+Confirm Praefect's side with its log line `reads distribution caching is enabled by
+configuration` — its absence is the only signal that LISTEN isn't working.
+
 ## Variables reference
 
 Inputs are validated by [meta/argument_specs.yml](meta/argument_specs.yml). Highlights:
@@ -400,6 +444,8 @@ Inputs are validated by [meta/argument_specs.yml](meta/argument_specs.yml). High
 | Ports | `postgresql_port` (55432), `haproxy_primary_port` (5432), `pgbouncer_port` (6543), `patroni_api_port` (8008), `etcd_client_port` (2379) |
 | TLS | `tls_key_type`, `tls_key_curve`, `tls_signature_digest`, `tls_cert_days` |
 | Client TLS | `pgbouncer_client_tls_sslmode` (`prefer`; `require` forces TLS), `pgbouncer_client_tls_protocols`, `pgbouncer_client_tls_ciphers` |
+| Pooling | `pgbouncer_pool_mode` (`session`), `pgbouncer_database_overrides` (per-database pool modes) |
+| HAProxy timeouts | `haproxy_tunnel_timeout` (24h — governs established sessions), `haproxy_client_timeout` / `haproxy_server_timeout` (300s — backstop; superseded by `tunnel` on the pg listeners), `haproxy_connect_timeout` (bounds backend connection setup), `haproxy_client_fin_timeout` / `haproxy_server_fin_timeout` (override `tunnel` for half-closed connections) |
 | Extensions | `patroni_extensions` |
 | App DBs | `patroni_databases` (list of {name, owner, users[{name, password, roles, grants}]}) |
 | Backup | `patroni_backup_dir`, `wal_archive_dir`, `walg_retention`, `walg_storage_type` (`s3`\|`gcs`) |
@@ -423,6 +469,8 @@ Written to `playbooks/artifacts/<inventory-stem>/patroni/`:
 - **WAL-G on GCS fails with a credentials error** — the service-account key is mounted read-only at `/etc/walg/credentials.json` inside the patroni container. Verify with `podman exec patroni cat /etc/walg/credentials.json` (empty/missing means the host file at `/opt/walg/gcs/credentials.json` isn't patroni-readable), and confirm the service account has `roles/storage.objectAdmin` on `walg_gcs_bucket` — wal-g needs list, read, write, **and** delete (retention prunes old backups).
 - **`server does not support SSL` / `SSL is not enabled on the server`** — the client's TLS request reached PgBouncer while `pgbouncer_client_tls_sslmode` was `disable`. Every published connection string uses `sslmode=verify-ca`, and HAProxy (`mode tcp`) relays the handshake straight through to PgBouncer, so client TLS lives or dies on that setting. Default is `prefer`; check the rendered `/opt/pgbouncer/pgbouncer.ini`.
 - **Client TLS fails with `verify-full`** — the pgbouncer leaf's SANs cover node IPs, hostnames, and localhost but **not** `patroni_vip_address`, so a client connecting through the VIP can't match a hostname. Use `sslmode=verify-ca` (validates the CA chain, no hostname check) — what the credential artifacts already publish — or add the VIP to the SAN list in `tls_certificates.yml` and reissue.
+- **LISTEN/NOTIFY clients silently miss notifications** — check `haproxy_tunnel_timeout`. HAProxy's `timeout client`/`timeout server` are *inactivity* timers and an idle listener trips them; `timeout tunnel` is what keeps established sessions alive. TCP keepalives do **not** reset those timers, so `option clitcpka` being present proves nothing here. Note also that LISTEN/NOTIFY only works with `pgbouncer_pool_mode: session` (the default) — under `transaction` the server connection returns to the pool between transactions and notifications land on whichever client holds it next.
+- **Long queries die at exactly 5 minutes** — same cause: a statement that sends no bytes while running (`CREATE INDEX`, big analytical query, `pg_dump` through the proxy) trips `haproxy_client_timeout`/`haproxy_server_timeout` if `timeout tunnel` isn't in effect. PgBouncer won't be the culprit — `query_timeout` is `0` by design.
 - **`patronictl remove` hangs** — it's interactive; our `remove-node.yml` sets `failed_when: false` so the play continues. If etcd has stale registration, run `patronictl -c /etc/patroni/patroni.yml remove <scope>` manually on a survivor.
 - **`pkg_resources` deprecation warning** — harmless; some transitive dep (WAL-G?) imports it via setuptools. Noise, not a failure.
 - **Standby cluster not catching up** — check, in order: (1) TLS trust — with `sslmode: verify-ca` the standby needs the primary's CA (set `patroni_shared_ca_dir` on both, or relax to `patroni_standby_primary_sslmode: require`); (2) the primary admits the standby IPs — `patroni_replication_cidrs` on the primary + its firewall for port 55432; (3) matching `postgresql_replication_password`; (4) `patronictl list` on the standby should show a `Standby Leader` — if leader election fails outright, the scope likely collides with the primary's.

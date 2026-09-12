@@ -5,6 +5,25 @@
 ; it, PgBouncer runs `SELECT * FROM pgbouncer.user_search($1)` against
 ; whichever database the client is connecting to (e.g. prd_actionpay)
 ; and PG returns: ERROR: schema "pgbouncer" does not exist.
+{% if pgbouncer_database_overrides | length > 0 %}
+;
+; Per-database overrides (pgbouncer_database_overrides). PgBouncer matches an
+; exact database name before falling back to `*`, so these carve individual
+; databases out of the global pool_mode below. The key on the left is the
+; database name the CLIENT REQUESTS — not a label. If it doesn't match what
+; the client actually asks for, the entry is silently skipped and `*` applies.
+; Use dbname= to point an alias at a differently-named physical database.
+{% for _db in pgbouncer_database_overrides %}
+{% set _opts = ['host=127.0.0.1', 'port=' ~ postgresql_port] %}
+{% if _db.dbname is defined %}{% set _ = _opts.append('dbname=' ~ _db.dbname) %}{% endif %}
+{% set _ = _opts.extend(['auth_user=pgbouncer', 'auth_dbname=postgres']) %}
+{% for _k in ['pool_mode', 'pool_size', 'min_pool_size', 'reserve_pool', 'max_db_connections'] %}
+{% if _k in _db %}{% set _ = _opts.append(_k ~ '=' ~ _db[_k]) %}{% endif %}
+{% endfor %}
+{{ _db.name }} = {{ _opts | join(' ') }}
+{% endfor %}
+;
+{% endif %}
 * = host=127.0.0.1 port={{ postgresql_port }} auth_user=pgbouncer auth_dbname=postgres
 
 [pgbouncer]

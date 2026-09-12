@@ -1,0 +1,133 @@
+---
+# Regression coverage for per-database pool_mode overrides.
+#
+# The bug class this guards against is silent: PgBouncer matches an exact
+# database name before the `*` fallback, so an override that fails to render
+# (or renders after `*`, or renders with a mangled key) doesn't error — the
+# database just quietly inherits the global pool_mode. For GitLab that means
+# Rails losing transaction pooling, or Praefect losing LISTEN/NOTIFY, with no
+# failure surfaced anywhere.
+#
+# Run from collection root:
+#   ansible-playbook tests/pgbouncer_database_overrides.yml
+
+- name: Render PgBouncer per-database overrides
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  vars_files:
+    - ../roles/patroni/defaults/main.yml
+  vars:
+    _pgb_render_dir: /tmp/pgbouncer-overrides-test
+    # The GitLab shape: Rails databases opt into transaction pooling, Praefect
+    # is deliberately absent so it inherits session from `*`.
+    _gitlab_overrides:
+      - { name: gitlabhq_production, pool_mode: transaction }
+      - { name: gitlabhq_production_ci, pool_mode: transaction }
+      - { name: gitlab_main, dbname: gitlabhq_production, pool_mode: transaction, pool_size: 100 }
+
+  tasks:
+    - name: Verify overrides default to empty and session is the global default
+      ansible.builtin.assert:
+        that:
+          # Empty default keeps existing deployments byte-identical.
+          - pgbouncer_database_overrides == []
+          # Session must stay the global fallback — see defaults/main.yml.
+          - pgbouncer_pool_mode == 'session'
+
+    - name: Recreate render directory
+      ansible.builtin.file:
+        path: "{{ _pgb_render_dir }}"
+        state: "{{ item }}"
+        mode: "0755"
+      loop: [absent, directory]
+
+    - name: Render pgbouncer.ini with no overrides
+      ansible.builtin.template:
+        src: ../roles/patroni/templates/pgbouncer.ini.j2
+        dest: "{{ _pgb_render_dir }}/none.ini"
+        mode: "0640"
+
+    - name: Render pgbouncer.ini with GitLab overrides
+      ansible.builtin.template:
+        src: ../roles/patroni/templates/pgbouncer.ini.j2
+        dest: "{{ _pgb_render_dir }}/gitlab.ini"
+        mode: "0640"
+      vars:
+        pgbouncer_database_overrides: "{{ _gitlab_overrides }}"
+
+    - name: Read rendered configs
+      ansible.builtin.slurp:
+        src: "{{ _pgb_render_dir }}/{{ item }}.ini"
+      loop: [none, gitlab]
+      register: _pgb_rendered
+
+    # Collect the [databases] section into an ordered list of "key = value"
+    # pairs, dropping comments and stopping at [pgbouncer].
+    - name: Extract the [databases] section
+      ansible.builtin.set_fact:
+        _db_none: >-
+          {{ (_pgb_rendered.results[0].content | b64decode).split('[pgbouncer]')[0]
+             | regex_findall('(?m)^([^;\[\s][^=]*) = (.*)$') }}
+        _db_gitlab: >-
+          {{ (_pgb_rendered.results[1].content | b64decode).split('[pgbouncer]')[0]
+             | regex_findall('(?m)^([^;\[\s][^=]*) = (.*)$') }}
+
+    - name: Verify the no-override case is just the wildcard
+      ansible.builtin.assert:
+        that:
+          - _db_none | length == 1
+          - _db_none[0][0] == '*'
+          - _db_none[0][1].split() | select('match', '^pool_mode=') | list | length == 0
+
+    - name: Verify every override renders, in order, before the wildcard
+      ansible.builtin.assert:
+        that:
+          - _db_gitlab | length == 4
+          - _db_gitlab | map(attribute=0) | list == ['gitlabhq_production', 'gitlabhq_production_ci', 'gitlab_main', '*']
+          # PgBouncer resolves exact names first regardless of order, but a
+          # wildcard rendered above the named entries would be a template bug
+          # worth catching.
+          - _db_gitlab[3][0] == '*'
+
+    - name: Verify override contents
+      ansible.builtin.assert:
+        that:
+          - "'pool_mode=transaction' in _main"
+          - "'auth_user=pgbouncer' in _main"
+          # auth_dbname must survive on every line or user_search() breaks.
+          - "'auth_dbname=postgres' in _main"
+          - "'port=' ~ postgresql_port in _main"
+          # No standalone dbname= when the key is already the physical
+          # database. Matched per-token: auth_dbname= contains "dbname=" as a
+          # substring, so a naive `not in` check passes trivially.
+          - _main.split() | select('match', '^dbname=') | list | length == 0
+      vars:
+        _main: "{{ _db_gitlab[0][1] }}"
+
+    - name: Verify alias entry maps to the physical database
+      ansible.builtin.assert:
+        that:
+          - "'dbname=gitlabhq_production' in _alias.split()"
+          - "'pool_mode=transaction' in _alias"
+          - "'pool_size=100' in _alias"
+      vars:
+        _alias: "{{ _db_gitlab[2][1] }}"
+
+    - name: Verify the wildcard stays clean so unlisted DBs inherit session
+      ansible.builtin.assert:
+        that:
+          # Praefect relies on this: no pool_mode on `*` means it inherits
+          # pgbouncer_pool_mode (session), which is what LISTEN/NOTIFY needs.
+          - _wildcard.split() | select('match', '^pool_mode=') | list | length == 0
+          - "'auth_dbname=postgres' in _wildcard"
+      vars:
+        _wildcard: "{{ _db_gitlab[3][1] }}"
+
+    - name: Verify client TLS block is unaffected by overrides
+      ansible.builtin.assert:
+        that:
+          - "'client_tls_sslmode = prefer' in _cfg"
+          - "'server_tls_sslmode = prefer' in _cfg"
+      vars:
+        _cfg: "{{ _pgb_rendered.results[1].content | b64decode }}"

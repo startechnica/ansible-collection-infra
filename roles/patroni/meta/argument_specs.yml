@@ -208,6 +208,47 @@ argument_specs:
           Use this for ops VPN / jump-host access; leave empty for
           PgBouncer-only ingress (recommended).
 
+      pgbouncer_database_overrides:
+        type: list
+        elements: dict
+        default: []
+        description: >-
+          Per-database entries for PgBouncer's [databases] section. PgBouncer
+          resolves an exact database name before the `*` fallback, so each item
+          carves one database out of the global pgbouncer_pool_mode. Keep
+          `session` global and opt databases INTO transaction pooling — session
+          mode is always correct, whereas transaction mode silently breaks
+          LISTEN/NOTIFY, session-level SET, cross-transaction advisory locks,
+          WITH HOLD cursors, and temp tables. Motivating case: GitLab Rails
+          needs transaction pooling while Praefect needs session pooling for
+          LISTEN/NOTIFY; listing only GitLab's databases here serves both from
+          one PgBouncer.
+        options:
+          name:
+            type: str
+            required: true
+            description: >-
+              The database name the CLIENT REQUESTS, not a label. A name that
+              doesn't match the client's startup packet never matches and the
+              database silently falls back to `*`. Cannot be `*` — the
+              template renders that entry itself.
+          dbname:
+            type: str
+            description: Physical database to connect to, when `name` is an alias.
+          pool_mode:
+            type: str
+            choices: [session, transaction, statement]
+            description: Pool mode for this database only; omit to inherit pgbouncer_pool_mode.
+          pool_size:
+            type: int
+            description: Server connections for this database; omit to inherit default_pool_size.
+          min_pool_size:
+            type: int
+          reserve_pool:
+            type: int
+          max_db_connections:
+            type: int
+
       # ── PgBouncer client-facing TLS (clients → PgBouncer) ──
       pgbouncer_client_tls_sslmode:
         type: str
@@ -266,6 +307,54 @@ argument_specs:
         type: str
         default: "10s"
         description: Per-check timeout; a Patroni REST API response slower than this counts as a failed check.
+
+      # ── HAProxy connection timeouts (inactivity, not absolute age) ──
+      haproxy_client_timeout:
+        type: str
+        default: "300s"
+        description: >-
+          Max inactivity on the client side. Largely a backstop on the pg
+          listeners: haproxy_tunnel_timeout supersedes it as soon as no
+          analyser is attached, which for a plain mode-tcp listener with no
+          tcp-request rules is immediately. It does govern the mode-http stats
+          listener. Kernel TCP keepalives do NOT reset this timer.
+      haproxy_server_timeout:
+        type: str
+        default: "300s"
+        description: Max inactivity on the server (PgBouncer) side. Same semantics as haproxy_client_timeout.
+      haproxy_connect_timeout:
+        type: str
+        default: "10s"
+        description: >-
+          Max time to establish a TCP connection to a backend. Not superseded
+          by the tunnel timeout, so this is what actually bounds connection
+          setup.
+      haproxy_tunnel_timeout:
+        type: str
+        default: "24h"
+        description: >-
+          Max inactivity for an ESTABLISHED connection; in mode tcp this
+          supersedes client/server once no analyser remains attached. Long by
+          default so LISTEN/NOTIFY sessions and long-running statements aren't
+          cut mid-flight — NOTIFY is not queued for absent listeners, so a
+          proxy-side disconnect loses notifications silently. Safe to keep long
+          because `option clitcpka` / `srvtcpka` reap genuinely dead peers in
+          ~2 min, and because the *-fin timeouts below override it for
+          half-closed connections. Lower THIS to bound session lifetime;
+          raising client/server will not do it.
+      haproxy_client_fin_timeout:
+        type: str
+        default: "30s"
+        description: >-
+          Max time a half-closed (client sent FIN) connection is kept before
+          its FDs are freed. Overrides haproxy_tunnel_timeout once the
+          connection is shut down in one direction, so this — not the tunnel
+          timeout — is what bounds FIN_WAIT.
+      haproxy_server_fin_timeout:
+        type: str
+        default: "30s"
+        description: Max time a half-closed (server sent FIN) connection is kept before its FDs are freed. Same override semantics as haproxy_client_fin_timeout.
+
       postgresql_port:
         type: int
         default: 55432

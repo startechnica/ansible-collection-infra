@@ -168,6 +168,49 @@ haproxy_check_fall: 5
 haproxy_check_rise: 2
 haproxy_check_timeout: "10s"
 
+# ── HAProxy connection timeouts ────────────────────────────────────────
+# These are INACTIVITY timers: HAProxy measures time since application data
+# last moved in that direction. Kernel TCP keepalives (option clitcpka /
+# srvtcpka, on by default) do NOT reset them — a keepalive probe is an empty
+# ACK carrying no application data. Keepalives only detect dead peers and hold
+# NAT/firewall state open; the two mechanisms are independent.
+#
+# `tunnel` is what makes long-lived idle sessions survive. Per the HAProxy
+# manual it "supersedes both the client and server timeouts once the connection
+# becomes a tunnel. In TCP, this timeout is used as soon as no analyser remains
+# attached to either connection (e.g. tcp content rules are accepted)." The pg
+# listeners have no tcp-request rules and no TLS on their bind lines, so no
+# analyser is ever attached and `tunnel` governs from the moment the session is
+# accepted — client/server are left as backstops and for the mode-http stats
+# listener, while `connect` bounds backend connection setup. Two workloads need
+# the long leash:
+#
+#   * LISTEN/NOTIFY — the client issues `LISTEN chan` then stays silent,
+#     possibly for hours. Under the old hardcoded 300s it was disconnected
+#     after 5 minutes of quiet, and because NOTIFY is not queued for absent
+#     listeners, every notification published in the gap was lost silently.
+#   * Long statements — a big CREATE INDEX, slow analytical query, or pg_dump
+#     through the proxy sends no bytes while it runs. PgBouncer deliberately
+#     does not cap these (query_timeout = 0), so HAProxy was the limit.
+#
+# 24h is safe here specifically BECAUSE keepalives are enabled: a genuinely
+# dead peer is reaped by the kernel in ~2 min (see os_tuning.yml's
+# tcp_keepalive_* sysctls), so the tunnel timeout is a backstop against
+# leaked-but-live connections, not the primary reaper. Lower `tunnel` if you'd
+# rather bound session lifetime — raising client/server will not do it, since
+# tunnel supersedes them on the pg listeners.
+haproxy_client_timeout: "300s"
+haproxy_server_timeout: "300s"
+haproxy_connect_timeout: "10s"
+haproxy_tunnel_timeout: "24h"
+# Half-closed (FIN sent, peer hasn't closed back) connections. These override
+# `tunnel` once a connection is shut down in one direction, so they are what
+# actually bounds FIN_WAIT — without them a client that vanishes mid-session
+# (NAT drop, lossy link, hard kill) holds its slot for the full 24h. Keep them
+# well below haproxy_tunnel_timeout.
+haproxy_client_fin_timeout: "30s"
+haproxy_server_fin_timeout: "30s"
+
 postgresql_port: 55432
 patroni_api_port: 8008
 etcd_client_port: 2379
@@ -401,6 +444,40 @@ pgbouncer_admin_users: "pgbouncer"
 # and a SHOW-only credential leak doesn't expose pg_shadow access.
 pgbouncer_stats_users: "pgbouncer_stats"
 pgbouncer_default_pool_size: 20
+
+# Per-database overrides for the [databases] section. PgBouncer resolves an
+# exact database name before falling back to the `*` entry, so each item here
+# carves one database out of the global pgbouncer_pool_mode above.
+#
+# Keep `session` as the global default and opt individual databases INTO
+# transaction pooling, not the other way round. Session mode is always
+# correct, just less efficient; transaction mode silently breaks LISTEN/NOTIFY,
+# session-level SET, advisory locks held across transactions, WITH HOLD
+# cursors, and temp tables. With session as the fallback, a database you forget
+# to list costs connections (visible); with transaction as the fallback, it
+# corrupts behavior (not visible).
+#
+#   name                — REQUIRED. The database name the CLIENT REQUESTS, not
+#                         a label. If it doesn't match the name in the client's
+#                         startup packet the entry never matches and `*`
+#                         applies — silently, with no error.
+#   dbname              — optional; physical database to connect to, when the
+#                         key above is an alias.
+#   pool_mode           — session | transaction | statement
+#   pool_size           — server connections for this database (else
+#                         default_pool_size)
+#   min_pool_size, reserve_pool, max_db_connections — optional passthrough
+#
+# GitLab is the motivating case: Rails requires transaction pooling, while
+# Praefect requires session pooling for its LISTEN/NOTIFY cache-invalidation
+# connection. Both are served from one PgBouncer by listing only GitLab's
+# databases here. Praefect then needs no entry (it inherits session from `*`)
+# and no separate `database.session_pooled` connection.
+#
+#   pgbouncer_database_overrides:
+#     - { name: gitlabhq_production, pool_mode: transaction }
+#     - { name: gitlabhq_production_ci, pool_mode: transaction }
+pgbouncer_database_overrides: []
 
 # ── PgBouncer client-facing TLS (clients → PgBouncer) ──────────────────
 # Counterpart to the server_tls_* block (PgBouncer → PostgreSQL) already in
