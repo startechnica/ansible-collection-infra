@@ -6,7 +6,8 @@
   when: mongodb_backup_type == 'pbm'
 
 - name: Run mongodump backup
-  ansible.builtin.block:
+  when: mongodb_backup_type == 'mongodump'
+  block:
     - name: Run mongodump
       mongodb_backup:
         image: "{{ mongodb_image }}"
@@ -71,4 +72,3 @@
         state: absent
       when: mongodb_backup_mode == 's3'
       run_once: true
-  when: mongodb_backup_type == 'mongodump'
