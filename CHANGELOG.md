@@ -102,7 +102,9 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   Configures the active backup engine for both scheduled and on-demand backups.
   When set to `pbm`, `mongodb_action: backup` and scheduled timers dispatch to
   Percona Backup for MongoDB (PBM); when `mongodump`, traditional containerized
-  mongodump is used.
+  mongodump is used. Defaults to `pbm` when `mongodb_backup_pbm_enabled` is
+  true and `mongodump` otherwise, so clusters without PBM keep their scheduled
+  mongodump backups; an explicit `pbm` without PBM enabled fails preflight.
 - **Selectable PBM object-storage client.** New
   `mongodb_backup_storage_type: minio|s3|gcs` setting defaults to PBM's native
   MinIO client for MinIO and other S3-compatible endpoints, avoiding AWS SDK

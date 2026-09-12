@@ -288,12 +288,14 @@ argument_specs:
       # ── Backup ──
       mongodb_backup_type:
         type: str
-        default: pbm
+        default: "{{ 'pbm' if mongodb_backup_pbm_enabled | bool else 'mongodump' }}"
         choices: [mongodump, pbm]
         description: >-
           Backup engine choice for scheduled and on-demand backups (`mongodump` or `pbm`).
           `mongodump` runs logical dumps via a throwaway container; `pbm` uses
-          Percona Backup for MongoDB (PBM).
+          Percona Backup for MongoDB (PBM). Defaults to `pbm` when
+          mongodb_backup_pbm_enabled is true, otherwise `mongodump`; `pbm`
+          without PBM enabled fails preflight.
       mongodb_backup_dir:
         type: str
         default: /opt/mongodb/backups

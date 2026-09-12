@@ -124,7 +124,9 @@ mongodb_databases: []
 # ── Backup ──
 # Backup engine choice: 'mongodump' runs logical mongodump to local/S3; 'pbm'
 # uses Percona Backup for MongoDB (PBM) for cluster-consistent backups + PITR.
-mongodb_backup_type: pbm
+# Follows mongodb_backup_pbm_enabled by default, so a cluster without PBM keeps
+# its scheduled mongodump backups. 'pbm' without PBM enabled fails preflight.
+mongodb_backup_type: "{{ 'pbm' if mongodb_backup_pbm_enabled | bool else 'mongodump' }}"
 mongodb_backup_dir: "{{ mongodb_root_dir }}/backups"
 mongodb_backup_retain_days: 7
 ## @param mongodb_backup_pitr_enabled [default: false] Pass --oplog to

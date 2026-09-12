@@ -168,7 +168,7 @@ PBM agents are stateless (state lives in the cluster + S3), so no data volumes.
 ## New variables (`mongodb_backup_*`)
 
 ```yaml
-mongodb_backup_type: pbm                   # pbm|mongodump selector
+mongodb_backup_type: mongodump             # pbm|mongodump; follows mongodb_backup_pbm_enabled
 mongodb_backup_pbm_enabled: false          # master switch
 mongodb_backup_pbm_image: "percona/percona-backup-mongodb:2.x.y"   # pin, not :latest
 mongodb_backup_pbm_cn: "mongodb-pbm"       # client-cert CN

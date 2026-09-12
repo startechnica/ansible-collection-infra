@@ -83,6 +83,26 @@
     _pbm_supported_mms: "{{ (_pbm_major, _pbm_minor) in [(7, 0), (8, 0)] }}"
   when: mongodb_backup_pbm_enabled | bool
 
+# mongodb_backup_type picks the engine for scheduled and on-demand backups.
+# `pbm` without PBM deployed leaves the cluster with no scheduled backups at
+# all: provisioning tears down the mongodump timer and installs no PBM timer.
+# The default follows mongodb_backup_pbm_enabled, so this only fires on an
+# explicit `pbm` override.
+- name: Assert PBM is enabled when mongodb_backup_type is pbm
+  ansible.builtin.assert:
+    that:
+      - mongodb_backup_type != 'pbm' or (mongodb_backup_pbm_enabled | bool)
+    fail_msg: |
+      `mongodb_backup_type: pbm` requires `mongodb_backup_pbm_enabled: true`.
+      Without PBM, provisioning removes the mongodump backup timer and
+      installs no PBM timer, so this cluster would have no scheduled backups.
+
+      Pick one:
+        1. Enable PBM (`mongodb_backup_pbm_enabled: true`).
+        2. Back up with mongodump: set `mongodb_backup_type: mongodump`, or
+           drop the override (it defaults to mongodump when PBM is disabled).
+    success_msg: "Backup engine: {{ mongodb_backup_type }}."
+
 # On a SHARDED cluster, mongodump --oplog (the path that
 # mongodb_backup_pitr_enabled toggles) is rejected via mongos: "can't use
 # --oplog option when dumping from a mongos". The only path to PITR on sharded

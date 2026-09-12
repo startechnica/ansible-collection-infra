@@ -9,11 +9,19 @@
     - ../roles/mongodb/defaults/main.yml
 
   tasks:
-    - name: Verify default backup type is pbm
+    - name: Verify backup type defaults to mongodump when PBM is disabled
+      ansible.builtin.assert:
+        that:
+          - mongodb_backup_type == 'mongodump'
+        fail_msg: "mongodb_backup_type should default to mongodump when mongodb_backup_pbm_enabled is false"
+
+    - name: Verify backup type defaults to pbm when PBM is enabled
       ansible.builtin.assert:
         that:
           - mongodb_backup_type == 'pbm'
-        fail_msg: "mongodb_backup_type default should be pbm"
+        fail_msg: "mongodb_backup_type should default to pbm when mongodb_backup_pbm_enabled is true"
+      vars:
+        mongodb_backup_pbm_enabled: true
 
     - name: Verify PBM backup fails when mongodb_backup_pbm_enabled is false
       block:
