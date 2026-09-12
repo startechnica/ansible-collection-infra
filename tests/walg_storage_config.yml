@@ -134,5 +134,11 @@
           - _root_s3.WALG_S3_PREFIX == 's3://test-backup-bucket'
           - _root_gcs.WALG_GS_PREFIX == 'gs://test-gcs-bucket'
       vars:
-        _root_s3: "{{ dict(lookup('template', '../roles/patroni/templates/walg.env.j2', template_vars={'walg_storage_type': 's3', 'patroni_walg_s3_prefix': ''}) | regex_findall('(?m)^([A-Z_][A-Z0-9_]*)=(.*)$')) }}"
-        _root_gcs: "{{ dict(lookup('template', '../roles/patroni/templates/walg.env.j2', template_vars={'walg_storage_type': 'gcs', 'walg_gcs_prefix': ''}) | regex_findall('(?m)^([A-Z_][A-Z0-9_]*)=(.*)$')) }}"
+        _root_s3: >-
+          {{ dict(lookup('template', '../roles/patroni/templates/walg.env.j2',
+          template_vars={'walg_storage_type': 's3', 'patroni_walg_s3_prefix': ''})
+          | regex_findall('(?m)^([A-Z_][A-Z0-9_]*)=(.*)$')) }}
+        _root_gcs: >-
+          {{ dict(lookup('template', '../roles/patroni/templates/walg.env.j2',
+          template_vars={'walg_storage_type': 'gcs', 'walg_gcs_prefix': ''})
+          | regex_findall('(?m)^([A-Z_][A-Z0-9_]*)=(.*)$')) }}
