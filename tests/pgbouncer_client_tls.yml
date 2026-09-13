@@ -1,0 +1,110 @@
+---
+# Regression coverage for PgBouncer's client-facing TLS block. PgBouncer
+# terminates client TLS for the whole stack (HAProxy is mode tcp and relays
+# the handshake through), so a regression here silently drops every client
+# back to plaintext — or, with a bad value, stops PgBouncer from starting.
+#
+# Run from collection root:
+#   ansible-playbook tests/pgbouncer_client_tls.yml
+
+- name: Render PgBouncer client TLS configurations
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  vars_files:
+    - ../roles/patroni/defaults/main.yml
+  vars:
+    _pgb_render_dir: /tmp/pgbouncer-client-tls-test
+
+  tasks:
+    - name: Verify prefer is the default client TLS mode
+      ansible.builtin.assert:
+        that:
+          # prefer accepts TLS *and* plaintext — enabling client TLS must not
+          # lock out existing plaintext clients on an upgrade.
+          - pgbouncer_client_tls_sslmode == 'prefer'
+          - pgbouncer_client_tls_protocols == 'secure'
+
+    - name: Recreate PgBouncer render directory
+      ansible.builtin.file:
+        path: "{{ _pgb_render_dir }}"
+        state: "{{ item }}"
+        mode: "0755"
+      loop: [absent, directory]
+
+    - name: Render pgbouncer.ini per client TLS mode
+      ansible.builtin.template:
+        src: ../roles/patroni/templates/pgbouncer.ini.j2
+        dest: "{{ _pgb_render_dir }}/{{ item }}.ini"
+        mode: "0640"
+      vars:
+        pgbouncer_client_tls_sslmode: "{{ item }}"
+      loop:
+        - prefer
+        - require
+        - verify-full
+        - disable
+
+    - name: Read rendered pgbouncer.ini files
+      ansible.builtin.slurp:
+        src: "{{ _pgb_render_dir }}/{{ item }}.ini"
+      loop:
+        - prefer
+        - require
+        - verify-full
+        - disable
+      register: _pgb_rendered
+
+    # Parse `key = value` lines (skipping `;` comments and blanks) into a dict
+    # per file so assertions read as config lookups, not substring searches.
+    - name: Parse rendered pgbouncer.ini files
+      ansible.builtin.set_fact:
+        _ini_prefer: "{{ dict(_pgb_rendered.results[0].content | b64decode | regex_findall('(?m)^([a-z_0-9]+) = (.*)$')) }}"
+        _ini_require: "{{ dict(_pgb_rendered.results[1].content | b64decode | regex_findall('(?m)^([a-z_0-9]+) = (.*)$')) }}"
+        _ini_verify: "{{ dict(_pgb_rendered.results[2].content | b64decode | regex_findall('(?m)^([a-z_0-9]+) = (.*)$')) }}"
+        _ini_disable: "{{ dict(_pgb_rendered.results[3].content | b64decode | regex_findall('(?m)^([a-z_0-9]+) = (.*)$')) }}"
+
+    - name: Verify the default (prefer) emits a usable client TLS block
+      ansible.builtin.assert:
+        that:
+          - _ini_prefer.client_tls_sslmode == 'prefer'
+          # Without cert+key PgBouncer cannot terminate TLS at all, which is
+          # what makes the published sslmode=verify-ca URLs work.
+          - _ini_prefer.client_tls_cert_file == '/etc/certs/pgbouncer.crt'
+          - _ini_prefer.client_tls_key_file == '/etc/certs/pgbouncer.key'
+          - _ini_prefer.client_tls_ca_file == '/etc/certs/ca.crt'
+          - _ini_prefer.client_tls_protocols == 'secure'
+          - _ini_prefer.client_tls_ciphers == 'default'
+
+    - name: Verify tightened modes keep the cert material
+      ansible.builtin.assert:
+        that:
+          - _ini_require.client_tls_sslmode == 'require'
+          - _ini_require.client_tls_cert_file == '/etc/certs/pgbouncer.crt'
+          - _ini_verify.client_tls_sslmode == 'verify-full'
+          # verify-* makes a client cert mandatory, so the CA that validates
+          # it must be present or every connection is rejected.
+          - _ini_verify.client_tls_ca_file == '/etc/certs/ca.crt'
+
+    - name: Verify disable emits no cert material
+      ansible.builtin.assert:
+        that:
+          - _ini_disable.client_tls_sslmode == 'disable'
+          - _ini_disable.client_tls_cert_file is not defined
+          - _ini_disable.client_tls_key_file is not defined
+          - _ini_disable.client_tls_ca_file is not defined
+
+    - name: Verify upstream (server) TLS is untouched by the client TLS mode
+      ansible.builtin.assert:
+        that:
+          - item.server_tls_sslmode == 'prefer'
+          - item.server_tls_cert_file == '/etc/certs/pgbouncer.crt'
+          - item.server_tls_key_file == '/etc/certs/pgbouncer.key'
+          - item.server_tls_ca_file == '/etc/certs/ca.crt'
+      loop:
+        - "{{ _ini_prefer }}"
+        - "{{ _ini_require }}"
+        - "{{ _ini_verify }}"
+        - "{{ _ini_disable }}"
+      loop_control:
+        label: "client_tls_sslmode={{ item.client_tls_sslmode }}"

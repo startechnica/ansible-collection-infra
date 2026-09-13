@@ -7,8 +7,9 @@
 # This playbook deliberately does NOT overwrite the live cluster.
 #
 # Prerequisites:
-#   - The base backup must have been taken with `--oplog` (mongodb_backup_pitr:
-#     true), so it contains oplog.bson — or you have a separate oplog.bson.
+#   - The base backup must have been taken with `--oplog`
+#     (mongodb_backup_pitr_enabled: true), so it contains oplog.bson — or you
+#     have a separate oplog.bson.
 #     Note: --oplog backups only work on replica-set deployments, not sharded
 #     clusters dumped via mongos.
 #   - The oplog window between the backup and `target_time` must still be
@@ -94,9 +95,9 @@
               -e MC_HOST_s3={{ s3_endpoint | regex_replace('^(https?://)', '\\g<1>' ~ s3_access_key ~ ':' ~ s3_secret_key ~ '@') }} \
               {{ s3_client_image }}"
             if [ -n "$NAME" ]; then
-              $MC mc cp "s3/{{ s3_bucket }}/{{ s3_prefix }}/${NAME}.tar.gz" /out/
+              $MC mc cp "s3/{{ s3_bucket }}/{{ mongodb_backup_s3_prefix }}/${NAME}.tar.gz" /out/
             else
-              $MC sh -c "mc find s3/{{ s3_bucket }}/{{ s3_prefix }}/ --name '*.tar.gz' \
+              $MC sh -c "mc find s3/{{ s3_bucket }}/{{ mongodb_backup_s3_prefix }}/ --name '*.tar.gz' \
                          | sort -r | head -n1 \
                          | xargs -I{} mc cp {} /out/"
             fi
@@ -119,7 +120,7 @@
 
         - name: Fail if S3 archive yielded no backup
           ansible.builtin.fail:
-            msg: "No mongodump_* directory extracted from S3. Check s3_prefix / backup_name."
+            msg: "No mongodump_* directory extracted from S3. Check mongodb_backup_s3_prefix / backup_name."
           when: _extracted_path.stdout | trim | length == 0
 
         - name: Point backup_path at the extracted backup

@@ -162,6 +162,8 @@
     state: stopped
   loop:
     - mongodb-backup.timer
+    - mongodb-pbm.timer
+    - mongodb-pbm-backup.timer
     - pbm-backup.timer
   failed_when: false
 
@@ -173,6 +175,10 @@
     - /etc/systemd/system/mongodb-backup.timer
     - /etc/systemd/system/mongodb-backup.service
     - "{{ mongodb_root_dir }}/mongodb-backup.sh"
+    - /etc/systemd/system/mongodb-pbm.timer
+    - /etc/systemd/system/mongodb-pbm.service
+    - /etc/systemd/system/mongodb-pbm-backup.timer
+    - /etc/systemd/system/mongodb-pbm-backup.service
     - /etc/systemd/system/pbm-backup.timer
     - /etc/systemd/system/pbm-backup.service
     - "{{ mongodb_root_dir }}/pbm"

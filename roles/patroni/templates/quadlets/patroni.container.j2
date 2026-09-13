@@ -34,6 +34,13 @@ Volume={{ wal_archive_dir }}:/wal_archive:Z
 Volume={{ patroni_backup_dir }}:/var/lib/postgresql/backups:Z
 {% if walg_enabled %}
 Volume={{ walg_dir }}/bin:/opt/walg:ro,z
+{% if walg_storage_type == 'gcs' %}
+# GCS service-account key for wal-g (GOOGLE_APPLICATION_CREDENTIALS in
+# walg.env points here). The DIRECTORY is mounted, not the bare file: a
+# re-rendered key replaces the inode, which a file bind-mount would not
+# follow.
+Volume={{ walg_gcs_service_account_dir }}:{{ walg_gcs_service_account_mount }}:ro,Z
+{% endif %}
 {% endif %}
 
 # Quadlet doesn't have a direct `ulimits` mapping — pass through.

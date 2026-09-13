@@ -30,11 +30,23 @@
       {%- endfor -%}
       {{ ips }}
     s3_enabled: "{{ s3_bucket | length > 0 }}"
-    # walg_enabled: user-facing toggle (defaults true), but only effective
-    # when S3 is configured. Set walg_enabled=false in inventory to keep
-    # S3 for etcd-snapshots only and skip WAL-G entirely.
-    walg_enabled: "{{ (s3_bucket | length > 0) and (walg_enabled | bool) }}"
+    # Does the SELECTED WAL-G backend have a bucket? etcd snapshots stay on S3
+    # regardless, so s3_enabled above is deliberately separate from this.
+    walg_storage_configured: >-
+      {{ (walg_gcs_bucket | default('') | length > 0)
+         if (walg_storage_type | default('s3')) == 'gcs'
+         else (s3_bucket | length > 0) }}
     patroni_vip_enabled: "{{ patroni_vip_address | length > 0 }}"
     use_vip_manager: >-
       {{ (patroni_vip_address | length > 0)
-         and (vip_manager == 'vip-manager') }}
+         and (patroni_vip_engine == 'vip-manager') }}
+
+# Separate task: this reads walg_storage_configured, set above. set_fact does
+# not guarantee intra-task ordering, so it can't live in the same dict.
+# walg_enabled is the user-facing toggle (defaults true); it only takes effect
+# when the selected backend has a bucket. Set walg_enabled=false in inventory
+# to keep S3 for etcd-snapshots only and skip WAL-G entirely.
+- name: Resolve effective walg_enabled
+  ansible.builtin.set_fact:
+    walg_enabled: >-
+      {{ (walg_storage_configured | bool) and (walg_enabled | bool) }}

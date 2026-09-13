@@ -1,14 +1,23 @@
 ---
 # On-demand Percona Backup for MongoDB backup — cluster-consistent logical
 # snapshot to the configured S3 store. `--wait` blocks until it completes.
-# Invoked via `mongodb_action: pbm-backup` or playbooks/mongodb/pbm-backup.yml.
+# Invoked via `mongodb_action: pbm-backup`, `playbooks/mongodb/pbm-backup.yml`,
+# or `mongodb_action: backup` when `mongodb_backup_type: pbm`.
+
+- name: Validate PBM is enabled for PBM backup
+  ansible.builtin.assert:
+    that:
+      - mongodb_backup_pbm_enabled | bool
+    fail_msg: >-
+      PBM backup requested (mongodb_backup_type=pbm or action=pbm-backup), but
+      mongodb_backup_pbm_enabled is false. Set mongodb_backup_pbm_enabled: true in inventory/vars.
+  run_once: true
 
 - name: Resolve PBM control container + compression args
   ansible.builtin.set_fact:
-    _pbm_control: "{{ 'mongodb-pbm-config' if mongodb_cluster_type == 'sharded' else 'mongodb-pbm-shard' }}"
     _pbm_compression_args: >-
-      --compression={{ mongodb_pbm_compression }}{{ (' --compression-level=' ~ mongodb_pbm_compression_level)
-      if mongodb_pbm_compression_level | string | length > 0 else '' }}
+      --compression={{ mongodb_backup_compression_type }}{{ (' --compression-level=' ~ mongodb_backup_compression_level)
+      if mongodb_backup_compression_level | string | length > 0 else '' }}
   run_once: true
 
 - name: Run PBM backup (waits for completion)

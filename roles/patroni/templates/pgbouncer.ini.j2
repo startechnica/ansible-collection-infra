@@ -5,6 +5,25 @@
 ; it, PgBouncer runs `SELECT * FROM pgbouncer.user_search($1)` against
 ; whichever database the client is connecting to (e.g. prd_actionpay)
 ; and PG returns: ERROR: schema "pgbouncer" does not exist.
+{% if pgbouncer_database_overrides | length > 0 %}
+;
+; Per-database overrides (pgbouncer_database_overrides). PgBouncer matches an
+; exact database name before falling back to `*`, so these carve individual
+; databases out of the global pool_mode below. The key on the left is the
+; database name the CLIENT REQUESTS — not a label. If it doesn't match what
+; the client actually asks for, the entry is silently skipped and `*` applies.
+; Use dbname= to point an alias at a differently-named physical database.
+{% for _db in pgbouncer_database_overrides %}
+{% set _opts = ['host=127.0.0.1', 'port=' ~ postgresql_port] %}
+{% if _db.dbname is defined %}{% set _ = _opts.append('dbname=' ~ _db.dbname) %}{% endif %}
+{% set _ = _opts.extend(['auth_user=pgbouncer', 'auth_dbname=postgres']) %}
+{% for _k in ['pool_mode', 'pool_size', 'min_pool_size', 'reserve_pool', 'max_db_connections'] %}
+{% if _k in _db %}{% set _ = _opts.append(_k ~ '=' ~ _db[_k]) %}{% endif %}
+{% endfor %}
+{{ _db.name }} = {{ _opts | join(' ') }}
+{% endfor %}
+;
+{% endif %}
 * = host=127.0.0.1 port={{ postgresql_port }} auth_user=pgbouncer auth_dbname=postgres
 
 [pgbouncer]
@@ -91,6 +110,40 @@ stats_period = 60
 
 ; users allowed to view pgbouncer stats
 stats_users = {{ pgbouncer_stats_users }}
+
+; ── TLS from clients (clients → PgBouncer) ─────────────────────────
+; PgBouncer terminates client TLS for the whole stack. HAProxy is
+; `mode tcp` with no TLS on its bind, so a client hitting 5432/5433
+; is relayed byte-for-byte and handshakes against PgBouncer — not
+; PostgreSQL. PgBouncer's built-in default is `disable`, which is why
+; the sslmode=verify-ca URLs in db-connections.txt need this block to
+; work at all.
+;
+; `prefer` accepts TLS and plaintext both, so turning this on doesn't
+; cut off existing plaintext clients. See pgbouncer_client_tls_sslmode
+; in defaults/main.yml for the ladder up to `require`.
+client_tls_sslmode = {{ pgbouncer_client_tls_sslmode }}
+{% if pgbouncer_client_tls_sslmode != 'disable' %}
+
+; The cert PgBouncer presents to clients — the same leaf used for
+; server_tls_* below. Its SANs cover node IPs, hostnames, and localhost
+; but NOT patroni_vip_address, so clients reaching the cluster through
+; the VIP must use sslmode=verify-ca (validates the CA chain) rather
+; than verify-full (also matches hostname against the SANs).
+client_tls_cert_file = /etc/certs/pgbouncer.crt
+client_tls_key_file = /etc/certs/pgbouncer.key
+
+; Validates CLIENT certificates. Only consulted under verify-ca /
+; verify-full, where presenting a client cert becomes mandatory;
+; ignored (and harmless) under prefer / require.
+client_tls_ca_file = /etc/certs/ca.crt
+
+; `secure` = tlsv1.2 + tlsv1.3
+client_tls_protocols = {{ pgbouncer_client_tls_protocols }}
+
+; TLS <= 1.2 only; 1.3 suites are negotiated independently
+client_tls_ciphers = {{ pgbouncer_client_tls_ciphers }}
+{% endif %}
 
 ; ── TLS to upstream PostgreSQL ─────────────────────────────────────
 ; `prefer` = use TLS if PG offers it, fall back to plain otherwise.

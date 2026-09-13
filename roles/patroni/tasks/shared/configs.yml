@@ -44,3 +44,13 @@
 - name: Provision WAL-G (password + env file)
   ansible.builtin.include_tasks: walg.yml
   when: walg_enabled
+
+# Rollback path: walg_enabled flipped true → false. walg.yml (which owns the
+# same cleanup for a gcs → s3 backend flip) is skipped above, so sweep the
+# service-account key here — leaving a private key on disk for a disabled
+# feature is the one bit of walg state that must not linger.
+- name: Remove WAL-G GCS service-account key (WAL-G disabled — rollback)
+  ansible.builtin.file:
+    path: "{{ walg_gcs_service_account_file }}"
+    state: absent
+  when: not (walg_enabled | bool)

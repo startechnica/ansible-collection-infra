@@ -192,6 +192,13 @@
 # and assert every NIC we put on a DISTRIBUTED switch actually bound
 # (portgroup_key populated). Standard-vSwitch NICs legitimately have a null
 # portgroup_key, so only enforce this for entries that carried a dvswitch_name.
+# Retried because this is a pure info read against vCenter and is prone to
+# transient transport-layer failures — `IncompleteRead(N bytes read)` (pyVmomi
+# got a truncated HTTP body) and similar — on busy vCenters or lossy links.
+# vmware_guest_info pulls the whole VM object, so its response is large and the
+# most likely to be cut short. The rebind write on the line above already
+# succeeded; only this verification query needs to survive a flaky read, so
+# `until` retries it a few times before the assert below consumes the result.
 - name: "Re-probe NIC binding after network reconfigure — {{ item.name }}"
   community.vmware.vmware_guest_info:
     hostname: "{{ vcenter_connect.hostname }}"
@@ -203,6 +210,9 @@
     name: "{{ item.name }}"
   delegate_to: localhost
   register: _nic_verify_info
+  until: _nic_verify_info is not failed
+  retries: 5
+  delay: 5
   when: _vsphere_networks | selectattr('dvswitch_name', 'defined') | list | length > 0
 
 - name: "Assert every DVS NIC bound to a portgroup — {{ item.name }}"

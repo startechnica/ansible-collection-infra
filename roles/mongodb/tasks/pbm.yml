@@ -14,6 +14,33 @@
 # directConnection — PBM reuses URI options for its multi-host config-RS
 # connection, where directConnection is rejected).
 
+- name: Validate native GCS configuration
+  ansible.builtin.assert:
+    that:
+      - mongodb_backup_gcs_bucket | length > 0
+      - mongodb_backup_gcs_service_account | length > 0
+      - >-
+        mongodb_backup_gcs_service_account is mapping
+        or (mongodb_backup_gcs_service_account | string | trim).startswith('{')
+      - _gcs_sa.client_email | default('') | length > 0
+      - _gcs_sa.private_key | default('') | length > 0
+    fail_msg: >-
+      mongodb_backup_storage_type is 'gcs', but mongodb_backup_gcs_bucket is
+      empty or mongodb_backup_gcs_service_account is not a service-account JSON
+      key carrying client_email and private_key. Supply the key GCP produces at
+      "Create key → JSON" (preferably through Ansible Vault).
+    success_msg: "PBM GCS target: bucket={{ mongodb_backup_gcs_bucket }}"
+  vars:
+    # Resolved lazily and only reached once the key is a non-empty JSON object
+    # (conditions stop at the first failure). Keep it out of success_msg: task
+    # args are templated before the conditions run.
+    _gcs_sa: >-
+      {{ mongodb_backup_gcs_service_account
+         if mongodb_backup_gcs_service_account is mapping
+         else (mongodb_backup_gcs_service_account | from_json) }}
+  run_once: true
+  when: mongodb_backup_storage_type == 'gcs'
+
 # ── Per-node agent inventory (port from the exec_port vars: 27017 for docker's
 #    shared netns, the real host port for podman's Network=host) ──
 - name: Build PBM agent list for this node
@@ -29,8 +56,8 @@
     _pbm_control: "{{ 'mongodb-pbm-config' if mongodb_cluster_type == 'sharded' else 'mongodb-pbm-shard' }}"
     # Shared `pbm backup` compression args (level is optional).
     _pbm_compression_args: >-
-      --compression={{ mongodb_pbm_compression }}{{ (' --compression-level=' ~ mongodb_pbm_compression_level)
-      if mongodb_pbm_compression_level | string | length > 0 else '' }}
+      --compression={{ mongodb_backup_compression_type }}{{ (' --compression-level=' ~ mongodb_backup_compression_level)
+      if mongodb_backup_compression_level | string | length > 0 else '' }}
     # Control URI with `$` doubled so systemd unit ExecStart doesn't try to
     # expand `$external` as an environment variable.
     _pbm_uri_sd: "{{ _pbm_control_uri | replace('$', '$$') }}"
@@ -97,7 +124,7 @@
       --network container:{{ item.svc }} \
       --restart unless-stopped \
       --user {{ mongodb_uid }}:{{ mongodb_gid }} \
-      --memory {{ mongodb_pbm_mem_limit_mb }}m \
+      --memory {{ mongodb_backup_pbm_mem_limit_mb }}m \
       --entrypoint /bin/bash \
       -e AWS_REQUEST_CHECKSUM_CALCULATION=when_required \
       -e AWS_RESPONSE_CHECKSUM_VALIDATION=when_required \
@@ -105,7 +132,7 @@
       -v {{ mongodb_tls_dir }}/ca.pem:/etc/mongo/ssl/ca.pem:ro \
       -v {{ mongodb_root_dir }}/pbm/pbm-config.yaml:/etc/pbm/pbm-config.yaml:ro \
       -e PBM_MONGODB_URI="$URI" \
-      {{ mongodb_pbm_image }} \
+      {{ mongodb_backup_pbm_image }} \
       -c 'exec pbm-agent'
   loop: "{{ _pbm_agents }}"
   loop_control:
@@ -135,12 +162,35 @@
   changed_when: false
   retries: 15
   delay: 10
-  until: _pbm_status.rc == 0
+  until: >-
+    _pbm_status.rc == 0
+    or 'FAILED status:' in (_pbm_status.stdout | default('', true))
+    or 'FAILED status:' in (_pbm_status.stderr | default('', true))
+    or 'ERROR with storage:' in (_pbm_status.stdout | default('', true))
+    or 'ERROR with storage:' in (_pbm_status.stderr | default('', true))
+    or 'cannot login into s3' in (_pbm_status.stdout | default('', true) | lower)
+    or 'cannot login into s3' in (_pbm_status.stderr | default('', true) | lower)
+    or 'cannot login to s3' in (_pbm_status.stdout | default('', true) | lower)
+    or 'cannot login to s3' in (_pbm_status.stderr | default('', true) | lower)
+  failed_when: >-
+    _pbm_status.rc != 0
+    and 'FAILED status:' not in (_pbm_status.stdout | default('', true))
+    and 'FAILED status:' not in (_pbm_status.stderr | default('', true))
+    and 'ERROR with storage:' not in (_pbm_status.stdout | default('', true))
+    and 'ERROR with storage:' not in (_pbm_status.stderr | default('', true))
+    and 'cannot login into s3' not in (_pbm_status.stdout | default('', true) | lower)
+    and 'cannot login into s3' not in (_pbm_status.stderr | default('', true) | lower)
+    and 'cannot login to s3' not in (_pbm_status.stdout | default('', true) | lower)
+    and 'cannot login to s3' not in (_pbm_status.stderr | default('', true) | lower)
   run_once: true
 
 - name: Show PBM status
   ansible.builtin.debug:
     msg: "{{ _pbm_status.stdout_lines | default(['(pbm status unavailable)']) }}"
+  run_once: true
+
+- name: Check PBM agents can access configured storage
+  ansible.builtin.include_tasks: pbm_storage_guard.yml
   run_once: true
 
 # ── Initialize storage + lay down a base backup ──
@@ -159,7 +209,9 @@
   delay: 5
   until: _pbm_resync.rc == 0
   run_once: true
-  when: mongodb_pbm_init_backup | bool
+  when:
+    - mongodb_backup_init | bool
+    - _pbm_storage_available | bool
 
 - name: Check for an existing PBM backup
   ansible.builtin.command: >
@@ -168,7 +220,9 @@
   register: _pbm_list
   changed_when: false
   run_once: true
-  when: mongodb_pbm_init_backup | bool
+  when:
+    - mongodb_backup_init | bool
+    - _pbm_storage_available | bool
 
 - name: Take initial PBM base backup (storage init + PITR anchor)
   ansible.builtin.command: >
@@ -178,20 +232,34 @@
   changed_when: true
   run_once: true
   when:
-    - mongodb_pbm_init_backup | bool
-    - (_pbm_list.stdout | default('{}') | from_json).snapshots | default([]) | length == 0
+    - mongodb_backup_init | bool
+    - _pbm_storage_available | bool
+    # `pbm list --out json` returns {"snapshots": null} (not a missing key) when
+    # storage was just resynced and holds no backups. A bare default([]) only
+    # fills UNDEFINED, not an explicit null, so `null | length` crashes — the
+    # `, true` makes default() also replace the None. Guard from_json too: an
+    # empty stdout would otherwise fail to parse.
+    - ((_pbm_list.stdout | default('', true) | trim or '{}') | from_json).snapshots | default([], true) | length == 0
 
 # ── Scheduled `pbm backup` + retention (host-level systemd timer, one node) ──
 # Reuses the shared backup knobs: fires on mongodb_backup_schedule, prunes via
-# mongodb_backup_retain_days. PBM backup is a cluster operation, so a single
-# node owns the timer (run_once). PITR (continuous oplog slicing) is independent
-# and runs on every agent when mongodb_backup_pitr is true. ExecStartPost runs
-# `pbm cleanup` (deletes base backups AND their oplog chunks older than the
-# retention window) only after a successful backup. -e PBM_MONGODB_URI pins the
-# control RS; `$external` is doubled (_pbm_uri_sd) so systemd doesn't expand it.
-- name: Install pbm-backup.service unit
+# mongodb_backup_retain_days when mongodb_backup_type is 'pbm'. PBM backup is a
+# cluster operation, so a single node owns the timer (run_once). PITR
+# (continuous oplog slicing) is independent and runs on every agent when
+# mongodb_backup_pitr_enabled is true. ExecStartPost runs `pbm cleanup`
+# (deletes base backups AND their oplog chunks older than the retention
+# window) only after a successful backup.
+- name: Set scheduled PBM backup desired state
+  ansible.builtin.set_fact:
+    _pbm_backup_timer: >-
+      {{ (mongodb_backup_enabled | bool) and
+         (mongodb_backup_type == 'pbm') and
+         (mongodb_backup_schedule | length > 0) }}
+  run_once: true
+
+- name: Install mongodb-pbm.service unit
   ansible.builtin.copy:
-    dest: /etc/systemd/system/pbm-backup.service
+    dest: /etc/systemd/system/mongodb-pbm.service
     mode: "0644"
     content: |
       [Unit]
@@ -202,17 +270,18 @@
 
       [Service]
       Type=oneshot
+      LogsDirectory=mongodb
       ExecStart=/usr/bin/{{ mongodb_container_engine }} exec -e PBM_MONGODB_URI={{ _pbm_uri_sd }} {{ _pbm_control }} pbm backup {{ _pbm_compression_args }} --wait
       ExecStartPost=/usr/bin/{{ mongodb_container_engine }} exec -e PBM_MONGODB_URI={{ _pbm_uri_sd }} {{ _pbm_control }} pbm cleanup --older-than {{ mongodb_backup_retain_days }}d --yes
-      StandardOutput=append:/var/log/pbm-backup.log
-      StandardError=append:/var/log/pbm-backup.log
+      StandardOutput=append:/var/log/mongodb/mongodb-pbm.log
+      StandardError=append:/var/log/mongodb/mongodb-pbm.log
   notify: reload systemd
   run_once: true
-  when: mongodb_backup_schedule | length > 0
+  when: _pbm_backup_timer
 
-- name: Install pbm-backup.timer unit
+- name: Install mongodb-pbm.timer unit
   ansible.builtin.copy:
-    dest: /etc/systemd/system/pbm-backup.timer
+    dest: /etc/systemd/system/mongodb-pbm.timer
     mode: "0644"
     content: |
       [Unit]
@@ -222,28 +291,31 @@
       [Timer]
       OnCalendar={{ mongodb_backup_schedule }}
       Persistent=true
-      Unit=pbm-backup.service
+      Unit=mongodb-pbm.service
 
       [Install]
       WantedBy=timers.target
   notify: reload systemd
   run_once: true
-  when: mongodb_backup_schedule | length > 0
+  when: _pbm_backup_timer
 
-- name: Enable and start pbm-backup.timer
+- name: Enable and start mongodb-pbm.timer
   ansible.builtin.systemd:
-    name: pbm-backup.timer
+    name: mongodb-pbm.timer
     enabled: true
     state: started
     daemon_reload: true
   run_once: true
-  when: mongodb_backup_schedule | length > 0
+  when: _pbm_backup_timer
 
-- name: Disable pbm-backup.timer when no schedule
+- name: Disable mongodb-pbm.timer and legacy timers when not active
   ansible.builtin.systemd:
-    name: pbm-backup.timer
+    name: "{{ item }}"
     enabled: false
     state: stopped
+  loop:
+    - mongodb-pbm.timer
+    - pbm-backup.timer
   failed_when: false
   run_once: true
-  when: mongodb_backup_schedule | length == 0
+  when: not _pbm_backup_timer

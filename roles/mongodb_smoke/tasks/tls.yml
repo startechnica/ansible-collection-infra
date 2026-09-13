@@ -1,0 +1,18 @@
+---
+# TLS — CA + healthcheck client cert readability.
+# (Days-remaining check is delegated to the mongodb_status module in
+# cluster_state.yml — running openssl here would duplicate that work.)
+
+- name: "7a. CA cert readable"
+  ansible.builtin.command: openssl x509 -in {{ mongodb_tls_dir }}/ca.pem -noout -enddate
+  register: _smoke_mongo_ca_end
+  changed_when: false
+  failed_when: false
+  when: mongodb_smoke_check_tls | bool
+
+- name: "7b. healthcheck client cert readable"
+  ansible.builtin.command: openssl x509 -in {{ mongodb_tls_dir }}/healthcheck.pem -noout -enddate
+  register: _smoke_mongo_healthcheck_end
+  changed_when: false
+  failed_when: false
+  when: mongodb_smoke_check_tls | bool

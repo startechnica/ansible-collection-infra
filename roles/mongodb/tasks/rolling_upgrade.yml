@@ -12,7 +12,7 @@
 # Usage:
 #   ansible-playbook playbooks/mongodb-cluster.yml \
 #     -i inventories/<your-inventory>.yml --ask-vault-pass \
-#     --tags upgrade -e mongodb_image_tag_new=8.2.7
+#     --tags upgrade -e mongodb_image_tag_new=8.3.8
 
 - name: Validate new image tag is specified
   ansible.builtin.assert:

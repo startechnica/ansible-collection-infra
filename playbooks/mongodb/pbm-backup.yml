@@ -2,7 +2,7 @@
 # ─── MongoDB: Percona Backup (PBM) — on-demand backup ───────────────────────
 #
 # Cluster-consistent logical backup to S3 via PBM. Works on sharded clusters
-# (unlike mongodump-via-mongos). Requires mongodb_pbm_enabled: true.
+# (unlike mongodump-via-mongos). Requires mongodb_backup_pbm_enabled: true.
 #
 # Usage:
 #   ansible-playbook playbooks/mongodb/pbm-backup.yml -i inventories/<inv>.yml

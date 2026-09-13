@@ -1,0 +1,68 @@
+---
+# Negative-as-audit check for the EMPTY patroni_databases path.
+#
+# When the inventory declares `patroni_databases: []`, the cluster should
+# be in the empty-baseline state: no managed databases, no managed LOGIN
+# users. Anything else means a previous deploy (or a manual intervention)
+# left orphans behind — the cluster's actual state no longer matches the
+# inventory's claim of "no managed DBs/users."
+#
+# This is the opposite of "use a mock database." We're not substituting
+# fake state — we're verifying the cluster is genuinely empty as declared,
+# and surfacing anything that contradicts the inventory.
+#
+# Catches:
+#   * Previous inventory had DBs/users, was reduced to [] in a re-deploy,
+#     but cleanup wasn't part of the flow (or failed silently) -> DBs/users
+#     still on the cluster, inventory says they shouldn't be.
+#   * Manual CREATE DATABASE / CREATE ROLE happened via psql/Adminer and
+#     never got tracked anywhere.
+#
+# Skipped cleanly when patroni_databases has any entries (the populated
+# path is checked by users_and_dbs.yml instead).
+
+- name: "Users+DBs (empty path) :: check no managed DBs exist"
+  community.postgresql.postgresql_query:
+    login_host: "{{ patroni_vip_address | default('') }}"
+    login_port: "{{ postgresql_port | default(5432) }}"
+    login_user: "{{ postgresql_postgres_user | default('postgres') }}"
+    login_password: "{{ postgresql_postgres_password | default('') }}"
+    login_db: postgres
+    sslmode: "{{ postgresql_sslmode | default('verify-full') }}"
+    ca_cert: "{{ postgresql_tls_ca_cert_path | default(omit, true) }}"
+    query: >-
+      SELECT datname, pg_catalog.pg_get_userbyid(datdba) AS owner
+      FROM pg_database
+      WHERE datname NOT IN ('postgres', 'template0', 'template1')
+  register: _patroni_smoke_db_empty_check
+  failed_when: false
+  run_once: true
+  when:
+    - patroni_smoke_check_users_and_dbs | bool
+    - patroni_databases | length == 0
+    - postgresql_postgres_password | default('') | length > 0
+
+- name: "Users+DBs (empty path) :: check no managed LOGIN users exist"
+  community.postgresql.postgresql_query:
+    login_host: "{{ patroni_vip_address | default('') }}"
+    login_port: "{{ postgresql_port | default(5432) }}"
+    login_user: "{{ postgresql_postgres_user | default('postgres') }}"
+    login_password: "{{ postgresql_postgres_password | default('') }}"
+    login_db: postgres
+    sslmode: "{{ postgresql_sslmode | default('verify-full') }}"
+    ca_cert: "{{ postgresql_tls_ca_cert_path | default(omit, true) }}"
+    # Exclude system roles: postgres, pg_signal_backend, etc. Only flag
+    # LOGIN roles (rolcanlogin=true) since the inventory's users[] all
+    # declare LOGIN — NOLOGIN-only roles would be service accounts the
+    # operator may have created out-of-band.
+    query: >-
+      SELECT rolname FROM pg_roles
+      WHERE rolcanlogin = true
+        AND rolname NOT IN ('postgres')
+  register: _patroni_smoke_user_empty_check
+  failed_when: false
+  run_once: true
+  when:
+    - patroni_smoke_check_users_and_dbs | bool
+    - patroni_databases | length == 0
+    - postgresql_postgres_password | default('') | length > 0

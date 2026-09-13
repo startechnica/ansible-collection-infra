@@ -1,0 +1,111 @@
+---
+# Regression coverage for HAProxy's timeout block.
+#
+# The failure this guards against is silent: `timeout client`/`timeout server`
+# are INACTIVITY timers, so an idle-by-design LISTEN/NOTIFY session gets cut
+# with no error, and because NOTIFY isn't queued for absent listeners every
+# notification in the gap is lost. `timeout tunnel` is what keeps those
+# sessions alive — if it ever stops rendering, nothing fails loudly.
+#
+# Run from collection root:
+#   ansible-playbook tests/haproxy_timeouts.yml
+
+- name: Render HAProxy timeout configuration
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  vars_files:
+    - ../roles/patroni/defaults/main.yml
+  vars:
+    _hap_render_dir: /tmp/haproxy-timeouts-test
+    node_ips: ["10.0.0.11", "10.0.0.12", "10.0.0.13"]
+
+  tasks:
+    - name: Verify timeout defaults
+      ansible.builtin.assert:
+        that:
+          # Unchanged from the pre-tunnel hardcoded values. On the pg
+          # listeners `tunnel` supersedes these; they still govern the
+          # mode-http stats listener, so they stay conservative.
+          - haproxy_client_timeout == '300s'
+          - haproxy_server_timeout == '300s'
+          - haproxy_connect_timeout == '10s'
+          # Long by design; see defaults/main.yml for why this is safe.
+          - haproxy_tunnel_timeout == '24h'
+          # Must stay well under the tunnel timeout so half-closed
+          # connections don't pin FDs for hours.
+          - haproxy_client_fin_timeout == '30s'
+          - haproxy_server_fin_timeout == '30s'
+
+    - name: Recreate HAProxy render directory
+      ansible.builtin.file:
+        path: "{{ _hap_render_dir }}"
+        state: "{{ item }}"
+        mode: "0755"
+      loop: [absent, directory]
+
+    - name: Render haproxy.cfg with defaults
+      ansible.builtin.template:
+        src: ../roles/patroni/templates/haproxy.cfg.j2
+        dest: "{{ _hap_render_dir }}/haproxy.cfg"
+        mode: "0644"
+
+    - name: Render haproxy.cfg with overridden timeouts
+      ansible.builtin.template:
+        src: ../roles/patroni/templates/haproxy.cfg.j2
+        dest: "{{ _hap_render_dir }}/haproxy-override.cfg"
+        mode: "0644"
+      vars:
+        haproxy_tunnel_timeout: "2h"
+        haproxy_client_timeout: "45s"
+
+    - name: Read rendered configs
+      ansible.builtin.slurp:
+        src: "{{ _hap_render_dir }}/{{ item }}"
+      loop:
+        - haproxy.cfg
+        - haproxy-override.cfg
+      register: _hap_rendered
+
+    # Collect the `timeout <name> <value>` directives from the defaults
+    # section into a dict so assertions read as config lookups.
+    - name: Parse timeout directives
+      ansible.builtin.set_fact:
+        _hap_default: "{{ dict(_hap_rendered.results[0].content | b64decode | regex_findall('(?m)^ +timeout ([a-z-]+) (.+)$')) }}"
+        _hap_override: "{{ dict(_hap_rendered.results[1].content | b64decode | regex_findall('(?m)^ +timeout ([a-z-]+) (.+)$')) }}"
+
+    - name: Verify every timeout renders from its variable
+      ansible.builtin.assert:
+        that:
+          - _hap_default.client == haproxy_client_timeout
+          - _hap_default.server == haproxy_server_timeout
+          - _hap_default.connect == haproxy_connect_timeout
+          - _hap_default.check == haproxy_check_timeout
+          - _hap_default.tunnel == haproxy_tunnel_timeout
+          - _hap_default['client-fin'] == haproxy_client_fin_timeout
+          - _hap_default['server-fin'] == haproxy_server_fin_timeout
+
+    - name: Verify tunnel timeout is present (the whole point of this block)
+      ansible.builtin.assert:
+        that:
+          - "'tunnel' in _hap_default"
+        fail_msg: >-
+          `timeout tunnel` is missing from the rendered haproxy.cfg. Without
+          it, timeout client/server govern established connections and every
+          idle LISTEN/NOTIFY session is dropped after haproxy_client_timeout.
+
+    - name: Verify overrides reach the rendered config
+      ansible.builtin.assert:
+        that:
+          - _hap_override.tunnel == '2h'
+          - _hap_override.client == '45s'
+          # Untouched vars keep their defaults.
+          - _hap_override.server == haproxy_server_timeout
+
+    - name: Verify keepalive options survive alongside the timeouts
+      ansible.builtin.assert:
+        that:
+          - "'option clitcpka' in _cfg"
+          - "'option srvtcpka' in _cfg"
+      vars:
+        _cfg: "{{ _hap_rendered.results[0].content | b64decode }}"

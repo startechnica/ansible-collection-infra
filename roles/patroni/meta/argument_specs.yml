@@ -20,8 +20,76 @@ argument_specs:
           Patroni clusters share one etcd DCS. Default is a placeholder — set
           per project (e.g., `startechnica-pg`).
 
+      # ── Standby cluster (DR / off-site read replica) ──
+      patroni_standby_enabled:
+        type: bool
+        default: false
+        description: >-
+          When true, this cluster is a STANDBY: its leader is a "Standby Leader"
+          that continuously replays a remote primary's data (streaming, with
+          WAL-G wal-fetch fallback) instead of accepting writes. Requires
+          `patroni_standby_primary_host` and a `patroni_scope` distinct from the
+          primary's. Promote with playbooks/patroni/standby-promote.yml. See
+          docs/design/patroni-standby-cluster.md.
+      patroni_standby_primary_host:
+        type: str
+        default: ""
+        description: Remote primary IP/host to stream from (its leader or VIP). Required when `patroni_standby_enabled`.
+      patroni_standby_primary_port:
+        type: int
+        default: 55432
+        description: Remote primary's direct-postgres port (its `postgresql_port`).
+      patroni_standby_primary_slot:
+        type: str
+        default: ""
+        description: >-
+          Optional physical replication slot name to hold on the primary so it
+          retains WAL for this standby. Empty = no named slot.
+      patroni_standby_primary_sslmode:
+        type: str
+        default: verify-ca
+        choices: [verify-ca, require]
+        description: >-
+          TLS mode for the outbound replication stream. `verify-ca` verifies the
+          primary's server cert (set `patroni_shared_ca_dir` so both clusters
+          chain to one CA); `require` encrypts without CA verification (use when
+          clusters can't share a CA; pair with `postgresql_replication_password`).
+      patroni_standby_create_replica_methods:
+        type: list
+        elements: str
+        default: [basebackup]
+        description: >-
+          Replica creation methods in order. `basebackup` clones from the primary
+          over the stream; WAL-G restore_command is added automatically when
+          `walg_enabled` so the standby can wal-fetch the primary's archive.
+      patroni_standby_primary_walg_prefix:
+        type: str
+        default: ""
+        description: >-
+          Object-storage key prefix (under the shared bucket) of the PRIMARY's
+          WAL-G archive for the standby's wal-fetch fallback — set to the
+          primary's patroni_walg_s3_prefix / walg_gcs_prefix (default
+          patroni-walg-<primary_scope>). Empty = bucket root. Backend-agnostic:
+          the standby must share the primary's walg_storage_type and bucket.
+      patroni_shared_ca_dir:
+        type: str
+        default: ""
+        description: >-
+          Controller-local dir holding ca.crt + ca.key to reuse ONE CA across
+          primary + standby (so the standby's verify-ca stream trusts the
+          primary's server cert). Empty = each cluster mints its own
+          "{{ patroni_scope }}-ca".
+      patroni_replication_cidrs:
+        type: list
+        elements: str
+        default: []
+        description: >-
+          Extra pg_hba `replication` CIDRs on the PRIMARY, so it admits remote
+          standby node IPs (built-in rules cover only same-cluster node_ips). Also
+          add these IPs to the primary's firewall for `postgresql-direct` (55432).
+
       # ── Floating IP ──
-      vip_manager:
+      patroni_vip_engine:
         type: str
         default: vip-manager
         choices: [vip-manager, keepalived, none]
@@ -32,7 +100,7 @@ argument_specs:
         description: >-
           Floating IP address. Empty (default) disables the VIP service
           entirely (no vip-manager, no keepalived). Set to enable; choose
-          which manager runs via `vip_manager`. Must be unused on the same
+          which manager runs via `patroni_vip_engine`. Must be unused on the same
           subnet as the cluster.
       patroni_vip_mask:
         type: int
@@ -140,6 +208,76 @@ argument_specs:
           Use this for ops VPN / jump-host access; leave empty for
           PgBouncer-only ingress (recommended).
 
+      pgbouncer_database_overrides:
+        type: list
+        elements: dict
+        default: []
+        description: >-
+          Per-database entries for PgBouncer's [databases] section. PgBouncer
+          resolves an exact database name before the `*` fallback, so each item
+          carves one database out of the global pgbouncer_pool_mode. Keep
+          `session` global and opt databases INTO transaction pooling — session
+          mode is always correct, whereas transaction mode silently breaks
+          LISTEN/NOTIFY, session-level SET, cross-transaction advisory locks,
+          WITH HOLD cursors, and temp tables. Motivating case: GitLab Rails
+          needs transaction pooling while Praefect needs session pooling for
+          LISTEN/NOTIFY; listing only GitLab's databases here serves both from
+          one PgBouncer.
+        options:
+          name:
+            type: str
+            required: true
+            description: >-
+              The database name the CLIENT REQUESTS, not a label. A name that
+              doesn't match the client's startup packet never matches and the
+              database silently falls back to `*`. Cannot be `*` — the
+              template renders that entry itself.
+          dbname:
+            type: str
+            description: Physical database to connect to, when `name` is an alias.
+          pool_mode:
+            type: str
+            choices: [session, transaction, statement]
+            description: Pool mode for this database only; omit to inherit pgbouncer_pool_mode.
+          pool_size:
+            type: int
+            description: Server connections for this database; omit to inherit default_pool_size.
+          min_pool_size:
+            type: int
+          reserve_pool:
+            type: int
+          max_db_connections:
+            type: int
+
+      # ── PgBouncer client-facing TLS (clients → PgBouncer) ──
+      pgbouncer_client_tls_sslmode:
+        type: str
+        default: prefer
+        choices: [disable, allow, prefer, require, verify-ca, verify-full]
+        description: >-
+          What PgBouncer requires of connecting clients. PgBouncer terminates
+          client TLS for the whole stack — HAProxy is mode tcp with no TLS on
+          its bind, so clients handshake against PgBouncer, not PostgreSQL.
+          `prefer` (default) accepts TLS and plaintext both, so it is
+          non-breaking; `require` forces TLS. verify-ca/verify-full are
+          identical in PgBouncer and additionally make a valid CLIENT
+          certificate mandatory — issue per-app certs and switch auth_type to
+          `cert` before selecting either.
+      pgbouncer_client_tls_protocols:
+        type: str
+        default: secure
+        description: >-
+          TLS versions accepted from clients. `secure` = tlsv1.2 + tlsv1.3
+          (PgBouncer's own default, pinned here); `all` also admits
+          tlsv1.0/tlsv1.1. A specific version may also be named.
+      pgbouncer_client_tls_ciphers:
+        type: str
+        default: default
+        description: >-
+          Cipher list for TLS 1.2 and below (TLS 1.3 suites negotiate
+          separately). Shortcuts default/secure/fast/normal, or an OpenSSL
+          cipher string.
+
       # ── Ports ──
       pgbouncer_port:
         type: int
@@ -169,6 +307,54 @@ argument_specs:
         type: str
         default: "10s"
         description: Per-check timeout; a Patroni REST API response slower than this counts as a failed check.
+
+      # ── HAProxy connection timeouts (inactivity, not absolute age) ──
+      haproxy_client_timeout:
+        type: str
+        default: "300s"
+        description: >-
+          Max inactivity on the client side. Largely a backstop on the pg
+          listeners: haproxy_tunnel_timeout supersedes it as soon as no
+          analyser is attached, which for a plain mode-tcp listener with no
+          tcp-request rules is immediately. It does govern the mode-http stats
+          listener. Kernel TCP keepalives do NOT reset this timer.
+      haproxy_server_timeout:
+        type: str
+        default: "300s"
+        description: Max inactivity on the server (PgBouncer) side. Same semantics as haproxy_client_timeout.
+      haproxy_connect_timeout:
+        type: str
+        default: "10s"
+        description: >-
+          Max time to establish a TCP connection to a backend. Not superseded
+          by the tunnel timeout, so this is what actually bounds connection
+          setup.
+      haproxy_tunnel_timeout:
+        type: str
+        default: "24h"
+        description: >-
+          Max inactivity for an ESTABLISHED connection; in mode tcp this
+          supersedes client/server once no analyser remains attached. Long by
+          default so LISTEN/NOTIFY sessions and long-running statements aren't
+          cut mid-flight — NOTIFY is not queued for absent listeners, so a
+          proxy-side disconnect loses notifications silently. Safe to keep long
+          because `option clitcpka` / `srvtcpka` reap genuinely dead peers in
+          ~2 min, and because the *-fin timeouts below override it for
+          half-closed connections. Lower THIS to bound session lifetime;
+          raising client/server will not do it.
+      haproxy_client_fin_timeout:
+        type: str
+        default: "30s"
+        description: >-
+          Max time a half-closed (client sent FIN) connection is kept before
+          its FDs are freed. Overrides haproxy_tunnel_timeout once the
+          connection is shut down in one direction, so this — not the tunnel
+          timeout — is what bounds FIN_WAIT.
+      haproxy_server_fin_timeout:
+        type: str
+        default: "30s"
+        description: Max time a half-closed (server sent FIN) connection is kept before its FDs are freed. Same override semantics as haproxy_client_fin_timeout.
+
       postgresql_port:
         type: int
         default: 55432
@@ -281,6 +467,65 @@ argument_specs:
       walg_compression:
         type: str
         default: lz4
+      walg_storage_type:
+        type: str
+        default: s3
+        choices: [s3, gcs]
+        description: >-
+          WAL-G object-storage backend. `s3` uses the shared s3_* vars (AWS S3,
+          MinIO, Ceph, any S3-compatible gateway); `gcs` uses the native Google
+          Cloud Storage JSON API via the walg_gcs_* vars. Selects the WAL-G
+          archive target only — etcd snapshots always upload to s3_bucket.
+      walg_gcs_bucket:
+        type: str
+        default: ""
+        description: GCS bucket for the WAL-G archive. Required when walg_storage_type is gcs.
+      walg_gcs_service_account_json:
+        type: raw
+        default: ""
+        description: >-
+          Google service-account JSON key granting WAL-G access to
+          walg_gcs_bucket — the file GCP produces at "Create key → JSON".
+          Accepts the raw JSON string or an already-parsed mapping. Required
+          when walg_storage_type is gcs. Keep it in Ansible Vault; the role
+          writes it to walg_gcs_service_account_file (0600, patroni-owned) and
+          mounts it read-only into the patroni container.
+      walg_gcs_prefix:
+        type: str
+        default: patroni-walg-{{ patroni_scope }}
+        description: >-
+          GCS object prefix (under walg_gcs_bucket) for this cluster's base
+          backups + WAL archive. Same scope-namespacing rationale as
+          patroni_walg_s3_prefix. Set "" to use the bucket root.
+      walg_gcs_service_account_dir:
+        type: str
+        default: /opt/walg/gcs
+        description: >-
+          Host directory holding the rendered service-account key. Bind-mounted
+          (as a directory, so a re-rendered key's new inode is picked up)
+          read-only into the patroni container at walg_gcs_service_account_mount.
+      walg_gcs_service_account_file:
+        type: str
+        default: /opt/walg/gcs/credentials.json
+        description: Host file the role renders the service-account key to (0600, patroni-owned).
+      walg_gcs_service_account_mount:
+        type: str
+        default: /etc/walg
+        description: Container-side bind-mount target for walg_gcs_service_account_dir.
+      walg_gcs_service_account_path:
+        type: str
+        default: /etc/walg/credentials.json
+        description: Container-side path wal-g reads via GOOGLE_APPLICATION_CREDENTIALS.
+      patroni_walg_s3_prefix:
+        type: str
+        default: patroni-walg-{{ patroni_scope }}
+        description: >-
+          WAL-G S3 key prefix (under s3_bucket) for this cluster's base backups +
+          WAL archive. Defaults to a scope-namespaced path
+          (patroni-walg-<patroni_scope>) so multiple Patroni clusters can share one
+          bucket without colliding at the root. Set "" to use the bucket root. A
+          standby's wal-fetch fallback (patroni_standby_primary_walg_prefix) points
+          at the primary's prefix.
       walg_schedule:
         type: str
         default: "*-*-* 02:00:00"
@@ -301,6 +546,14 @@ argument_specs:
       etcd_snapshot_retain:
         type: int
         default: 7
+      patroni_etcd_s3_prefix:
+        type: str
+        default: patroni-etcd-{{ patroni_scope }}
+        description: >-
+          S3 key prefix for uploaded etcd snapshots. Defaults to a
+          scope-namespaced path (patroni-etcd-<patroni_scope>) so multiple
+          Patroni clusters can share one bucket without colliding on the same
+          etcd-snapshot-<STAMP>.db names. Override to pin a custom layout.
 
       # ── PostgreSQL memory (auto-calculated if empty) ──
       pg_shared_buffers:

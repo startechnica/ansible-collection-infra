@@ -30,23 +30,33 @@ argument_specs:
 
       mongodb_version:
         type: str
-        default: "8.2.6"
+        default: "8.0.28"
         description: MongoDB Docker image tag to deploy.
 
       mongodb_unsupported_kernel:
         type: str
         default: "6.19"
         description:
-          - Lower bound (inclusive) of the kernel range where MongoDB is known to be incompatible due to a TCMalloc/rseq ABI violation.
-          - Preflight refuses to install when `mongodb_unsupported_kernel <= host kernel < mongodb_fixed_kernel`. Kernels below this value are compatible.
+          - Open-ended lower bound of the kernel range where MongoDB's vendored-TCMalloc/rseq ABI violation bites.
+          - Kernels at/above this value are affected (no upper-bound escape); kernels below are always fine.
+          - "The compatibility gate is version-independent: MongoDB 8.0.28 is also affected."
+          - Preflight blocks whenever `host kernel >= mongodb_unsupported_kernel`.
+          - See https://jira.mongodb.org/browse/SERVER-121912.
+
+      mongodb_kernel_guard_min_version:
+        type: str
+        default: "8.3"
+        description:
+          - "DEPRECATED / INERT. Retained only for inventories that set the former version-gated compatibility guard."
+          - The guard now applies to every MongoDB version, including the 8.0 LTS line.
           - See https://jira.mongodb.org/browse/SERVER-121912.
 
       mongodb_fixed_kernel:
         type: str
         default: "7.0.14"
         description:
-          - Upper bound (inclusive) at/above which the incompatibility is resolved kernel-side. Kernels >= this value pass preflight. The broken window is therefore 6.19 through 7.0.13.
-          - The fix is in the Linux kernel, not MongoDB — Mongo's vendored TCMalloc is still unpatched through 8.2, so upgrading MongoDB alone does not escape the range.
+          - DEPRECATED / INERT. The gate no longer consumes this var.
+          - An earlier revision treated 7.0.14+ as fixed (a brief upstream window that was reverted); the incompatibility is now open-ended (6.19+). Kept declared only so setting it doesn't error.
           - See https://jira.mongodb.org/browse/SERVER-121912.
 
       mongodb_skip_kernel_check:
@@ -199,59 +209,109 @@ argument_specs:
         default: true
       mongodb_exporter_image:
         type: str
-        default: "percona/mongodb_exporter:0.43.1"
+        default: "docker.io/percona/mongodb_exporter:0.52.0"
       mongodb_exporter_port:
         type: int
         default: 9216
 
       # ── Percona Backup for MongoDB (PBM) ──
-      mongodb_pbm_enabled:
+      mongodb_backup_pbm_enabled:
         type: bool
         default: false
         description: >
           Deploy PBM agents for cluster-consistent backups + PITR. Required for
           sharded-cluster PITR (mongodump --oplog can't run via mongos). One
           agent per local mongod (2/host sharded, 1/host replicaset).
-      mongodb_pbm_image:
+      mongodb_backup_pbm_image:
         type: str
-        default: "docker.io/percona/percona-backup-mongodb:2.11.0"
-      mongodb_pbm_cn:
+        default: "docker.io/percona/percona-backup-mongodb:2.15.0"
+      mongodb_backup_pbm_cn:
         type: str
         default: mongodb-pbm
         description: X.509 CN the PBM agent presents (mapped to a $external user).
-      mongodb_pbm_mem_limit_mb:
+      mongodb_backup_pbm_mem_limit_mb:
         type: int
         default: 256
-      mongodb_pbm_init_backup:
+      mongodb_backup_storage_type:
+        type: str
+        default: minio
+        choices: [minio, s3, gcs]
+        description: >-
+          PBM object-storage backend. MinIO is the default for compatibility
+          with MinIO, Ceph, custom gateways, and proxies; select s3 for Amazon
+          S3 or endpoints requiring PBM's AWS SDK backend, or gcs for native
+          Google Cloud Storage JSON API access.
+      mongodb_backup_gcs_bucket:
+        type: str
+        default: ""
+        description: >-
+          Google Cloud Storage bucket used by PBM when
+          mongodb_backup_storage_type is gcs.
+      mongodb_backup_gcs_service_account:
+        type: raw
+        default: ""
+        description: >-
+          Google service-account JSON key granting PBM access to
+          mongodb_backup_gcs_bucket — the file GCP produces at "Create key →
+          JSON". Accepts the raw JSON string or an already-parsed mapping; the
+          role passes its client_email and private_key to PBM. Required when
+          mongodb_backup_storage_type is gcs. Store this value in Ansible Vault.
+      mongodb_backup_gcs_prefix:
+        type: str
+        description: >-
+          GCS object prefix for PBM backups. PBM data is stored beneath
+          "<prefix>/pbm". Defaults to a cluster-namespaced, slugified path.
+      mongodb_backup_init:
         type: bool
         default: true
         description: >-
           Force a storage resync and take a base backup (if none exists) during
           provision/setup, so storage is initialized and PITR has an anchor.
           Idempotent — skipped when a backup already exists.
-      mongodb_pbm_compression:
+      mongodb_backup_compression_type:
         type: str
         default: zstd
         choices: [none, gzip, snappy, lz4, s2, zstd]
-      mongodb_pbm_compression_level:
+        description: Compression codec for PBM base backups and PITR oplog slices.
+      mongodb_backup_compression_level:
         type: str
         default: ""
         description: >-
           Optional codec-specific compression level (e.g. zstd 1–22, gzip 1–9).
           Empty uses the codec default. Applies to base backups and PITR slices.
-      mongodb_pbm_x509_subject:
+      mongodb_backup_pbm_x509_subject:
         type: str
         description: >
           Full X.509 subject DN the PBM $external user is created with. Defaults
-          to CN=<mongodb_pbm_cn>,OU=<client OU>,O=<org>.
+          to CN=<mongodb_backup_pbm_cn>,OU=<client OU>,O=<org>.
 
       # ── Backup ──
+      mongodb_backup_type:
+        type: str
+        default: "{{ 'pbm' if mongodb_backup_pbm_enabled | bool else 'mongodump' }}"
+        choices: [mongodump, pbm]
+        description: >-
+          Backup engine choice for scheduled and on-demand backups (`mongodump` or `pbm`).
+          `mongodump` runs logical dumps via a throwaway container; `pbm` uses
+          Percona Backup for MongoDB (PBM). Defaults to `pbm` when
+          mongodb_backup_pbm_enabled is true, otherwise `mongodump`; `pbm`
+          without PBM enabled fails preflight.
       mongodb_backup_dir:
         type: str
         default: /opt/mongodb/backups
       mongodb_backup_retain_days:
         type: int
         default: 7
+      mongodb_backup_pitr_enabled:
+        type: bool
+        default: false
+        description: >-
+          Point-in-time recovery switch shared by both backup engines. With
+          mongodump it passes --oplog so dumps are usable by
+          playbooks/mongodb/pitr.yml (replica-set only; mongodump --oplog is
+          rejected against a mongos). With PBM it enables continuous oplog
+          slicing. On a sharded cluster it requires mongodb_backup_pbm_enabled,
+          which preflight enforces.
       mongodb_backup_mode:
         type: str
         choices: [local, s3]
@@ -299,9 +359,13 @@ argument_specs:
         description: >-
           Force path-style S3 addressing (bucket in the URL path, not the
           hostname). Required by most S3-compatible gateways. Consumed by PBM.
-      s3_prefix:
+      mongodb_backup_s3_prefix:
         type: str
-        description: Path prefix inside the bucket. Defaults to `mongodb/<mongodb_network>`.
+        description: >-
+          S3 key prefix (under s3_bucket) for MongoDB backups — mongodump at this
+          root, PBM under "<prefix>/pbm". Defaults to a cluster-namespaced,
+          slugified path (mongodb-<mongodb_cluster_name>) so distinct clusters
+          sharing one bucket don't collide.
       s3_client_image:
         type: str
         default: "minio/mc:latest"

@@ -63,8 +63,45 @@
   run_once: true
 
 ###############################################################################
-# 2. Certificate Authority (generated locally)
+# 2. Certificate Authority (generated locally, OR reused from a shared CA)
 ###############################################################################
+# Cross-cluster TLS trust: when patroni_shared_ca_dir is set, reuse ONE CA
+# across clusters (e.g. a primary + its standby) instead of minting a per-scope
+# self-signed CA. All leaf certs below are then signed by that shared CA, so a
+# standby's verify-ca stream trusts the primary's server cert. When unset
+# (default), each cluster generates its own "{{ patroni_scope }}-ca".
+# See docs/design/patroni-standby-cluster.md §6a.
+- name: "Reuse shared CA from {{ patroni_shared_ca_dir }}"
+  when: patroni_shared_ca_dir | default('') | length > 0
+  delegate_to: localhost
+  run_once: true
+  become: false
+  block:
+    - name: Assert the shared CA key + cert exist
+      ansible.builtin.assert:
+        that:
+          - (patroni_shared_ca_dir ~ '/ca.key') is exists
+          - (patroni_shared_ca_dir ~ '/ca.crt') is exists
+        fail_msg: >-
+          patroni_shared_ca_dir='{{ patroni_shared_ca_dir }}' must contain both
+          ca.key and ca.crt. Point it at an existing CA shared with the other
+          cluster(s), or unset it to mint a per-scope CA.
+        quiet: true
+
+    - name: Copy shared CA key into this cluster's local CA dir
+      ansible.builtin.copy:
+        src: "{{ patroni_shared_ca_dir }}/ca.key"
+        dest: "{{ patroni_local_certs_dir }}/ca/ca.key"
+        mode: "0400"
+        remote_src: true
+
+    - name: Copy shared CA cert into this cluster's local CA dir
+      ansible.builtin.copy:
+        src: "{{ patroni_shared_ca_dir }}/ca.crt"
+        dest: "{{ patroni_local_certs_dir }}/ca/ca.crt"
+        mode: "0444"
+        remote_src: true
+
 - name: Generate CA private key
   community.crypto.openssl_privatekey:
     path: "{{ patroni_local_certs_dir }}/ca/ca.key"
@@ -75,6 +112,7 @@
   delegate_to: localhost
   run_once: true
   become: false
+  when: patroni_shared_ca_dir | default('') | length == 0
 
 - name: Generate CA CSR
   community.crypto.openssl_csr:
@@ -91,6 +129,7 @@
   delegate_to: localhost
   run_once: true
   become: false
+  when: patroni_shared_ca_dir | default('') | length == 0
 
 - name: Generate self-signed CA certificate
   community.crypto.x509_certificate:
@@ -104,6 +143,7 @@
   delegate_to: localhost
   run_once: true
   become: false
+  when: patroni_shared_ca_dir | default('') | length == 0
 
 ###############################################################################
 # 3. Leaf certificate specs

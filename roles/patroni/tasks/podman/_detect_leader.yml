@@ -8,6 +8,9 @@
 # Use this whenever a task must hit the writable primary directly (port
 # postgresql_port = 55432) without going through HAProxy → PgBouncer.
 
+# Leader-role match accepts both 'Leader' (normal cluster) and 'Standby Leader'
+# (a standby cluster's top node, which replays a remote primary). Day-2 tasks
+# that delegate to the writable/replaying primary must resolve either.
 - name: Wait for Patroni leader election
   containers.podman.podman_container_exec:
     name: patroni
@@ -20,7 +23,7 @@
   until:
     - _patroni_list.rc | default(1) == 0
     - _patroni_list.stdout is defined
-    - (_patroni_list.stdout | default('[]') | from_json | selectattr('Role', 'equalto', 'Leader') | list | length) == 1
+    - (_patroni_list.stdout | default('[]') | from_json | selectattr('Role', 'in', ['Leader', 'Standby Leader']) | list | length) == 1
   delegate_to: "{{ groups['patroni_nodes'] | first }}"
   run_once: true
 
@@ -28,7 +31,7 @@
   vars:
     _leader_count: >-
       {{ (_patroni_list.stdout | default('[]') | from_json
-          | selectattr('Role', 'equalto', 'Leader')
+          | selectattr('Role', 'in', ['Leader', 'Standby Leader'])
           | list | length)
          if _patroni_list.stdout is defined else '(no stdout)' }}
   ansible.builtin.fail:
@@ -51,13 +54,13 @@
       - "If leader count > 1 you have split-brain — investigate etcd state"
       - "and member network reachability before re-running."
   when:
-    - _patroni_list.stdout is not defined or _patroni_list.rc | default(1) != 0 or (_patroni_list.stdout | default('[]') | from_json | selectattr('Role', 'equalto', 'Leader') |
+    - _patroni_list.stdout is not defined or _patroni_list.rc | default(1) != 0 or (_patroni_list.stdout | default('[]') | from_json | selectattr('Role', 'in', ['Leader', 'Standby Leader']) |
       list | length) != 1
   run_once: true
 
 - name: Identify Patroni leader (member name)
   ansible.builtin.set_fact:
-    _patroni_leader_member: "{{ _patroni_list.stdout | from_json | selectattr('Role', 'equalto', 'Leader') | map(attribute='Member') | first }}"
+    _patroni_leader_member: "{{ _patroni_list.stdout | from_json | selectattr('Role', 'in', ['Leader', 'Standby Leader']) | map(attribute='Member') | first }}"
   run_once: true
 
 - name: Map leader member name to inventory host

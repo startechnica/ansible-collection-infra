@@ -1,0 +1,14 @@
+---
+# postgres_exporter — Prometheus metrics.
+#   * PE1: :9187/metrics returns 200.
+
+- name: "PE1. postgres_exporter :9187/metrics reachable"
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:9187/metrics"
+    status_code: 200
+    validate_certs: false
+  register: _smoke_pgexporter
+  failed_when: false
+  when:
+    - patroni_smoke_check_exporter | bool
+    - postgres_exporter_enabled | default(false) | bool

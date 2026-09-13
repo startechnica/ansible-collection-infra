@@ -61,7 +61,7 @@ Routes VMs tagged `mongodb` (in NetBox or via inventory `instance_tags`) to this
     - role: startechnica.infra.mongodb
       vars:
         mongodb_cluster_type: replicaset
-        mongodb_version: "8.2.6"
+        mongodb_version: "8.0.28"
         mongodb_admin_password: "{{ vault_mongodb_admin_password }}"
 ```
 
@@ -71,7 +71,7 @@ Minimum config under the host group or `cloud_init.vars`:
 
 ```yaml
 mongodb_cluster_type: sharded        # or replicaset
-mongodb_version: "8.2.6"
+mongodb_version: "8.0.28"
 mongodb_admin_password: ""           # auto-generated if empty
 
 # (optional) application DBs
@@ -184,8 +184,8 @@ The `mongodump` path above gives PITR **only on replica-set** deployments —
 cluster-consistent PITR on a **sharded** cluster. For that, enable **PBM**:
 
 ```yaml
-mongodb_pbm_enabled: true
-mongodb_backup_pitr: true         # continuous oplog slicing → restore to a timestamp
+mongodb_backup_pbm_enabled: true
+mongodb_backup_pitr_enabled: true         # continuous oplog slicing → restore to a timestamp
 # Scheduled base backups + retention reuse the shared backup knobs:
 #   mongodb_backup_schedule (when to run a pbm backup; empty disables the timer)
 #   mongodb_backup_retain_days (pbm cleanup prunes older base backups + oplog)
@@ -195,8 +195,23 @@ mongodb_backup_pitr: true         # continuous oplog slicing → restore to a ti
 On the next provision run the role deploys one `pbm-agent` next to every
 data-bearing `mongod` (two per host on sharded clusters: the shard mongod +
 the configsvr; one per host on replica sets), authenticating with an X.509
-client cert (`CN=mongodb-pbm`) and storing backups in the shared `s3_*` target
-via PBM's native S3 support.
+client cert (`CN=mongodb-pbm`) and storing backups through PBM's selected native
+object-storage client.
+
+The default `mongodb_backup_storage_type: minio` uses the shared `s3_*`
+settings for MinIO and compatible gateways. Use `s3` for Amazon S3. For native
+Google Cloud Storage JSON API access, pass the service-account JSON key GCP
+produces at "Create key → JSON" — the raw JSON string or a parsed mapping. The
+role hands its `client_email` and `private_key` to PBM. Keep the key in Ansible
+Vault:
+
+```yaml
+mongodb_backup_storage_type: gcs
+mongodb_backup_gcs_bucket: my-mongodb-backups
+mongodb_backup_gcs_service_account: "{{ vault_gcs_service_account }}"
+# Optional; defaults to a slug derived from mongodb_cluster_name
+mongodb_backup_gcs_prefix: mongodb-production
+```
 
 **Retrofit onto a running cluster (no reprovision):** the per-RS PBM user is
 created during initial bootstrap, so enabling PBM on an already-built cluster
@@ -206,10 +221,10 @@ recreating any mongod/mongos container**:
 
 ```bash
 ansible-playbook playbooks/mongodb_pbm_setup.yml -i inventories/<inv>.yml \
-  -e mongodb_pbm_enabled=true -e mongodb_backup_pitr=true
+  -e mongodb_backup_pbm_enabled=true -e mongodb_backup_pitr_enabled=true
 # or by FQCN (this play lives at the playbooks/ root):
 ansible-playbook startechnica.infra.mongodb_pbm_setup -i inventories/<inv>.yml \
-  -e mongodb_pbm_enabled=true -e mongodb_backup_pitr=true
+  -e mongodb_backup_pbm_enabled=true -e mongodb_backup_pitr_enabled=true
 ```
 
 Day-2:
@@ -217,13 +232,14 @@ Day-2:
 ```bash
 ansible-playbook playbooks/mongodb_pbm_status.yml  -i inventories/<inv>.yml
 ansible-playbook playbooks/mongodb/pbm-backup.yml  -i inventories/<inv>.yml
-ansible-playbook playbooks/mongodb/pbm-restore.yml -i inventories/<inv>.yml -e pbm_target='2026-06-09T12:30:00'
+ansible-playbook playbooks/mongodb/pbm-restore.yml -i inventories/<inv>.yml \
+  -e pbm_target='2026-06-09T12:30:00'
 ```
 
 **Constraints:** on the Community `mongo` image PBM does **logical** backups +
 logical PITR only (physical backups need Percona Server for MongoDB). PBM
 restore is **whole-cluster and in-place** (disruptive — no scratch-inspect
-mode like `pitr.yml`). Don't run PBM PITR and `mongodb_backup_pitr` on the same
+mode like `pitr.yml`). Don't run PBM PITR and `mongodb_backup_pitr_enabled` on the same
 cluster. Design notes: [docs/design/mongodb-pbm.md](../../docs/design/mongodb-pbm.md).
 
 ## Day-2 operations
@@ -235,13 +251,13 @@ cluster. Design notes: [docs/design/mongodb-pbm.md](../../docs/design/mongodb-pb
 | Verify the latest backup restores cleanly | `playbooks/mongodb/verify-backup.yml` |
 | Restore from a specific mongodump | `playbooks/mongodb/restore.yml -e restore_path=...` |
 | Point-in-time recovery (oplog replay, replica-set only) | `playbooks/mongodb/pitr.yml -e backup_path=... -e target_time=...` (or `-e backup_source=s3`) |
-| Enable PBM on a running cluster (no reprovision) | `playbooks/mongodb_pbm_setup.yml -e mongodb_pbm_enabled=true` (FQCN: `startechnica.infra.mongodb_pbm_setup`) |
+| Enable PBM on a running cluster (no reprovision) | `playbooks/mongodb_pbm_setup.yml -e mongodb_backup_pbm_enabled=true` (FQCN: `startechnica.infra.mongodb_pbm_setup`) |
 | PBM backup (sharded-safe, cluster-consistent) | `playbooks/mongodb/pbm-backup.yml` |
 | PBM restore / PITR (sharded) | `playbooks/mongodb/pbm-restore.yml -e pbm_backup=<name>` or `-e pbm_target='YYYY-MM-DDThh:mm:ss'` |
 | PBM status (agents, storage, PITR window, backups) | `playbooks/mongodb_pbm_status.yml` (FQCN: `startechnica.infra.mongodb_pbm_status`) |
 | Rolling restart | `playbooks/mongodb/restart.yml` |
 | Renew leaf certificates | `playbooks/mongodb/renew-certs.yml` |
-| Rolling version upgrade | `playbooks/mongodb/upgrade.yml -e mongodb_image_tag_new=8.2.7` |
+| Rolling version upgrade | `playbooks/mongodb/upgrade.yml -e mongodb_image_tag_new=8.3.8` |
 | Scale up (add replica) | `playbooks/mongodb/add-node.yml -e target_node=<host>` |
 | Scale down (remove replica) | `playbooks/mongodb/remove-node.yml -e target_node=<host>` |
 | Uninstall | `playbooks/mongodb/uninstall.yml [-e mongodb_destroy_prune=true]` |
@@ -257,9 +273,9 @@ Inputs are validated by [meta/argument_specs.yml](meta/argument_specs.yml). High
 | TLS | `tls_key_type`, `tls_key_curve`, `ssl_days`, `ssl_ca_days` |
 | Admin | `mongodb_admin_user`, `mongodb_admin_password` (auto-gen if empty) |
 | App DBs | `mongodb_databases` (list of {name, users[{name, password, roles[]}]}) |
-| Backup local | `mongodb_backup_dir`, `mongodb_backup_retain_days`, `mongodb_backup_pitr`, `mongodb_backup_enabled`, `mongodb_backup_schedule`, `mongodb_backup_mode` |
-| Backup S3 | `s3_bucket`, `s3_endpoint`, `s3_access_key`, `s3_secret_key`, `s3_prefix` |
-| PBM (sharded PITR) | `mongodb_pbm_enabled`, `mongodb_pbm_init_backup`, `mongodb_pbm_image`, `mongodb_pbm_compression`, `mongodb_pbm_compression_level`, `mongodb_pbm_mem_limit_mb` (schedule/retention via `mongodb_backup_schedule`/`mongodb_backup_retain_days`) |
+| Backup local | `mongodb_backup_type`, `mongodb_backup_dir`, `mongodb_backup_retain_days`, `mongodb_backup_pitr_enabled`, `mongodb_backup_enabled`, `mongodb_backup_schedule`, `mongodb_backup_mode` |
+| Backup S3 | `s3_bucket`, `s3_endpoint`, `s3_access_key`, `s3_secret_key`, `mongodb_backup_s3_prefix` |
+| PBM (sharded PITR) | `mongodb_backup_pbm_enabled`, `mongodb_backup_init`, `mongodb_backup_pbm_image`, `mongodb_backup_storage_type`, `mongodb_backup_gcs_bucket`, `mongodb_backup_gcs_service_account`, `mongodb_backup_gcs_prefix`, `mongodb_backup_compression_type`, `mongodb_backup_compression_level`, `mongodb_backup_pbm_mem_limit_mb` (schedule/retention via `mongodb_backup_schedule`/`mongodb_backup_retain_days`) |
 | Monitoring | `mongodb_exporter_enabled`, `mongodb_exporter_port` |
 | Uninstall | `mongodb_destroy_prune`, `mongodb_skip_confirm` |
 
@@ -281,27 +297,91 @@ Written to `playbooks/artifacts/<inventory-stem>/mongodb/`:
 
 ## Gotchas
 
-- **MongoDB 8 breaks on Linux kernel 6.19–7.0.13** — `mongod` refuses to start
-  (`MongoDB cannot start: Linux kernel versions 6.19 and newer has a known
-  incompatibility...`) from a TCMalloc/rseq ABI bug. This is a **bounded range**,
-  not an open-ended floor: **Linux 7.0.14+ resolves it kernel-side**. The
-  `preflight` task ([tasks/preflight.yml](tasks/preflight.yml)) passes when the
-  kernel is `< 6.19` **or** `>= 7.0.14` (bounds are `mongodb_unsupported_kernel`
-  / `mongodb_fixed_kernel`). The fix is in the kernel, not MongoDB — Mongo's
-  vendored TCMalloc is still unpatched through 8.2, so upgrading Mongo alone does
-  NOT escape the range. **The kernel bump lands WITHIN a single FCOS major
-  release**, so pinning FCOS 43 alone is not enough:
+### Three constraints bind this role together
 
-  | Kernel | MongoDB 8 |
-  |---|---|
-  | `< 6.19` (e.g. FCOS `43.20260217.3.1` = 6.18) | ✅ works |
-  | `6.19` – `7.0.13` (e.g. FCOS `43.20260413.3.2` = 6.19) | ❌ broken |
-  | `>= 7.0.14` | ✅ works (fixed kernel-side) |
+MongoDB version, kernel version, and PBR/PBM cluster-consistent PITR form a
+three-way interaction that is easy to get wrong. **All three apply at once**
+when sizing a cluster — pick a version that satisfies them together.
 
-  Upgrade the host to kernel `>= 7.0.14`, or pin an FCOS build with kernel
-  `< 6.19`. Bypass with `mongodb_skip_kernel_check: true` **only** after
-  verifying mongo actually runs on your kernel — running with the check disabled
-  on an incompatible kernel crashes containers in a tight loop.
+#### 1. Kernel gate (Linux kernel ≥ 6.19 vs every MongoDB version)
+
+`mongod` hard-refuses to start (`MongoDB cannot start: Linux kernel versions
+6.19 and newer has a known incompatibility...`) from a bug in MongoDB's
+**vendored TCMalloc** (rseq ABI violation). The kernel side is **open-ended**
+(every kernel `>= 6.19` is affected — `7.0.14` does **not** resolve it), and
+the affected versions include **8.0.28**, the role default. The `preflight`
+task ([tasks/preflight.yml](tasks/preflight.yml)) therefore blocks every
+MongoDB version on kernels `>= 6.19` (`mongodb_unsupported_kernel`):
+
+| | kernel `< 6.19` | kernel `>= 6.19` (e.g. FCOS 44 = 7.1.3) |
+|---|---|---|
+| **Any MongoDB version** (including 8.0.28) | ✅ works | ❌ unsupported / may crash-loop |
+
+#### 2. PBM 2.15 LTS-only support (PBM 2.15 doesn't support 8.2)
+
+PBM (`mongodb_backup_pbm_enabled`) only certifies against MongoDB **LTS** releases:
+`7.0.x` and `8.0.x`. It rejects mid-train **rapid releases** (`8.1`, `8.2`,
+`8.3`, …) at the agent — the connection succeeds but the backup hangs at
+"starting" and 30s later fails with:
+
+```
+WARNING: This PBM works with MongoDB and PSMDB v7.0, v8.0 and you are
+running v8.2. PBM does not support minor versions of MongoDB.
+Error: wait for backup status: backup stuck at "starting" status
+```
+
+Verified on kernel `7.1.3`: mongo `8.0.28` → PBM works; `8.2.7` → PBM fails.
+MongoDB's release model is an **LTS train** since 5.0 — only `x.0` releases
+are LTS with long support; intermediate versions are short-lived rapid
+releases. PBM only tracks LTS because backup-tool correctness depends on opLog
+/ WiredTiger / snapshot internals that change too quickly on rapid trains.
+([Percona compatibility matrix](https://docs.percona.com/percona-backup-mongodb/details/versions.html))
+
+#### 3. Sharded PITR requires PBM (not mongodump)
+
+On a **sharded** cluster, `mongodump --oplog` is rejected via `mongos`. The
+`mongodb-backup.timer` (scheduled) and `playbooks/mongodb/backup.yml`
+(on-demand) BOTH fail with:
+
+```
+Failed: can't use --oplog option when dumping from a mongos
+```
+
+when `mongodb_backup_pitr_enabled: true` is set on `mongodb_cluster_type: sharded`.
+The only path to PITR on sharded is **PBM**, which runs one agent per replica
+set and produces cluster-consistent slices. On a **replica-set** cluster
+this constraint does not apply — `mongodump --oplog` works directly against
+the mongod.
+
+#### The combined matrix
+
+The intersection of all three constraints, expressed as valid deployments:
+
+| Goal | Cluster | Kernel | MongoDB | PBM | Result |
+|---|---|---|---|---|---|
+| **Sharded + PITR (the recommended combination)** | sharded | any | `8.0.x` LTS | ✅ | ✅ full + PITR |
+| **Sharded, no PITR** | sharded | `>= 6.19` | `8.2.x` (or any LTS) | ❌ | ✅ full backups only |
+| **Sharded, no PITR, recent kernel, FCOS pin not possible** | sharded | `>= 6.19` | `8.0.x` LTS | ❌ | ✅ full backups only |
+| **Replica set, PITR** | replicaset | any | `7.0.x` / `8.0.x` LTS | ❌ (mongodump handles it) | ✅ full + PITR |
+| **Anything on a kernel `< 6.19`** | either | `< 6.19` | any | ✅ if PBM-supported | ✅ no kernel constraint |
+| Any MongoDB version on `>= 6.19` kernel | either | `>= 6.19` | any | ❌ | ❌ mongod may crash-loop before binding |
+
+**No MongoDB version is supported on a kernel ≥ 6.19.** For a sharded cluster,
+run a kernel below that boundary and use 8.0.x for PBM-backed PITR.
+
+#### Resolutions
+
+- **Pin an FCOS build with kernel `< 6.19`** (via `content_library_item_name`) —
+  e.g. FCOS `43.20260217.3.1` ships 6.18. Pinning the FCOS major alone is NOT
+  enough — the kernel bump lands within a single major release.
+- **Run MongoDB on a different OS** (Ubuntu 24.04 ships 6.8).
+- **Bypass with `mongodb_skip_kernel_check: true`** only after validating an
+  upstream-supported workaround. It does not make an affected kernel safe and
+  should not be used as a "make it run anyway" switch.
+
+> **Note:** `mongodb_kernel_guard_min_version` and `mongodb_fixed_kernel` are
+> now **inert** compatibility variables. They remain accepted so existing
+> inventories do not fail, but the guard is the kernel-only check above.
 - **FCV (featureCompatibilityVersion)** is NOT auto-bumped on version upgrade. After a major upgrade (6→7, 7→8), run `db.adminCommand({setFeatureCompatibilityVersion: "7.0"})` manually after a soak period.
 - **Auto-generated admin password persists** — once `admin.password` exists in the artifacts dir, it's reused on every run. Delete the file if you want a fresh password.
 - **Cert rotation is zero-downtime** — renew-certs.yml uses a rolling restart, one node at a time. The CA is NOT rotated unless you explicitly do so (breaking change).

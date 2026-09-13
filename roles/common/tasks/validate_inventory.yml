@@ -1,7 +1,7 @@
 ---
 # Inventory preconditions — run on localhost, read-only, no side effects.
 # Catches concrete foot-guns we've actually seen: S3 all-or-nothing,
-# patroni_scope unset, vip_manager without patroni_vip_address, malformed databases[], etc.
+# patroni_scope unset, patroni_vip_engine without patroni_vip_address, malformed databases[], etc.
 
 # Publish slug-resolved values as host facts on localhost so the asserts
 # below read bare `instance_init_type` / `container_engine` / etc. and
@@ -224,6 +224,35 @@
     success_msg: "S3 backup target configured ({{ s3_endpoint | default('') }} bucket={{ s3_bucket | default('') }})."
   when: s3_bucket | default('') | length > 0
 
+# ── WAL-G object-storage backend (patroni) ──
+
+- name: Assert walg_storage_type is a supported backend
+  ansible.builtin.assert:
+    that:
+      - walg_storage_type | default('s3') in ['s3', 'gcs']
+    fail_msg: >-
+      walg_storage_type='{{ walg_storage_type | default('s3') }}' is not supported.
+      Use 's3' (AWS S3, MinIO, Ceph, any S3-compatible endpoint) or 'gcs'
+      (native Google Cloud Storage).
+    success_msg: "WAL-G storage backend: {{ walg_storage_type | default('s3') }}."
+
+# Fails fast on the controller instead of surfacing as a wal-push error after
+# the cluster is already up. Mirrors the S3 all-or-nothing assert above.
+- name: Assert WAL-G GCS config is complete
+  ansible.builtin.assert:
+    that:
+      - walg_gcs_bucket | default('') | length > 0
+      - walg_gcs_service_account_json | default('') | length > 0
+    fail_msg: >-
+      walg_storage_type=gcs requires walg_gcs_bucket and walg_gcs_service_account_json
+      (the service-account JSON key — keep it in Ansible Vault). Fill both, set
+      walg_enabled=false to skip WAL-G, or switch walg_storage_type back to 's3'.
+    success_msg: >-
+      WAL-G GCS target configured (gs://{{ walg_gcs_bucket | default('') }}/{{ walg_gcs_prefix | default('') }}).
+  when:
+    - walg_storage_type | default('s3') == 'gcs'
+    - walg_enabled | default(true) | bool
+
 # ── Patroni ──
 
 - name: Assert patroni_scope is set when using patroni
@@ -241,16 +270,16 @@
     - patroni_enabled | default(true) | bool
     - patroni_scope is defined or (instances is defined and instances | length > 0 and 'patroni' in (instance_tags | default([])))
 
-- name: Assert vip_manager choice when VIP is configured
+- name: Assert patroni_vip_engine choice when VIP is configured
   ansible.builtin.assert:
     that:
-      - vip_manager | default('vip-manager') in ['vip-manager', 'keepalived']
+      - patroni_vip_engine | default('vip-manager') in ['vip-manager', 'keepalived']
     fail_msg: >-
-      patroni_vip_address='{{ patroni_vip_address | default('') }}' is set but vip_manager='{{ vip_manager | default('vip-manager') }}'
+      patroni_vip_address='{{ patroni_vip_address | default('') }}' is set but patroni_vip_engine='{{ patroni_vip_engine | default('vip-manager') }}'
       is not 'vip-manager' or 'keepalived'. Pick one, or unset 'patroni_vip_address' to disable
       the VIP service entirely.
       (patroni_vip_mask / patroni_vip_iface fall back to role defaults — no need to set them.)
-    success_msg: "VIP {{ patroni_vip_address | default('') }} configured via {{ vip_manager | default('vip-manager') }}."
+    success_msg: "VIP {{ patroni_vip_address | default('') }} configured via {{ patroni_vip_engine | default('vip-manager') }}."
   when:
     - patroni_enabled | default(true) | bool
     - patroni_scope is defined
@@ -362,7 +391,13 @@
       - "Cluster scope: {{ instance_cluster_name | default('(instance_folder: ' ~ (instance_folder | default('(unscoped)')) ~ ')') }}"
       - "S3 backups: {{ 'configured' if s3_bucket | default('') | length > 0 else 'disabled' }}"
       - >-
-        VIP manager: {{ vip_manager | default('(none)') }}{{
+        WAL-G archive: {{
+          ('gs://' ~ (walg_gcs_bucket | default('')) ~ '/' ~ (walg_gcs_prefix | default('')))
+          if walg_storage_type | default('s3') == 'gcs'
+          else (('s3://' ~ s3_bucket ~ '/' ~ (patroni_walg_s3_prefix | default('')))
+                if s3_bucket | default('') | length > 0 else 'disabled') }}
+      - >-
+        VIP engine: {{ patroni_vip_engine | default('(none)') }}{{
           ' patroni_vip_address=' ~ patroni_vip_address
           if patroni_vip_address | default('') | length > 0 else '' }}
       - >-

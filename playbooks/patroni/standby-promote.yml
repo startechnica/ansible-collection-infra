@@ -1,0 +1,72 @@
+---
+# ─── Patroni: Promote Standby Cluster to Primary (DR activation) ─────────────
+#
+# Converts a STANDBY cluster into an independent primary by removing the
+# bootstrap.dcs.standby_cluster config from DCS via patronictl. Patroni then
+# promotes the "Standby Leader" to a real "Leader" — the cluster stops
+# replaying the remote primary and starts accepting writes.
+#
+# This is a deliberate DR action. It does NOT coordinate with the old primary:
+# after promotion you have two independent primaries. Fence/decommission the
+# old primary (or reconfigure it as the new standby) to avoid split-brain at
+# the application layer.
+#
+# Usage:
+#   ansible-playbook playbooks/patroni/standby-promote.yml -i inventories/<inv>.yml
+#   # skip the interactive confirmation:
+#   ansible-playbook playbooks/patroni/standby-promote.yml -i inventories/<inv>.yml \
+#     -e patroni_skip_confirm=true
+#
+# After promotion, set `patroni_standby_enabled: false` in the inventory so a
+# future provision run does not re-attach the cluster to the old primary.
+
+- name: Setup patroni hosts
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Build host group from instances
+      ansible.builtin.include_tasks: _setup.yml
+
+- name: Confirm standby promotion
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Prompt before promoting the standby cluster
+      ansible.builtin.pause:
+        prompt: |
+
+          ┌─────────────────────────────────────────────────────────────┐
+          │  PROMOTE STANDBY CLUSTER TO INDEPENDENT PRIMARY              │
+          └─────────────────────────────────────────────────────────────┘
+          This removes standby_cluster from DCS. The cluster STOPS replaying
+          the remote primary and begins accepting writes. You will then have
+          TWO independent primaries — fence the old one to avoid split-brain.
+
+          Type 'promote' to proceed, anything else to abort
+      register: _promote_confirm
+      when: not (patroni_skip_confirm | default(false) | bool)
+
+    - name: Abort unless confirmed
+      ansible.builtin.assert:
+        that:
+          - (_promote_confirm.user_input | default('')) == 'promote'
+        fail_msg: "Promotion aborted (confirmation not given)."
+        success_msg: "Confirmed — promoting."
+        quiet: true
+      when: not (patroni_skip_confirm | default(false) | bool)
+
+- name: Promote standby cluster
+  hosts: patroni_nodes
+  become: true
+  gather_facts: true
+  pre_tasks:
+    - name: Inherit localhost vars
+      ansible.builtin.include_role:
+        name: common
+        tasks_from: inherit_localhost_vars
+  roles:
+    - role: patroni
+      vars:
+        patroni_action: standby-promote
+        # Force the standby OFF so reconcile_standby.yml removes the DCS block.
+        patroni_standby_enabled: false

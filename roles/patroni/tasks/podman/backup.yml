@@ -1,5 +1,5 @@
 ---
-# On-demand backup (podman) — WAL-G (when S3 configured) or pg_basebackup (local).
+# On-demand backup (podman) — WAL-G (when object storage is configured) or pg_basebackup (local).
 # Caller must handle serialisation via `serial:` on the play.
 
 - name: Check patroni is running
@@ -10,7 +10,7 @@
     (patroni_container.containers | length) == 0
     or ((patroni_container.containers | first).State.Status | default('') != 'running')
 
-- name: Run WAL-G backup (S3)
+- name: Run WAL-G backup (object storage)
   when: walg_enabled
   block:
     - name: Execute wal-g backup-push

@@ -11,12 +11,12 @@
 #
 # Usage (file path, or FQCN since this playbook lives at the playbooks/ root):
 #   ansible-playbook playbooks/mongodb_pbm_setup.yml -i inventories/<inv>.yml \
-#     -e mongodb_pbm_enabled=true [-e mongodb_backup_pitr=true]
+#     -e mongodb_backup_pbm_enabled=true [-e mongodb_backup_pitr_enabled=true]
 #   ansible-playbook startechnica.infra.mongodb_pbm_setup -i inventories/<inv>.yml \
-#     -e mongodb_pbm_enabled=true [-e mongodb_backup_pitr=true]
+#     -e mongodb_backup_pbm_enabled=true [-e mongodb_backup_pitr_enabled=true]
 #
-# (Better: set mongodb_pbm_enabled/mongodb_backup_pitr in inventory so subsequent
-#  provision runs keep PBM enabled too.)
+# (Better: set mongodb_backup_pbm_enabled/mongodb_backup_pitr_enabled in
+#  inventory so subsequent provision runs keep PBM enabled too.)
 
 - name: Setup mongodb hosts
   hosts: localhost

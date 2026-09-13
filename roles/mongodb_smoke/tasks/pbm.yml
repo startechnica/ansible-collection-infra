@@ -1,0 +1,40 @@
+---
+# PBM — cluster-consistent backups + PITR.
+#   * pbm status — agents healthy
+#   * pbm list --out json — at least one base backup exists (when init_backup is enabled)
+#
+# Invocation mirrors roles/mongodb/tasks/pbm.yml: run through the control
+# container (config RS on sharded, shard RS on replicaset) with the real
+# PBM_MONGODB_URI (_pbm_control_uri, exported from the mongodb role's vars/).
+# The empty-URI form here previously made every `pbm` call fail to connect,
+# which read as "no backups" / "status unhealthy" on a healthy cluster.
+
+- name: "PBM :: resolve control container name"
+  ansible.builtin.set_fact:
+    _smoke_pbm_control: "{{ 'mongodb-pbm-config' if mongodb_cluster_type == 'sharded' else 'mongodb-pbm-shard' }}"
+  when:
+    - mongodb_smoke_check_pbm | bool
+    - mongodb_backup_pbm_enabled | default(false) | bool
+
+- name: "5a. PBM status (per node)"
+  ansible.builtin.command: >-
+    {{ mongodb_container_engine }} exec -e PBM_MONGODB_URI={{ _pbm_control_uri }}
+    {{ _smoke_pbm_control }} pbm status
+  register: _smoke_pbm_status
+  failed_when: false
+  changed_when: false
+  when:
+    - mongodb_smoke_check_pbm | bool
+    - mongodb_backup_pbm_enabled | default(false) | bool
+
+- name: "5b. PBM backup list (any base backups exist)"
+  ansible.builtin.command: >-
+    {{ mongodb_container_engine }} exec -e PBM_MONGODB_URI={{ _pbm_control_uri }}
+    {{ _smoke_pbm_control }} pbm list --out json
+  register: _smoke_pbm_list
+  failed_when: false
+  changed_when: false
+  run_once: true
+  when:
+    - mongodb_smoke_check_pbm | bool
+    - mongodb_backup_pbm_enabled | default(false) | bool

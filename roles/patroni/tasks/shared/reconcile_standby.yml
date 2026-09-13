@@ -1,0 +1,99 @@
+---
+# Reconcile bootstrap.dcs.standby_cluster in Patroni's live DCS to match the
+# current patroni_standby_* vars.
+#
+# Why this exists: like archive_command/restore_command, standby_cluster under
+# bootstrap.dcs is consumed only at FIRST cluster init. After bootstrap the
+# authoritative value lives in DCS (etcd); re-rendering patroni.yml has no
+# effect. This task bridges that so the standby config stays correct
+# post-bootstrap, and it is the mechanism standby-promote.yml uses to REMOVE
+# the block (promoting the standby to a normal primary):
+#
+#   patroni_standby_enabled true  → ensure standby_cluster present + correct
+#   patroni_standby_enabled false → ensure standby_cluster absent (promote)
+#
+# Idempotent: reads current DCS config first, only calls edit-config when the
+# desired state differs. Cheap on no-op runs (one show-config exec).
+#
+# Modeled on reconcile_archiving.yml.
+
+- name: Discover Patroni leader (standby-aware)
+  ansible.builtin.include_tasks: "../{{ patroni_container_engine }}/_detect_leader.yml"
+
+- name: Read current Patroni dynamic config from DCS
+  ansible.builtin.command:
+    argv:
+      - "{{ patroni_container_engine }}"
+      - exec
+      - patroni
+      - patronictl
+      - -c
+      - /etc/patroni/patroni.yml
+      - show-config
+  register: _patroni_show_config
+  changed_when: false
+  delegate_to: "{{ _patroni_leader_host }}"
+  run_once: true
+
+- name: Parse current standby_cluster from DCS
+  ansible.builtin.set_fact:
+    _current_standby: >-
+      {{ (_patroni_show_config.stdout | from_yaml).standby_cluster | default(None) }}
+  run_once: true
+
+- name: Compute desired standby_cluster
+  ansible.builtin.set_fact:
+    _desired_standby: >-
+      {{
+        {
+          'host': patroni_standby_primary_host,
+          'port': patroni_standby_primary_port | int,
+          'create_replica_methods': patroni_standby_create_replica_methods | default(['basebackup']),
+        }
+        | combine({'primary_slot_name': patroni_standby_primary_slot}
+                  if (patroni_standby_primary_slot | default('') | length > 0) else {})
+        | combine({'restore_command': '/opt/walg/wal-g wal-fetch %f %p'}
+                  if (walg_enabled | default(false) | bool) else {})
+        if (patroni_standby_enabled | default(false) | bool) else None
+      }}
+  run_once: true
+
+# ── Case A: standby ENABLED and config differs → set/replace the block ────────
+- name: Set standby_cluster in DCS via patronictl edit-config
+  ansible.builtin.command:
+    argv:
+      - "{{ patroni_container_engine }}"
+      - exec
+      - patroni
+      - patronictl
+      - -c
+      - /etc/patroni/patroni.yml
+      - edit-config
+      - --force
+      - --set
+      - "standby_cluster={{ _desired_standby | to_json }}"
+  delegate_to: "{{ _patroni_leader_host }}"
+  run_once: true
+  when:
+    - patroni_standby_enabled | default(false) | bool
+    - _current_standby != _desired_standby
+
+# ── Case B: standby DISABLED but a block still exists → remove it (promote) ───
+- name: Remove standby_cluster from DCS via patronictl edit-config
+  ansible.builtin.command:
+    argv:
+      - "{{ patroni_container_engine }}"
+      - exec
+      - patroni
+      - patronictl
+      - -c
+      - /etc/patroni/patroni.yml
+      - edit-config
+      - --force
+      - --set
+      - "standby_cluster=null"
+  delegate_to: "{{ _patroni_leader_host }}"
+  run_once: true
+  when:
+    - not (patroni_standby_enabled | default(false) | bool)
+    - _current_standby is not none

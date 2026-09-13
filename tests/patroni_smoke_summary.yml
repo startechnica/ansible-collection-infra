@@ -1,0 +1,75 @@
+---
+# Regression test for the Patroni smoke report: HAProxy state must be
+# materialized before the summary evaluates its failure list and message.
+
+- name: "Create Patroni smoke summary fixture host"
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: "Add the fixture to the Patroni group"
+      ansible.builtin.add_host:
+        name: patroni-smoke-summary-fixture
+        groups: patroni_nodes
+        ansible_connection: local
+
+- name: "Exercise Patroni smoke HAProxy summary paths"
+  hosts: patroni_nodes
+  gather_facts: false
+  vars:
+    patroni_scope: smoke-summary-fixture
+    patroni_vip_address: ""
+    patroni_smoke_max_replica_lag_ms: 5000
+    patroni_smoke_required_containers: []
+    patroni_smoke_check_haproxy: false
+    patroni_smoke_check_tls: false
+    patroni_smoke_check_users_and_dbs: false
+    walg_enabled: false
+    postgres_exporter_enabled: false
+    pgbouncer_enabled: false
+    postgresql_postgres_password: ""
+    patroni_databases: []
+  tasks:
+    - name: "Set healthy collector results"
+      ansible.builtin.set_fact:
+        _patroni_smoke_required_effective: []
+        _smoke_required_container_checks:
+          results: []
+        _smoke_patronictl_json:
+          rc: 0
+          stdout: '[{"Role": "Leader", "Member": "patroni-smoke-summary-fixture"}]'
+        _smoke_patroni_rest:
+          failed: false
+        _smoke_etcd_health:
+          stdout: "member-1 is healthy\nmember-2 is healthy\nmember-3 is healthy"
+        _smoke_etcd_status:
+          rc: 0
+          stdout: '[{"Status": {"leader": true}}, {"Status": {"leader": false}}, {"Status": {"leader": false}}]'
+        _smoke_replica_read:
+          results: []
+
+    - name: "Run the summary with HAProxy checks skipped"
+      ansible.builtin.include_tasks: ../roles/patroni_smoke/tasks/summary.yml
+
+    - name: "Confirm skipped HAProxy checks produced neutral facts"
+      ansible.builtin.assert:
+        that:
+          - "not (_smoke_haproxy_primary_up | bool)"
+          - "not (_smoke_haproxy_replica_up | bool)"
+
+    - name: "Set healthy HAProxy collector output"
+      ansible.builtin.set_fact:
+        patroni_smoke_check_haproxy: true
+        _smoke_haproxy_csv:
+          content: |-
+            # pxname,svname,status
+            postgres-primary,patroni-1,UP
+            postgres-replica,patroni-2,UP
+
+    - name: "Run the summary with healthy HAProxy backends"
+      ansible.builtin.include_tasks: ../roles/patroni_smoke/tasks/summary.yml
+
+    - name: "Confirm healthy HAProxy backends were detected"
+      ansible.builtin.assert:
+        that:
+          - "_smoke_haproxy_primary_up | bool"
+          - "_smoke_haproxy_replica_up | bool"

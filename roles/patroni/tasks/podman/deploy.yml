@@ -63,7 +63,7 @@
     mode: "0644"
   register: _q_etcd
 
-- name: Render walg-init Quadlet (S3 enabled)
+- name: Render walg-init Quadlet (WAL-G enabled)
   ansible.builtin.template:
     src: quadlets/walg-init.container.j2
     dest: /etc/containers/systemd/walg-init.container

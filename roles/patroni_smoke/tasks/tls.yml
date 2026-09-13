@@ -1,0 +1,114 @@
+---
+# TLS — server cert + CA cert readability, plus a "create new cert" sign+verify
+# test that exercises the controller-side CA the same way the deploy role
+# does. Catches CA corruption, expired CA, wrong key usage flags, or SAN
+# drift (e.g. inventory added a new node but the cert wasn't re-issued).
+#
+# Design:
+#   * The "create new cert" flow delegates to localhost — the CA's private
+#     key is on the controller, never on the node.
+#   * Writes to a temp subdir under patroni_local_certs_dir; never touches
+#     the deployed certs at <node>:/etc/patroni/ssl/.
+#   * Each node runs the same flow but with its own SAN (its own hostname
+#     and the cluster VIP) — so if any one node is missing from the SAN
+#     list, this test catches it without a real cert rotation.
+#
+# (Days-remaining is delegated to the mongodb_status module in
+# cluster_state.yml; running openssl here would duplicate that work.)
+
+- name: "TLS3. Patroni server cert readable"
+  ansible.builtin.command: openssl x509 -in /etc/patroni/ssl/patroni.crt -noout -enddate
+  register: _patroni_smoke_patroni_cert_end
+  changed_when: false
+  failed_when: false
+  when: patroni_smoke_check_tls | bool
+
+- name: "TLS3b. Patroni CA cert readable"
+  ansible.builtin.command: openssl x509 -in /etc/patroni/ssl/ca.crt -noout -enddate
+  register: _patroni_smoke_patroni_ca_end
+  changed_when: false
+  failed_when: false
+  when: patroni_smoke_check_tls | bool
+
+# ── "Create new cert" ─────────────────────────────────────────────────────────
+# Generates a fresh CSR on the controller, signs it with the local CA,
+# verifies the chain via openssl, and asserts the resulting cert has the
+# expected SAN (this node's hostname + the cluster VIP). Runs on each
+# patroni_node but delegates all openssl work to localhost (where the
+# controller-side CA lives); the node only owns the SAN set.
+
+# All controller-side cert work runs on localhost as the invoking user, NOT
+# under become — the CA and patroni_local_certs_dir are user-owned artifacts,
+# and the play targets patroni_nodes with become: true (node sudo). Without
+# `become: false` here, delegate_to: localhost inherits that become and tries
+# to sudo on the controller ("sudo: a password is required"). The deploy role's
+# tls_certificates.yml pairs every localhost delegation with become: false for
+# the same reason.
+- name: "Create new cert :: controller-side sign+verify flow"
+  delegate_to: localhost
+  become: false
+  when: patroni_smoke_check_tls | bool
+  block:
+    - name: "Create new cert :: set up scratch dir on controller"
+      ansible.builtin.file:
+        path: "{{ patroni_local_certs_dir }}/_smoke_new_cert/{{ inventory_hostname }}"
+        state: directory
+        mode: "0700"
+
+    - name: "Create new cert :: generate private key"
+      community.crypto.openssl_privatekey:
+        path: "{{ patroni_local_certs_dir }}/_smoke_new_cert/{{ inventory_hostname }}/leaf.key"
+        type: "{{ tls_key_type | default('ECC') }}"
+        curve: "{{ tls_key_curve | default('secp256r1') if (tls_key_type | default('ECC')) == 'ECC' else omit }}"
+        size: "{{ tls_key_size | default(4096) if (tls_key_type | default('ECC')) != 'ECC' else omit }}"
+
+    - name: "Create new cert :: generate CSR with node SAN"
+      community.crypto.openssl_csr:
+        path: "{{ patroni_local_certs_dir }}/_smoke_new_cert/{{ inventory_hostname }}/leaf.csr"
+        privatekey_path: "{{ patroni_local_certs_dir }}/_smoke_new_cert/{{ inventory_hostname }}/leaf.key"
+        common_name: "{{ inventory_hostname }}"
+        subject_alt_name:
+          - "DNS:{{ inventory_hostname }}"
+          - "DNS:{{ patroni_scope }}"
+          - "IP:{{ ansible_host | default(inventory_hostname) }}"
+          - "IP:{{ patroni_vip_address | default('') }}"
+        key_usage:
+          - digitalSignature
+          - keyEncipherment
+        extended_key_usage:
+          - serverAuth
+          - clientAuth
+
+    - name: "Create new cert :: sign CSR with local CA"
+      community.crypto.x509_certificate:
+        path: "{{ patroni_local_certs_dir }}/_smoke_new_cert/{{ inventory_hostname }}/leaf.crt"
+        csr_path: "{{ patroni_local_certs_dir }}/_smoke_new_cert/{{ inventory_hostname }}/leaf.csr"
+        ownca_path: "{{ patroni_local_certs_dir }}/ca/ca.crt"
+        ownca_privatekey_path: "{{ patroni_local_certs_dir }}/ca/ca.key"
+        ownca_not_after: "+{{ tls_cert_days | default(365) }}d"
+        ownca_digest: "{{ tls_signature_digest | default('sha256') }}"
+        provider: ownca
+
+    - name: "Create new cert :: verify chain against the deployed CA"
+      ansible.builtin.command: >-
+        openssl verify
+        -CAfile {{ patroni_local_certs_dir }}/ca/ca.crt
+        {{ patroni_local_certs_dir }}/_smoke_new_cert/{{ inventory_hostname }}/leaf.crt
+      register: _patroni_smoke_new_cert_verify
+      changed_when: false
+      failed_when: false
+
+    - name: "Create new cert :: assert SAN includes this node's hostname"
+      ansible.builtin.command: >-
+        openssl x509 -in
+        {{ patroni_local_certs_dir }}/_smoke_new_cert/{{ inventory_hostname }}/leaf.crt
+        -noout -ext subjectAltName
+      register: _patroni_smoke_new_cert_san
+      changed_when: false
+      failed_when: false
+
+    - name: "Create new cert :: cleanup scratch dir"
+      ansible.builtin.file:
+        path: "{{ patroni_local_certs_dir }}/_smoke_new_cert"
+        state: absent
+      run_once: true

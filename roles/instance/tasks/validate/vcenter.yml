@@ -12,12 +12,12 @@
       - vcenter_connect.username | length > 0
       - vcenter_connect.password is defined
       - vcenter_connect.password | length > 0
-    fail_msg: >
+    fail_msg: |
       vCenter credentials are incomplete.
       Required variables:
         - vcenter_connect.hostname
         - vcenter_connect.username
         - vcenter_connect.password
-    success_msg: >
+    success_msg: |
       vCenter credential validation passed: {{ vcenter_connect.hostname }}
       ({{ vcenter_connect.username }})

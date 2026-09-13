@@ -1,0 +1,20 @@
+---
+# Export anchor — intentionally does no work.
+#
+# Importing this role with `tasks_from: export_vars` loads the patroni role's
+# defaults/main.yml + vars/main.yml (postgresql_port, patroni_scope,
+# walg_enabled, patroni_vip_address, postgres_exporter_enabled, etc.) into the
+# calling play WITHOUT running any of the deploy/day-2 tasks in main.yml.
+#
+# Consumed by roles/patroni_smoke (its dispatcher imports this first) so the
+# smoke checks read the SAME variables the deploy used — single source of
+# truth. Notably this makes the smoke test use the role's real default
+# postgresql_port (55432), not a hard-coded 5432 fallback.
+#
+# Usage:
+#   - ansible.builtin.import_role:
+#       name: patroni
+#       tasks_from: export_vars
+#
+# Role defaults are lowest precedence, so anything the inventory sets still
+# wins. Keep this file task-free; its only job is to trigger var loading.

@@ -38,6 +38,11 @@
     - { path: "{{ postgresql_log_dir }}", owner: "{{ patroni_uid }}", group: "{{ patroni_gid }}", recurse: true }
     - { path: "{{ patroni_backup_dir }}", owner: "{{ patroni_uid }}", group: "{{ patroni_gid }}", recurse: true }
     - { path: "{{ wal_archive_dir }}", owner: "{{ patroni_uid }}", group: "{{ patroni_gid }}", recurse: true }
+    # WAL-G GCS service-account key lives here (0700, patroni-readable). Created
+    # unconditionally — an empty dir costs nothing and keeps the bind mount in
+    # patroni.container/docker-compose valid the moment walg_storage_type flips
+    # to gcs. Only populated by shared/walg.yml when gcs is the active backend.
+    - { path: "{{ walg_gcs_service_account_dir }}", owner: "{{ patroni_uid }}", group: "{{ patroni_gid }}", mode: "0700" }
 
     # ── etcd-owned (data directory) ──
     - { path: "{{ etcd_data_dir }}", owner: "{{ etcd_uid }}", group: "{{ etcd_gid }}", mode: "0700", recurse: true }

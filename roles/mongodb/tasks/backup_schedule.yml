@@ -14,7 +14,10 @@
 
 - name: Set scheduled-backup desired state
   ansible.builtin.set_fact:
-    _mongodb_backup_timer: "{{ mongodb_backup_enabled | bool and (mongodb_backup_schedule | length > 0) }}"
+    _mongodb_backup_timer: >-
+      {{ (mongodb_backup_enabled | bool) and
+         (mongodb_backup_type == 'mongodump') and
+         (mongodb_backup_schedule | length > 0) }}
 
 - name: Deploy mongodb-backup helper script
   ansible.builtin.template:
@@ -39,9 +42,10 @@
 
       [Service]
       Type=oneshot
+      LogsDirectory=mongodb
       ExecStart={{ mongodb_root_dir }}/mongodb-backup.sh
-      StandardOutput=append:/var/log/mongodb-backup.log
-      StandardError=append:/var/log/mongodb-backup.log
+      StandardOutput=append:/var/log/mongodb/mongodb-backup.log
+      StandardError=append:/var/log/mongodb/mongodb-backup.log
   notify: reload systemd
   run_once: true
   when: _mongodb_backup_timer
@@ -75,11 +79,18 @@
   run_once: true
   when: _mongodb_backup_timer
 
-- name: Disable mongodb-backup.timer when backups are off
+- name: Disable mongodb-backup.timer when backups are off or using PBM
   ansible.builtin.systemd:
     name: mongodb-backup.timer
     enabled: false
     state: stopped
   failed_when: false
+  run_once: true
+  when: not _mongodb_backup_timer
+
+- name: Remove mongodb-backup helper script when not using mongodump schedule
+  ansible.builtin.file:
+    path: "{{ mongodb_root_dir }}/mongodb-backup.sh"
+    state: absent
   run_once: true
   when: not _mongodb_backup_timer

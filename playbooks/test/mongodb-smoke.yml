@@ -1,0 +1,27 @@
+---
+# Thin wrapper around the startechnica.infra.mongodb_smoke role.
+# All checks live in roles/mongodb_smoke/tasks/*.yml. This file is the
+# canonical entry point — scripts/smoke.sh dispatches to it.
+#
+# The `mongodb_nodes` group is built at runtime from instances[] by
+# mongodb/_setup.yml (the same prelude the deploy playbooks use), so the
+# inventory does not need a static group.
+
+- name: "Setup mongodb hosts (build group from instances)"
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: "Build host group from instances"
+      ansible.builtin.include_tasks: ../mongodb/_setup.yml
+
+- name: "MongoDB smoke test"
+  hosts: mongodb_nodes
+  gather_facts: true
+  become: true
+  pre_tasks:
+    - name: "Inherit localhost vars"
+      ansible.builtin.include_role:
+        name: common
+        tasks_from: inherit_localhost_vars
+  roles:
+    - role: mongodb_smoke

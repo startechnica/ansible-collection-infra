@@ -295,7 +295,7 @@
   when: not _mongodb_init_marker.stat.exists
 
 # ── Create PBM x509 role + user on each replica set (when PBM enabled) ──
-# PBM agents authenticate by client cert (CN=mongodb_pbm_cn) mapped to a
+# PBM agents authenticate by client cert (CN=mongodb_backup_pbm_cn) mapped to a
 # $external user holding the PBM role set. The custom `pbmAnyAction` role
 # grants the cluster-wide privileges PBM needs beyond the built-in roles.
 # Created on every RS the agents connect to: the config RS (sharded) and the
@@ -312,7 +312,7 @@
       --tlsCAFile /etc/mongo/ssl/ca.pem
       --quiet --eval "{{ _pbm_create_user_js }}"
   when:
-    - mongodb_pbm_enabled | bool
+    - mongodb_backup_pbm_enabled | bool
     - _is_sharded | bool
     - not _mongodb_init_marker.stat.exists
 
@@ -327,7 +327,7 @@
       --tlsCAFile /etc/mongo/ssl/ca.pem
       --quiet --eval "{{ _pbm_create_user_js }}"
   when:
-    - mongodb_pbm_enabled | bool
+    - mongodb_backup_pbm_enabled | bool
     - not _mongodb_init_marker.stat.exists
 
 # ── Switch to full auth mode ──

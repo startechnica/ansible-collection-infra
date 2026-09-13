@@ -26,6 +26,30 @@ inventory.
 mongodb_backup_retain_days: 14   # applies to local dumps and S3 objects
 ```
 
+### Breaking — `vip_manager` renamed to `patroni_vip_engine`
+
+The Patroni VIP selector moved into the role's `patroni_vip_*` namespace.
+Accepted values are unchanged: `vip-manager` (default), `keepalived`, `none`.
+There is no alias — the role no longer reads `vip_manager`.
+
+**What you'll see:** if you never set `vip_manager`, or set it to `vip-manager`
+or `none`, nothing changes (`none` was only accepted with `patroni_vip_address`
+empty, which disables the VIP on its own). If you set
+`vip_manager: keepalived` and don't rename it, the old key is ignored and the
+next run switches the cluster to vip-manager:
+
+- **docker:** keepalived drops out of the rendered compose file and is removed
+  as an orphan; vip-manager takes over the VIP.
+- **podman:** the existing `keepalived.container` Quadlet is not removed, so
+  keepalived keeps running alongside the new vip-manager, both managing the
+  same address.
+
+**Action:** rename the key in inventory before running the role:
+
+```yaml
+patroni_vip_engine: keepalived   # was: vip_manager: keepalived
+```
+
 ## 1.0.2 (2026-06-08)
 
 ### Potentially breaking — `netbox_device_platform` default is now empty

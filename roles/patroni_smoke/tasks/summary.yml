@@ -1,0 +1,257 @@
+---
+# Aggregate all per-component results into a single PASS/FAIL report.
+# Runs at the very end so every collector task has had a chance to register.
+#
+# Design notes:
+#   * All assertions are evaluated even if some fail — the operator sees the
+#     full picture in one run, not fail-fast partial output.
+#   * Each `+ (...)` clause is one logical assert, gated on whether its
+#     collector ran (most are gated on the same patroni_smoke_check_* flag).
+#   * Negative-as-audit asserts are mixed with positive ones — both read
+#     live state without modifying anything.
+
+- name: "Build smoke report (aggregator inputs)"
+  ansible.builtin.set_fact:
+    _smoke_patronictl: >-
+      {{ (_smoke_patronictl_json.stdout | default('[]', true))
+         | from_json
+             if (_smoke_patronictl_json.rc | default(1)) == 0
+         else [] }}
+    _smoke_members: >-
+      {{ (_smoke_patronictl_json.stdout | default('[]', true) | from_json)
+             if (_smoke_patronictl_json.rc | default(1)) == 0
+         else [] }}
+    _smoke_n_vip_holders: >-
+      {{ groups['patroni_nodes'] | default([])
+         | map('extract', hostvars)
+         | selectattr('_smoke_vip_holders.stdout', 'defined')
+         | selectattr('_smoke_vip_holders.stdout', 'equalto', 'HAS_VIP')
+         | list | length }}
+    _smoke_etcd_status_json: >-
+      {{ (_smoke_etcd_status.stdout | default('[]', true) | from_json)
+             if (_smoke_etcd_status.rc | default(1)) == 0
+         else [] }}
+    _smoke_haproxy_csv_text: "{{ _smoke_haproxy_csv.content | default('', true) }}"
+    # Materialize HAProxy status as facts: task-local vars are not reliably
+    # resolvable from another task-local var on all supported Ansible versions.
+    _smoke_haproxy_primary_up: >-
+      {{ _smoke_haproxy_csv.content | default('', true)
+         | regex_search('postgres-primary.*UP') is not none }}
+    _smoke_haproxy_replica_up: >-
+      {{ _smoke_haproxy_csv.content | default('', true)
+         | regex_search('postgres-replica.*UP') is not none }}
+    _smoke_required_running: >-
+      {{ _smoke_required_container_checks.results | default([], true)
+         | selectattr('containers', 'defined')
+         | selectattr('containers', 'truthy') | list | length }}
+
+- name: "Print smoke report and PASS/FAIL summary"
+  vars:
+    _members: "{{ _smoke_members | default([], true) }}"
+    _n_members: "{{ _members | length }}"
+    _n_expected: "{{ groups['patroni_nodes'] | default([], true) | length }}"
+    _n_leaders: >-
+      {{ _members | selectattr('Role', 'in', ['Leader', 'Standby Leader']) | list | length }}
+    _n_replicas: "{{ _members | selectattr('Role', 'equalto', 'Replica') | list | length }}"
+    _laggy_replicas: >-
+      {{ _members
+         | selectattr('Role', 'equalto', 'Replica')
+         | selectattr('Lag', 'defined')
+         | selectattr('Lag', 'gt', patroni_smoke_max_replica_lag_ms) | list }}
+    _leader_member: >-
+      {{ (_members
+         | selectattr('Role', 'in', ['Leader', 'Standby Leader'])
+         | list | first).Member | default('') }}
+    _is_standby: >-
+      {{ (_members | selectattr('Role', 'equalto', 'Standby Leader') | list | length) > 0 }}
+
+    _etcd_members: "{{ _smoke_etcd_status_json | default([], true) }}"
+    _etcd_healthy_count: >-
+      {{ (_smoke_etcd_health.stdout | default('', true)) | regex_findall('is healthy') | length }}
+    _etcd_leader_count: >-
+      {{ (_smoke_etcd_status_json | selectattr('Status.leader', 'defined')
+         | selectattr('Status.leader', 'equalto', true) | list | length)
+         if (_smoke_etcd_status_json | selectattr('Status.leader', 'defined') | list | length) > 0
+         else (_smoke_etcd_status_json | length) }}
+
+    _replica_rows: >-
+      {{ _smoke_replica_read.results | default([], true) | selectattr('failed', 'defined') | list }}
+    _replicas_with_row: >-
+      {{ _replica_rows
+         | selectattr('failed', 'equalto', false)
+         | selectattr('rowcount', 'defined')
+         | selectattr('rowcount', 'gt', 0) | list }}
+
+    _in_recovery_ok: >-
+      {{ (_smoke_in_recovery.query_result | default([], true) | first | default({})).in_recovery
+         | default(true) == false }}
+
+    _failures: "{{ []
+        + (['container down on >=1 node: '
+           ~ (_smoke_required_container_checks.results | default([], true)
+             | selectattr('containers', 'defined')
+             | rejectattr('containers', 'truthy')
+             | map(attribute='item') | list | join(','))]
+         | select() | list if (_smoke_required_running | int) < (_patroni_smoke_required_effective | default(patroni_smoke_required_containers) | length) else [])
+      + (['patronictl list failed on every member'] | select() | list if _n_members == 0 else [])
+      + (['expected ' ~ _n_expected ~ ' members, got ' ~ _n_members] | select() | list if _n_members != _n_expected else [])
+      + (['no Leader (or Standby Leader) elected'] | select() | list if _n_leaders != 1 else [])
+      + (['split-brain: >1 Leader elected'] | select() | list if _n_leaders > 1 else [])
+      + (['patroni REST /health failed'] | select() | list if (_smoke_patroni_rest.failed | default(true)) else [])
+      + (['replica(s) with lag > ' ~ patroni_smoke_max_replica_lag_ms ~ 'ms: '
+          ~ (_laggy_replicas | map(attribute='Member') | list | join(','))]
+         | select() | list if (_laggy_replicas | length) > 0 else [])
+      + (['VIP unreachable on postgresql_port'] | select() | list
+         if (patroni_vip_address | default('') | length > 0
+             and not (_smoke_vip_wait.elapsed | default(999) < 30)) else [])
+      + (['VIP held by ' ~ _smoke_n_vip_holders ~ ' nodes (expected 1)']
+         | select() | list if (patroni_vip_address | default('') | length > 0
+                               and _smoke_n_vip_holders != 1) else [])
+        + (['SELECT 1 through VIP failed'] | select() | list
+          if (patroni_vip_address | default('') | length > 0
+             and not (_smoke_select.failed | default(true) == false)) else [])
+      + (['pg_is_in_recovery() returned true on leader'] | select() | list
+          if (patroni_vip_address | default('') | length > 0
+             and (_smoke_in_recovery.query_result | default([], true) | length) > 0
+             and not _in_recovery_ok) else [])
+      + (['pg_hba_file_rules missing replication entries'] | select() | list
+          if (patroni_vip_address | default('') | length > 0
+             and (_smoke_pg_hba_replication.query_result | default([], true) | length) > 0
+             and (((_smoke_pg_hba_replication.query_result | default([], true) | first | default({})).n
+                  | default(0)) | int) == 0) else [])
+        + (['write to leader failed'] | select() | list
+          if (patroni_vip_address | default('') | length > 0
+             and not (_smoke_write.failed | default(true) == false)) else [])
+      + (['write did NOT replicate to any replica'] | select() | list
+         if (_replica_rows | length) > 0 and (_replicas_with_row | length) == 0 else [])
+      + (['etcd: <3 healthy members (got ' ~ _etcd_healthy_count ~ ')']
+         | select() | list if (_etcd_healthy_count | int) < 3 else [])
+      + (['etcd: not exactly 1 leader (got ' ~ _etcd_leader_count ~ ')']
+         | select() | list if (_etcd_leader_count | int) != 1 else [])
+      + (['HAProxy postgres-primary backend not UP'] | select() | list
+         if (patroni_smoke_check_haproxy | bool)
+            and not (_smoke_haproxy_primary_up | bool) else [])
+      + (['HAProxy postgres-replica backend not UP'] | select() | list
+         if (patroni_smoke_check_haproxy | bool)
+            and not (_smoke_haproxy_replica_up | bool) else [])
+      + (['WAL-G backup-list returned no backups'] | select() | list
+         if (walg_enabled | default(false) | bool
+             and (_smoke_walg_list.stdout | default('', true)) == '') else [])
+      + (['walg-cron.timer not active'] | select() | list
+         if (walg_enabled | default(false) | bool
+             and (_smoke_walg_timer.status.ActiveState | default('', true) | lower) != 'active') else [])
+      + (['postgres_exporter :9187/metrics unreachable'] | select() | list
+         if ((postgres_exporter_enabled | default(false) | bool)
+             and (_smoke_pgexporter.status | default(0, true) | int) != 200) else [])
+      + (['PgBouncer :6432 unreachable'] | select() | list
+         if ((pgbouncer_enabled | default(false) | bool)
+             and not ((_smoke_pgbouncer.elapsed | default(999, true)) < 10)) else [])
+      + (['patroni server cert missing or unreadable'] | select() | list
+         if (patroni_smoke_check_tls | bool)
+            and (_patroni_smoke_patroni_cert_end.failed | default(true)) else [])
+      + (['create-new-cert: chain verify failed: ' ~ (_patroni_smoke_new_cert_verify.stderr | default('', true))]
+         | select() | list
+         if (patroni_smoke_check_tls | bool)
+            and (_patroni_smoke_new_cert_verify is defined)
+            and (_patroni_smoke_new_cert_verify.rc | default(1, true)) != 0 else [])
+      + (['create-new-cert: SAN missing DNS:' ~ inventory_hostname]
+         | select() | list
+         if (patroni_smoke_check_tls | bool)
+            and (_patroni_smoke_new_cert_san is defined)
+            and (_patroni_smoke_new_cert_san.stdout | default('', true)) | length > 0
+            and not ((_patroni_smoke_new_cert_san.stdout | default('', true))
+                 is search('DNS:' ~ inventory_hostname)) else [])
+      + (['users+dbs (A): query failed: ' ~ (_patroni_smoke_db_check.msg | default(_patroni_smoke_db_check.stderr | default('')))]
+         | select() | list
+         if (patroni_smoke_check_users_and_dbs | bool)
+            and (patroni_databases | default([]) | length) > 0
+            and (postgresql_postgres_password | default('') | length) > 0
+            and (_patroni_smoke_db_check is defined)
+            and (_patroni_smoke_db_check.failed | default(true)) else [])
+      + (['users+dbs (A): DBs missing from pg_database: '
+          ~ ((_patroni_smoke_expected_dbs | default([]))
+             | difference(
+                      (_patroni_smoke_db_check.query_result | default([], true) | map(attribute='datname') | list)
+             ) | join(','))]
+         | select() | list
+         if (patroni_smoke_check_users_and_dbs | bool)
+            and (patroni_databases | default([]) | length) > 0
+            and (postgresql_postgres_password | default('') | length) > 0
+            and (_patroni_smoke_db_check is defined)
+            and not (_patroni_smoke_db_check.failed | default(true))
+              and ((_patroni_smoke_db_check.query_result | default([], true) | map(attribute='datname') | list)
+                 | difference(_patroni_smoke_expected_dbs | default([])) | length) > 0 else [])
+      + (['users+dbs (B): query failed: ' ~ (_patroni_smoke_user_check.msg | default(_patroni_smoke_user_check.stderr | default('')))]
+         | select() | list
+         if (patroni_smoke_check_users_and_dbs | bool)
+            and (_patroni_smoke_expected_users | default([]) | length) > 0
+            and (postgresql_postgres_password | default('') | length) > 0
+            and (_patroni_smoke_user_check is defined)
+            and (_patroni_smoke_user_check.failed | default(true)) else [])
+      + (['users+dbs (B): users missing from pg_roles: '
+          ~ ((_patroni_smoke_expected_users | default([]))
+             | difference(
+                      (_patroni_smoke_user_check.query_result | default([], true) | map(attribute='rolname') | list)
+             ) | join(','))]
+         | select() | list
+         if (patroni_smoke_check_users_and_dbs | bool)
+            and (_patroni_smoke_expected_users | default([]) | length) > 0
+            and (postgresql_postgres_password | default('') | length) > 0
+            and (_patroni_smoke_user_check is defined)
+            and not (_patroni_smoke_user_check.failed | default(true))
+              and ((_patroni_smoke_user_check.query_result | default([], true) | map(attribute='rolname') | list)
+                 | difference(_patroni_smoke_expected_users | default([])) | length) > 0 else [])
+      + (['users+dbs (C): DB owners do not match inventory'
+          ~ ': ' ~ ((_patroni_smoke_owner_check.query_result | default([], true))
+                    | selectattr('value.owner', 'defined')
+                    | rejectattr('value.owner', 'in', _patroni_smoke_expected_owners | default([]))
+                    | map(attribute='key') | list | join(','))]
+         | select() | list
+         if (patroni_smoke_check_users_and_dbs | bool)
+            and (_patroni_smoke_expected_dbs | default([]) | length) > 0
+            and (postgresql_postgres_password | default('') | length) > 0
+            and (_patroni_smoke_owner_check is defined)
+            and ((_patroni_smoke_owner_check.query_result | default([], true))
+                 | selectattr('value.owner', 'defined')
+                 | rejectattr('value.owner', 'in', _patroni_smoke_expected_owners | default([]))
+                 | list | length) > 0 else [])
+      + (['users+dbs (empty path): managed DBs exist on cluster but inventory says []: '
+          ~ ((_patroni_smoke_db_empty_check.query_result | default([], true))
+             | map(attribute='datname') | list | join(','))]
+         | select() | list
+         if (patroni_smoke_check_users_and_dbs | bool)
+            and (patroni_databases | default([]) | length) == 0
+            and (postgresql_postgres_password | default('') | length) > 0
+            and (_patroni_smoke_db_empty_check is defined)
+            and not (_patroni_smoke_db_empty_check.failed | default(true))
+            and ((_patroni_smoke_db_empty_check.query_result | default([], true) | length) > 0) else [])
+      + (['users+dbs (empty path): managed LOGIN users exist on cluster but inventory says []: '
+          ~ ((_patroni_smoke_user_empty_check.query_result | default([], true))
+             | map(attribute='rolname') | list | join(','))]
+         | select() | list
+         if (patroni_smoke_check_users_and_dbs | bool)
+            and (patroni_databases | default([]) | length) == 0
+            and (postgresql_postgres_password | default('') | length) > 0
+            and (_patroni_smoke_user_empty_check is defined)
+            and not (_patroni_smoke_user_empty_check.failed | default(true))
+            and ((_patroni_smoke_user_empty_check.query_result | default([], true) | length) > 0) else [])
+      }}"
+    _verdict: "{{ 'PASS' if (_failures | length == 0) else 'FAIL' }}"
+  ansible.builtin.debug:
+    msg:
+      - "Patroni smoke test verdict: {{ _verdict }}"
+      - "Scope: {{ patroni_scope }} | topology: {{ 'standby' if _is_standby else 'primary' }} | leader: {{ _leader_member or '(none)' }}"
+      - "Cluster: {{ _n_members }} / {{ _n_expected }} members (Leader: {{ _n_leaders }}, Replica: {{ _n_replicas }})"
+      - >-
+        Containers running: {{ _smoke_required_container_checks.results | default([], true)
+        | selectattr('containers', 'defined') | selectattr('containers', 'truthy')
+        | list | length }} / {{ _patroni_smoke_required_effective
+        | default(patroni_smoke_required_containers) | length }} required
+      - "Etcd: {{ _etcd_healthy_count }} healthy / {{ _etcd_members | length }} members"
+      - "HAProxy: {{ 'skipped' if not (patroni_smoke_check_haproxy | bool) else 'primary=' ~ _smoke_haproxy_primary_up ~ ' replica=' ~ _smoke_haproxy_replica_up }}"
+      - "VIP {{ patroni_vip_address | default('(none)') }}: held by {{ _smoke_n_vip_holders }} node(s)"
+      - "Postgres: select_ok={{ not (_smoke_select.failed | default(true)) }} write+repl={{ (_replicas_with_row | length) }} of {{ _replica_rows | length }} replicas see the row"
+      - "WAL-G: {{ 'enabled' if (walg_enabled | default(false)) else 'disabled' }}"
+      - "{{ 'Failures (' ~ (_failures | length) ~ '): ' ~ (_failures | join('; ')) if (_failures | length) > 0 else 'No failures.' }}"
+  run_once: true
+  failed_when: _failures | length > 0

@@ -1,0 +1,66 @@
+---
+# MongoDB smoke test — dispatcher.
+#
+# Same shape as patroni_smoke: per-component task files, included here in
+# a fixed order (collectors first, summary last). Adding a new component
+# (e.g. chaos.yml) follows the same 4-step pattern documented in the role.
+
+- name: "MongoDB smoke :: no-op (mongodb_smoke_enabled=false)"
+  ansible.builtin.debug:
+    msg: "mongodb_smoke skipped (mongodb_smoke_enabled=false)"
+  when: not (mongodb_smoke_enabled | bool)
+
+# Pull the mongodb role's defaults/ + vars/ (cluster_type, engine-derived
+# *_exec_port, replset names, feature flags) so the checks below read the
+# SAME variables the deploy used. No deploy tasks run — export_vars.yml is a
+# no-op anchor. Inventory overrides still win (role defaults are lowest
+# precedence). See roles/mongodb/tasks/export_vars.yml.
+- name: "MongoDB smoke :: import mongodb-role vars (single source of truth)"
+  ansible.builtin.import_role:
+    name: mongodb
+    tasks_from: export_vars
+  when: mongodb_smoke_enabled | bool
+
+- name: "MongoDB smoke :: container health"
+  ansible.builtin.include_tasks: containers.yml
+  when: mongodb_smoke_enabled | bool
+
+- name: "MongoDB smoke :: cluster state (RS primaries + certs)"
+  ansible.builtin.include_tasks: cluster_state.yml
+  when:
+    - mongodb_smoke_enabled | bool
+    - mongodb_smoke_check_cluster_state | bool
+
+- name: "MongoDB smoke :: mongos (port + ping)"
+  ansible.builtin.include_tasks: mongos.yml
+  when:
+    - mongodb_smoke_enabled | bool
+    - mongodb_smoke_check_mongos | bool
+
+- name: "MongoDB smoke :: end-to-end (write + read through mongos)"
+  ansible.builtin.include_tasks: endtoend.yml
+  when:
+    - mongodb_smoke_enabled | bool
+    - mongodb_smoke_check_endtoend | bool
+
+- name: "MongoDB smoke :: PBM (status + base backup)"
+  ansible.builtin.include_tasks: pbm.yml
+  when:
+    - mongodb_smoke_enabled | bool
+    - mongodb_smoke_check_pbm | bool
+
+- name: "MongoDB smoke :: scheduled mongodump timer"
+  ansible.builtin.include_tasks: mongodump_timer.yml
+  when:
+    - mongodb_smoke_enabled | bool
+    - mongodb_smoke_check_mongodump_timer | bool
+
+- name: "MongoDB smoke :: tls (cert readability)"
+  ansible.builtin.include_tasks: tls.yml
+  when:
+    - mongodb_smoke_enabled | bool
+    - mongodb_smoke_check_tls | bool
+
+- name: "MongoDB smoke :: summary (PASS/FAIL aggregator)"
+  ansible.builtin.include_tasks: summary.yml
+  when: mongodb_smoke_enabled | bool

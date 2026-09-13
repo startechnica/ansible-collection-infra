@@ -80,6 +80,13 @@ services:
       - {{ patroni_backup_dir }}:/var/lib/postgresql/backups:Z
 {% if walg_enabled %}
       - {{ walg_dir }}/bin:/opt/walg:ro,z
+{% if walg_storage_type == 'gcs' %}
+      # GCS service-account key for wal-g (GOOGLE_APPLICATION_CREDENTIALS in
+      # walg.env points here). The DIRECTORY is mounted, not the bare file: a
+      # re-rendered key replaces the inode, which a file bind-mount would not
+      # follow.
+      - {{ walg_gcs_service_account_dir }}:{{ walg_gcs_service_account_mount }}:ro,Z
+{% endif %}
 {% endif %}
     ulimits:
       nofile:
@@ -89,7 +96,12 @@ services:
         soft: 65536
         hard: 65536
     depends_on:
-      - etcd
+      # Long (mapping) form throughout — the walg-init entry needs
+      # `condition:`, and compose forbids mixing the short list form with
+      # mapping entries under one depends_on (invalid YAML: a block sequence
+      # and a block mapping at the same level).
+      etcd:
+        condition: service_started
 {% if walg_enabled %}
       walg-init:
         condition: service_completed_successfully

@@ -4,7 +4,8 @@
 #   - config agent → manages local configsvr (replSet {{ mongodb_config_replset }})
 # Network=host like the rest of the stack; the agent connects to its local node
 # on the node's host port, authenticating by X.509 client cert
-# (CN={{ mongodb_pbm_cn }}). State lives in the cluster + S3, so no data volume.
+# (CN={{ mongodb_backup_pbm_cn }}). State lives in the cluster + object storage, so no
+# data volume.
 # NOTE: no directConnection — PBM reuses the URI options when building its
 # internal connection to the config replica set (multiple hosts), and
 # directConnection there errors "a direct connection cannot be made if multiple
@@ -20,7 +21,7 @@ Requires={{ _pbm_agent.svc }}.service
 
 [Container]
 ContainerName={{ _pbm_agent.name }}
-Image={{ mongodb_pbm_image }}
+Image={{ mongodb_backup_pbm_image }}
 User={{ mongodb_uid }}
 Group={{ mongodb_gid }}
 
@@ -49,7 +50,7 @@ Volume={{ mongodb_tls_dir }}/pbm-agent.pem:/etc/mongo/ssl/pbm-agent.pem:ro,Z
 Volume={{ mongodb_tls_dir }}/ca.pem:/etc/mongo/ssl/ca.pem:ro,z
 Volume={{ mongodb_root_dir }}/pbm/pbm-config.yaml:/etc/pbm/pbm-config.yaml:ro,z
 
-Memory={{ mongodb_pbm_mem_limit_mb }}m
+Memory={{ mongodb_backup_pbm_mem_limit_mb }}m
 LogDriver=journald
 
 [Service]

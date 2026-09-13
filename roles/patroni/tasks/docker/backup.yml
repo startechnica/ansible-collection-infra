@@ -1,5 +1,5 @@
 ---
-# On-demand backup (docker) — WAL-G (when S3 configured) or pg_basebackup (local).
+# On-demand backup (docker) — WAL-G (when object storage is configured) or pg_basebackup (local).
 # Caller must handle serialisation via `serial:` on the play.
 
 - name: Check patroni is running
@@ -8,7 +8,7 @@
   register: patroni_container
   failed_when: not (patroni_container.exists | default(false) and patroni_container.container.State.Running | default(false))
 
-- name: Run WAL-G backup (S3)
+- name: Run WAL-G backup (object storage)
   when: walg_enabled
   block:
     - name: Execute wal-g backup-push

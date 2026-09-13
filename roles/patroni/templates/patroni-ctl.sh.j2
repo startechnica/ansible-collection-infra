@@ -62,7 +62,7 @@ SERVICES=(
   haproxy.service
   pgbouncer.service
   vip-manager.service
-{% if vip_manager == 'keepalived' %}
+{% if patroni_vip_engine == 'keepalived' %}
   keepalived.service
 {% endif %}
 {% if postgres_exporter_enabled | bool %}

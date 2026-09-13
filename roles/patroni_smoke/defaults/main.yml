@@ -1,0 +1,55 @@
+---
+# Defaults consumed by patroni_smoke (passed via the play that targets
+# patroni_nodes). The role itself reads from these names; consumers
+# can override them at the play, group_vars, or inventory level.
+
+# Per-component knobs. Names are public — they're documented in
+# meta/argument_specs.yml and surfaced to operators.
+
+# Replica lag threshold (milliseconds). A replica with lag above this
+# contributes to the failure list.
+patroni_smoke_max_replica_lag_ms: 5000
+
+# Time to wait after the leader write before reading from replicas.
+patroni_smoke_replication_wait_seconds: 10
+
+# Certs must have at least this many days remaining on the smoke summary.
+patroni_smoke_cert_min_days: 30
+
+# Containers that must be running on every patroni_node for the smoke test
+# to pass. These are the always-on core; the VIP container (vip-manager OR
+# keepalived, never both) is appended dynamically in tasks/containers.yml
+# based on patroni_vip_engine + patroni_vip_address. pgbouncer/postgres-exporter/
+# walg-init are gated on their own enabled flags — see tasks/containers.yml.
+patroni_smoke_required_containers:
+  - etcd
+  - patroni
+  - haproxy
+
+patroni_smoke_optional_containers:
+  - pgbouncer
+  - postgres-exporter
+  - walg-init
+
+# Master switch. When false, the role is a no-op (used in CI gates).
+patroni_smoke_enabled: true
+
+# Skip individual components (rare — useful for ad-hoc noise reduction).
+# Setting any of these to false removes that component's checks from
+# both collection and summary.
+patroni_smoke_check_containers: true
+patroni_smoke_check_etcd: true
+patroni_smoke_check_patroni: true
+patroni_smoke_check_postgres: true
+patroni_smoke_check_haproxy: true
+patroni_smoke_check_pgbouncer: true
+patroni_smoke_check_vip: true
+patroni_smoke_check_walg: true
+patroni_smoke_check_exporter: true
+patroni_smoke_check_tls: true
+patroni_smoke_check_users_and_dbs: true
+
+# Unique smoke table name for the write+replicate probe. Timestamped so
+# re-runs never collide; dropped in tasks/postgres.yml's always block.
+# Mirrors the mongodb_smoke_collection convention.
+patroni_smoke_table: "startechnica_smoke_{{ ansible_facts['date_time'].iso8601 | default(lookup('pipe', 'date -u +%FT%TZ')) | regex_replace('[^0-9]', '') }}"

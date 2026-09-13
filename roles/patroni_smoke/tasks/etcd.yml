@@ -1,0 +1,32 @@
+---
+# Etcd — distributed config store. Per-member health + cluster-wide status.
+# Splits across both kinds of asserts:
+#   * E1/E2: endpoint health per member + endpoint status JSON
+#   * Negative-as-audit: exactly 1 leader (split-brain guard)
+
+- name: "E1. etcd: endpoint health per member"
+  ansible.builtin.command: >-
+    podman exec etcd etcdctl
+    --endpoints=https://127.0.0.1:2379
+    --cacert=/etc/etcd/ssl/ca.crt
+    --cert=/etc/etcd/ssl/etcd-healthcheck.crt
+    --key=/etc/etcd/ssl/etcd-healthcheck.key
+    endpoint health
+  register: _smoke_etcd_health
+  changed_when: false
+  failed_when: false
+  when: patroni_smoke_check_etcd | bool
+
+- name: "E2. etcd: endpoint status JSON"
+  ansible.builtin.command: >-
+    podman exec etcd etcdctl
+    --endpoints=https://127.0.0.1:2379
+    --cacert=/etc/etcd/ssl/ca.crt
+    --cert=/etc/etcd/ssl/etcd-healthcheck.crt
+    --key=/etc/etcd/ssl/etcd-healthcheck.key
+    endpoint status --write-out=json
+  register: _smoke_etcd_status
+  changed_when: false
+  failed_when: false
+  run_once: true
+  when: patroni_smoke_check_etcd | bool
