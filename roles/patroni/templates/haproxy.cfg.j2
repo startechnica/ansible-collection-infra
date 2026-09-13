@@ -1,11 +1,18 @@
 global
-    maxconn 1000
+    maxconn 4000
     log stdout format raw local0
 
 defaults
     mode tcp
     log global
     retries 3
+
+    # Log connection close with timers. In TCP mode the `Tw` field is time
+    # spent QUEUED waiting for a server slot — the direct evidence for S10 that was
+    # missing when the stall had to be inferred from a Rails backtrace.
+    # Volume note: one line per connection close. If that is too chatty once the fleet
+    # scales, drop it back and rely on the Prometheus metrics from the stats listener.
+    option tcplog
 
     # INACTIVITY timers — time since application data last moved in that
     # direction. In mode tcp `timeout tunnel` below takes over as soon as no
@@ -19,6 +26,13 @@ defaults
     timeout connect {{ haproxy_connect_timeout }}
     timeout server {{ haproxy_server_timeout }}
     timeout check {{ haproxy_check_timeout }}
+
+    # Time a connection may sit in a server queue once `maxconn` on a server
+    # line is reached. Unset, it inherits `timeout connect` (10s); with `retries 3`
+    # stacked on top that produces the ~20s stall recorded in the incident. An explicit
+    # short value makes saturation fail fast and legibly instead of looking like a
+    # database problem.
+    timeout queue 5s
 
     # In mode tcp this supersedes timeout client/server once no analyser is
     # attached, which is what lets legitimately idle sessions survive:
@@ -57,22 +71,76 @@ listen stats
     mode http
     bind *:{{ haproxy_stats_port }}
 
+    # Frontend cap. Same argument as pg-primary/pg-replicas: unset, this
+    # inherits `global maxconn` (4000) and a monitoring endpoint could claim the whole
+    # process budget. 100 is far more than a Prometheus scrape plus a few humans.
+    #
+    # Side effect worth knowing: this also changes what the BACKEND row of the stats
+    # page reports in its "Session limit" column — see the note below.
+    maxconn 100
+
     stats enable
     stats uri /
     stats refresh 10s
 
+    # Prometheus endpoint for the on-VM Alloy agent -> Mimir (tenant gitlab).
+    # Alerts worth wiring (../haproxy.md S3):
+    #   haproxy_server_current_sessions / haproxy_server_limit_sessions > 0.8
+    #   non-zero queue depth  (the S10 symptom, directly)
+    #   backend server state flapping (a flapping /primary check reads as a DB outage)
+    http-request use-service prometheus-exporter if { path /metrics }
+
+    # READING THIS PAGE — the "Session limit" column means DIFFERENT things per row:
+    #   frontend / listener / server rows -> that object's `maxconn`
+    #   BACKEND rows                      -> `fullconn`, which is NOT set anywhere here,
+    #                                        so HAProxy derives it as the sum of the
+    #                                        session limits of the frontends routing to
+    #                                        that backend, divided by 10.
+    #
+    # A backend showing 400 therefore means its frontend is at 4000 — i.e. inheriting
+    # `global maxconn` instead of carrying its own cap. Useful as a check that the
+    # frontend maxconn lines below actually took effect:
+    #   pg-primary  1100 -> backend 110      pg-replicas 250 -> backend 25
+    #   pg-direct    100 -> backend  10      stats        100 -> backend 10
+    # If pg-primary's backend row still reads 400, its `maxconn 1100` is not live and
+    # the server-side change is a no-op.
+    #
+    # fullconn does NOT cap anything in this config. It only scales a server's effective
+    # limit when the server line carries BOTH `minconn` and `maxconn`; ours have only
+    # `maxconn`, so the per-server limit is static and fullconn is a display value.
+
 listen pg-primary
     bind *:{{ haproxy_primary_port }}
+
+    # Frontend cap — limits what HAProxy ACCEPTS on this entry. Unset, it
+    # inherits `global maxconn` (now 4000) and this one entry could consume the whole
+    # process budget.
+    #
+    # MUST stay ABOVE the server-side maxconn below (1100 > 1000). The frontend accepts,
+    # the server line forwards; keeping the frontend higher means the excess queues
+    # visibly inside HAProxy (`timeout queue`, and the Tw field in the tcplog) instead
+    # of being refused at accept and left in the kernel backlog. Raising the server line
+    # without raising this one makes the change a no-op.
+    maxconn 1100
+
     option httpchk GET /primary
     http-check expect status 200
     default-server inter {{ haproxy_check_inter }} fall {{ haproxy_check_fall }} rise {{ haproxy_check_rise }} on-marked-down shutdown-sessions
 
 {% for ip in node_ips %}
-    server {{ ip }} {{ ip }}:{{ pgbouncer_port }} maxconn 100 check port {{ patroni_api_port }} check-ssl ca-file /etc/certs/ca.crt crt /etc/certs/haproxy-client.pem verify required
+    server {{ ip }} {{ ip }}:{{ pgbouncer_port }} maxconn 1000 check port {{ patroni_api_port }} check-ssl ca-file /etc/certs/ca.crt crt /etc/certs/haproxy-client.pem verify required
 {% endfor %}
 
 listen pg-replicas
     bind *:{{ haproxy_replicas_port }}
+
+    # Frontend cap, for the same reason as pg-primary: without it this entry
+    # inherits `global maxconn` (4000) and an unused endpoint could starve the one that
+    # matters. Two replicas pass the /replica check, so the backend side tops out at
+    # 2 x 100 = 200; 250 sits just above that. Raise both together if replica reads are
+    # ever enabled.
+    maxconn 250
+
     balance roundrobin
     option httpchk GET /replica
     http-check expect status 200
@@ -80,4 +148,24 @@ listen pg-replicas
 
 {% for ip in node_ips %}
     server {{ ip }} {{ ip }}:{{ pgbouncer_port }} maxconn 100 check port {{ patroni_api_port }} check-ssl ca-file /etc/certs/ca.crt crt /etc/certs/haproxy-client.pem verify required
+{% endfor %}
+
+# POOLER BYPASS, direct to the Patroni leader.
+listen pg-direct
+    bind *:5434
+    maxconn 100
+
+    option httpchk GET /primary
+    http-check expect status 200
+    default-server inter 3s fall 5 rise 2 on-marked-down shutdown-sessions
+
+    # maxconn 20: migrations and toolbox are low-concurrency (a handful of connections
+    # each, and never both at once). Deliberately small so a runaway job cannot consume
+    # the leader's max_connections through the unpooled path.
+    #
+    # No timeout overrides here on purpose — `timeout tunnel 24h` from defaults is what
+    # a long ALTER TABLE needs, since it sends nothing on the socket for its duration.
+    # If timeout tunnel is ever removed from defaults, set it explicitly HERE first.
+{% for ip in node_ips %}
+    server {{ ip }} {{ ip }}:{{ postgresql_port }} maxconn 20 check port {{ patroni_api_port }} check-ssl ca-file /etc/certs/ca.crt crt /etc/certs/haproxy-client.pem verify required
 {% endfor %}

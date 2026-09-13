@@ -19,7 +19,7 @@ collect an aggregated PASS/FAIL report for the live cluster.
 | mongos | The configured mongos port accepts TCP connections and a TLS/X.509-authenticated `db.runCommand({ ping: 1 })` succeeds. | `mongodb_smoke_check_mongos` |
 | End-to-end data path | Inserts a uniquely named test document through mongos, waits for replication, reads it back, and removes the smoke database in an `always` block. | `mongodb_smoke_check_endtoend` |
 | Percona Backup for MongoDB (PBM) | PBM agent status and base-backup list, using the deployment role's PBM control URI. | Only when `mongodb_backup_pbm_enabled` is true. |
-| Scheduled backups | `mongodb-backup.timer` is active and `/var/log/mongodb-backup.log` exists. | Only when `mongodb_backup_enabled` is true. |
+| Scheduled backups | `mongodb-backup.timer` is active and `/var/log/mongodb/mongodb-backup.log` exists. | Only when `mongodb_backup_enabled` is true. |
 | TLS | The CA and health-check client certificate are readable. Certificate expiry is included in the `mongodb_status` data. | `mongodb_smoke_check_tls` |
 
 All collectors use `failed_when: false` where possible. This lets the role

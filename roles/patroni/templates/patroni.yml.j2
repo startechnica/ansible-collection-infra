@@ -121,13 +121,29 @@ bootstrap:
 {% endif %}
 {% endfor %}
 {% endif %}
+    # ── Local replication (Patroni loopback introspection) ──
+    # Patroni's get_replica_timeline() opens a REPLICATION connection to this
+    # node's own Postgres. Since `listen` is 0.0.0.0, that connection comes from
+    # localhost, and pg_hba records with database `all` never match replication
+    # connections — so replicas need an explicit loopback replication rule or
+    # every HA cycle logs "no pg_hba.conf entry for replication ... 127.0.0.1".
+{% if postgresql_replication_password %}
+    - hostssl replication replicator 127.0.0.1/32 scram-sha-256
+    - hostssl replication replicator ::1/128 scram-sha-256
+{% else %}
+    - hostssl replication replicator 127.0.0.1/32 cert
+    - hostssl replication replicator ::1/128 cert
+{% endif %}
     # ── PgBouncer + Ansible (runs in host network on this node) ──
     # hostssl: PgBouncer container connects with TLS via server_tls_sslmode=prefer
     # host:    Ansible postgresql_* tasks (manage_databases, pgbouncer_auth, etc.)
     #          connect from localhost with ssl_mode=disable. No network exposure
-    #          since 127.0.0.1 only.
+    #          since loopback only. ::1 twins cover IPv6 loopback if Postgres is
+    #          ever set to listen on ::.
     - hostssl all all 127.0.0.1/32 scram-sha-256
     - host    all all 127.0.0.1/32 scram-sha-256
+    - hostssl all all ::1/128 scram-sha-256
+    - host    all all ::1/128 scram-sha-256
     # ── Other cluster nodes (Patroni REST, ad-hoc psql between members) ──
 {% for ip in node_ips %}
     - hostssl all all {{ ip }}/32 scram-sha-256

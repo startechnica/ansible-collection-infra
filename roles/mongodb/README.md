@@ -157,7 +157,7 @@ local copy so the bucket is the system of record). It defaults to `s3` when
 same dump → prune → S3-upload flow on `mongodb_backup_schedule` (default
 `*-*-* 02:00:00`, i.e. daily at 02:00). This mirrors patroni's
 `walg-cron.timer`. `Persistent=true` catches up a missed run after downtime;
-output is appended to `/var/log/mongodb-backup.log`. Set
+output is appended to `/var/log/mongodb/mongodb-backup.log`. Set
 `mongodb_backup_enabled: false` (or `mongodb_backup_schedule: ""`) to disable
 the timer — it's torn down on the next provision run; on-demand
 `playbooks/mongodb/backup.yml` still works. Inspect with

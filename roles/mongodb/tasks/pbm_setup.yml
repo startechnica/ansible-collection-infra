@@ -31,6 +31,14 @@
     fail_msg: "Set mongodb_backup_pbm_enabled: true (inventory or -e) before running pbm-setup."
   run_once: true
 
+- name: Ensure MongoDB log directory exists
+  ansible.builtin.file:
+    path: /var/log/mongodb
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
 # ── 1. Generate + distribute the pbm-agent client cert ──
 - name: Generate PBM agent certificate
   ansible.builtin.include_tasks: _generate_client_cert.yml

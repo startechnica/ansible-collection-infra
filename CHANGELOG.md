@@ -185,7 +185,7 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   node that runs the same mongodump → prune → S3-upload flow as
   `playbooks/mongodb/backup.yml`, on `mongodb_backup_schedule` (default
   `*-*-* 02:00:00`). Mirrors patroni's `walg-cron.timer`; `Persistent=true`
-  catches up missed runs, output goes to `/var/log/mongodb-backup.log`. Master
+  catches up missed runs, output goes to `/var/log/mongodb/mongodb-backup.log`. Master
   switch `mongodb_backup_enabled` (default `true`) or an empty
   `mongodb_backup_schedule` tears down the timer. `mongodb_backup_mode`
   (`local`/`s3`, defaults to `s3` when `s3_bucket` is set) selects the

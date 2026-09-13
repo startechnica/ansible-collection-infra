@@ -1,0 +1,32 @@
+---
+# Regression test: StandardOutput=append cannot create a missing parent.
+# Provision /var/log/mongodb before scheduled backup services can start.
+
+- name: Verify MongoDB scheduled-backup output paths
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  vars:
+    _mongodb_tasks_dir: "{{ playbook_dir }}/../roles/mongodb/tasks"
+
+  tasks:
+    - name: Read MongoDB backup task definitions
+      ansible.builtin.set_fact:
+        _mongodb_directories_tasks: "{{ lookup('ansible.builtin.file', _mongodb_tasks_dir ~ '/directories.yml') }}"
+        _mongodb_pbm_setup_tasks: "{{ lookup('ansible.builtin.file', _mongodb_tasks_dir ~ '/pbm_setup.yml') }}"
+        _mongodb_backup_schedule_tasks: "{{ lookup('ansible.builtin.file', _mongodb_tasks_dir ~ '/backup_schedule.yml') }}"
+        _mongodb_pbm_tasks: "{{ lookup('ansible.builtin.file', _mongodb_tasks_dir ~ '/pbm.yml') }}"
+
+    - name: Verify the shared log parent is provisioned before services use it
+      ansible.builtin.assert:
+        that:
+          - "'path: /var/log/mongodb' in _mongodb_directories_tasks"
+          - "'path: /var/log/mongodb' in _mongodb_pbm_setup_tasks"
+          - "'StandardOutput=append:/var/log/mongodb/mongodb-backup.log' in _mongodb_backup_schedule_tasks"
+          - "'StandardError=append:/var/log/mongodb/mongodb-backup.log' in _mongodb_backup_schedule_tasks"
+          - "'StandardOutput=append:/var/log/mongodb/mongodb-pbm.log' in _mongodb_pbm_tasks"
+          - "'StandardError=append:/var/log/mongodb/mongodb-pbm.log' in _mongodb_pbm_tasks"
+        fail_msg: >-
+          Scheduled MongoDB services append inside /var/log/mongodb, but the
+          role does not provision that parent before systemd opens their output,
+          causing status 209/STDOUT.

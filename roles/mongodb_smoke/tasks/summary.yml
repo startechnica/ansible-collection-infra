@@ -98,6 +98,9 @@
       + (['mongodb-backup.timer not active'] | select() | list
          if ((mongodb_backup_enabled | default(false) | bool)
              and (_smoke_mongodump_timer.status.ActiveState | default('') | lower) != 'active') else [])
+      + (['mongodb-backup log missing'] | select() | list
+         if ((mongodb_backup_enabled | default(false) | bool)
+             and not (_smoke_mongodump_log.stat.exists | default(false))) else [])
       + (['cert expires within ' ~ mongodb_smoke_cert_min_days ~ 'd: '
           ~ (_certs_short | map(attribute='key') | list | join(','))]
          | select() | list if (_certs_short | length) > 0 else [])
