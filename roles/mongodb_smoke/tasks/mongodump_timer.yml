@@ -12,9 +12,9 @@
     - mongodb_smoke_check_mongodump_timer | bool
     - mongodb_backup_enabled | default(false) | bool
 
-- name: "6b. /var/log/mongodb-backup.log exists"
+- name: "6b. /var/log/mongodb/mongodb-backup.log exists"
   ansible.builtin.stat:
-    path: /var/log/mongodb-backup.log
+    path: /var/log/mongodb/mongodb-backup.log
   register: _smoke_mongodump_log
   when:
     - mongodb_smoke_check_mongodump_timer | bool

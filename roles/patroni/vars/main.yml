@@ -28,6 +28,10 @@ _patroni_services_base:
     port: "{{ haproxy_replicas_port | int }}"
     protocol: tcp
     description: "HAProxy PostgreSQL replicas"
+  - name: haproxy-direct
+    port: "{{ haproxy_direct_port | int }}"
+    protocol: tcp
+    description: "HAProxy PostgreSQL leader, bypassing PgBouncer"
   - name: pgbouncer
     port: "{{ pgbouncer_port | int }}"
     protocol: tcp

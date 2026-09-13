@@ -34,6 +34,7 @@ net.ipv4.ip_local_port_range = 1024 65535
 # daemon from binding on restart.
 net.ipv4.ip_local_reserved_ports = {{
   ([haproxy_primary_port, haproxy_replicas_port,
+    haproxy_direct_port | default(5434),
     haproxy_stats_port | default(7000),
     pgbouncer_port | default(6543),
     patroni_api_port, postgresql_port,

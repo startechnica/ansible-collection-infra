@@ -66,7 +66,7 @@
           'net.ipv4.ip_local_port_range': '1024 65535',
           'net.ipv4.ip_local_reserved_ports':
             (([haproxy_primary_port, haproxy_replicas_port,
-               haproxy_stats_port,
+               haproxy_direct_port, haproxy_stats_port,
                pgbouncer_port,
                patroni_api_port, postgresql_port,
                etcd_client_port,
