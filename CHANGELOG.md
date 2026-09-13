@@ -229,8 +229,30 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   "(disconnected)" and no guest IP — with no error at provision time, surfacing
   days later. Standard-vSwitch NICs (which legitimately have a null
   `portgroup_key`) are exempt.
+- **HAProxy `pg-direct` listener (pooler bypass)** — a third Patroni HAProxy
+  entry on `haproxy_direct_port` (default `5434`) that skips PgBouncer and routes
+  straight to the leader's PostgreSQL (`postgresql_port`), health-checked on
+  Patroni's `/primary`. Meant for clients that can't run through a transaction
+  pooler (schema migrations, admin tooling). Capped at `maxconn 20` per server so a
+  runaway job can't exhaust the leader's `max_connections`, with a frontend cap of
+  `100` so excess connections queue inside HAProxy. Published in `patroni_services`
+  as `haproxy-direct`, so the firewall role opens it and NetBox registers it;
+  restrict who can reach it with a `haproxy-direct` key in
+  `firewall_service_source_map` (otherwise it is open from any source, like
+  `haproxy-primary`). The port is also added to `net.ipv4.ip_local_reserved_ports`.
 
 ### Changed
+- **Patroni HAProxy connection limits raised and made observable.**
+  `global maxconn` `1000` → `4000`, and the `pg-primary` server lines `maxconn`
+  `100` → `1000` (matching PgBouncer's `max_client_conn = 1000`). Every listener
+  now carries its own frontend cap (`pg-primary` `1100`, `pg-replicas` `250`,
+  `pg-direct` / `stats` `100`) so one entry can't claim the whole process budget;
+  each frontend cap sits above its server-side limit so saturation queues inside
+  HAProxy instead of being refused at accept. Added `timeout queue 5s` so a
+  saturated backend fails fast rather than stalling for `timeout connect` ×
+  `retries`, `option tcplog` (one log line per closed connection, including the
+  `Tw` queue-wait timer), and a Prometheus exporter at `/metrics` on the stats
+  listener (`haproxy_stats_port`).
 - **Percona sidecar image defaults bumped.** `mongodb_exporter_image`
   `0.51.0` → `0.52.0`, `mongodb_backup_pbm_image` `2.14.0` → `2.15.0`. Standalone
   Go binaries — unaffected by the kernel issue below.
@@ -242,6 +264,22 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   supported kernel/OS before deploying MongoDB.
 
 ### Fixed
+- **MongoDB scheduled backup / PBM services failed with `status=209/STDOUT`.**
+  `mongodb-backup.service` and the PBM unit append their output to files under
+  `/var/log/mongodb/`, but systemd's `StandardOutput=append:` cannot create a
+  missing parent directory, so the units failed before running. The directory
+  (`root:root 0755`) is now provisioned in `directories.yml` and again in
+  `pbm_setup.yml` (which can run on its own). The `mongodb_smoke` role now
+  reports a missing `mongodb-backup.log` as a failure. Regression coverage:
+  `tests/mongodb_backup_log_directory.yml`.
+- **Patroni replicas logged `no pg_hba.conf entry for replication ...
+  127.0.0.1` on every HA cycle.** Patroni opens a replication connection to its
+  own node over loopback, and `all` pg_hba rules never match replication
+  connections. Added loopback `replication replicator` rules (`scram-sha-256`
+  when `postgresql_replication_password` is set, `cert` otherwise), plus `::1`
+  twins of the local `all` rules. These live in `bootstrap.pg_hba`, so they only
+  apply to newly bootstrapped clusters; add the rules to an existing cluster's
+  `pg_hba.conf` by hand.
 - **HAProxy dropped idle LISTEN/NOTIFY sessions and long-running statements
   after 5 minutes.** `timeout client` / `timeout server` were hardcoded to
   `300s` in the `defaults` block, and in `mode tcp` those are *inactivity*

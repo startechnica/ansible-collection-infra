@@ -288,6 +288,12 @@ argument_specs:
       haproxy_replicas_port:
         type: int
         default: 5433
+      haproxy_direct_port:
+        type: int
+        default: 5434
+        description: >-
+          HAProxy `pg-direct` listener port — bypasses PgBouncer and routes
+          straight to the Patroni leader's PostgreSQL.
       haproxy_stats_port:
         type: int
         default: 7000

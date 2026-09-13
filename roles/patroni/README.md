@@ -441,7 +441,7 @@ Inputs are validated by [meta/argument_specs.yml](meta/argument_specs.yml). High
 | Identity | `patroni_scope`, `postgresql_version` |
 | VIP | `patroni_vip_engine`, `patroni_vip_address`, `patroni_vip_mask`, `patroni_vip_iface` |
 | Passwords | `postgresql_postgres_password` (auto-gen), `postgresql_replication_password` (empty = cert auth) |
-| Ports | `postgresql_port` (55432), `haproxy_primary_port` (5432), `pgbouncer_port` (6543), `patroni_api_port` (8008), `etcd_client_port` (2379) |
+| Ports | `postgresql_port` (55432), `haproxy_primary_port` (5432), `haproxy_direct_port` (5434, bypasses PgBouncer), `pgbouncer_port` (6543), `patroni_api_port` (8008), `etcd_client_port` (2379) |
 | TLS | `tls_key_type`, `tls_key_curve`, `tls_signature_digest`, `tls_cert_days` |
 | Client TLS | `pgbouncer_client_tls_sslmode` (`prefer`; `require` forces TLS), `pgbouncer_client_tls_protocols`, `pgbouncer_client_tls_ciphers` |
 | Pooling | `pgbouncer_pool_mode` (`session`), `pgbouncer_database_overrides` (per-database pool modes) |

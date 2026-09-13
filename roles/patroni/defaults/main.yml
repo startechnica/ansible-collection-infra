@@ -151,6 +151,8 @@ postgresql_admin_cidrs: []
 pgbouncer_port: 6543
 haproxy_primary_port: 5432
 haproxy_replicas_port: 5433
+# Pooler bypass straight to the Patroni leader's PostgreSQL (migrations, admin tooling).
+haproxy_direct_port: 5434
 haproxy_stats_port: 7000
 
 # HAProxy → Patroni REST API health-check tuning. These govern how quickly
