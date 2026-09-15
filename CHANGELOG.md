@@ -321,6 +321,12 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   supported kernel/OS before deploying MongoDB.
 
 ### Fixed
+- **Image pulls failed the run on one transient network error.** A large pull
+  such as `patroni:4.1.0-pg18` could die mid-blob with
+  `tls: bad record MAC` and stop the play. The Patroni image pulls (podman and
+  docker preflight, plus the prebuilt wal-g image) and the MongoDB
+  rolling-upgrade pre-pull now retry up to 10 times, 20 s apart. Layers that
+  were already copied are reused on retry.
 - **MongoDB scheduled backup / PBM services failed with `status=209/STDOUT`.**
   `mongodb-backup.service` and the PBM unit append their output to files under
   `/var/log/mongodb/`, but systemd's `StandardOutput=append:` cannot create a
