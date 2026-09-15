@@ -4,9 +4,9 @@ debug: false
 # Per-preset Butane / OVA metadata lives in
 # `_platform_map[instance_platform_preset].ignition`
 # (roles/common/vars/main.yml). Consumers read it directly as
-# `_platform_preset.ignition.<field>` after `resolve_platform_preset.yml`
-# publishes `_platform_preset` as a host fact. Vendor knowledge tied to each
-# distro's release process, not a deployment knob.
+# `_platform_preset.ignition.<field>`, which each phase loads through its
+# `instance` export_vars import. Vendor knowledge tied to each distro's
+# release process, not a deployment knob.
 
 # butane CLI (controller). render_ignition.yml converts the rendered .bu
 # configs to Ignition JSON with it. resolve_butane.yml uses `butane` from

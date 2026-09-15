@@ -20,7 +20,7 @@ kernel_arguments:
 
 passwd:
   users:
-    - name: {{ instance_user_name | default('core') }}
+    - name: {{ _resolved_instance_user_name }}
 {% if instance_user_password | default('') | length > 0 %}
       password_hash: {{ instance_user_password | password_hash('sha512') }}
 {% endif %}
@@ -465,7 +465,7 @@ systemd:
         [Install]
         WantedBy=multi-user.target
 {% endif %}
-{% if container_engine | default('docker') == 'docker' and (docker_enabled | default(false) | bool) %}
+{% if _resolved_container_engine == 'docker' and (docker_enabled | default(false) | bool) %}
 
     # Replace FCOS's moby-engine with upstream Docker CE.
     # `override remove` modifies the base layer and cannot be --apply-live, so
@@ -522,7 +522,7 @@ systemd:
 {% if (docker_enabled | default(false) | bool) or (podman_enabled | default(false) | bool) %}
         After=rpm-ostree-install-python3.service
 {% endif %}
-{% if container_engine | default('docker') == 'docker' and (docker_enabled | default(false) | bool) %}
+{% if _resolved_container_engine == 'docker' and (docker_enabled | default(false) | bool) %}
         After=docker.service rpm-ostree-install-docker-ce.service
         Wants=docker.service
 {% endif %}

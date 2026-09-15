@@ -247,6 +247,17 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   `_resolved_instance_user_name`, …) into the play without running tasks or
   setting host facts. Consumers read the `_resolved_*` names; the bare names are
   still only overwritten by `resolve_platform_preset`.
+- **`instance` role `export_vars` entry point; `instance_ignition` and
+  `instance_cloud_init` phases work on their own.**
+  `import_role: {name: instance, tasks_from: export_vars}` is a no-op anchor
+  like common's: it loads the `instance` defaults and vars
+  (`instance_folder_path`, `ignition_tmp_dir`, `vcenter_connect`, …) and
+  common's exports into the play. Each sub-role phase that reads them imports
+  it, and reads platform-preset values through common's `_resolved_*` names. A
+  playbook can include a single phase, for example
+  `include_role: {name: startechnica.infra.instance_ignition, tasks_from: render_ignition.yml}`,
+  without running `instance` or `resolve_platform_preset` first. `deploy.yml`
+  renders the same configs as before.
 - **`butane` is downloaded automatically.** Ignition presets no longer need
   `butane` installed on the controller. The new
   `instance_ignition/tasks/resolve_butane.yml` uses `butane` from `PATH` when
@@ -273,6 +284,21 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   those presets that relied on the old `podman` fallback now get `docker`; set
   `grafana_alloy_container_engine: podman` to keep it. Runs where
   `container_engine` is set are unchanged.
+- **`instance` no longer copies `instance_folder_path` and `ignition_tmp_dir`
+  to localhost host facts.** The copy existed only so `deploy.yml` Stage 3.7
+  could run the sub-roles' `cleanup.yml`, which now loads `instance`
+  `export_vars` itself. `deploy.yml` behaves the same. Your own playbooks that
+  read either name after the `instance` role has finished (in a later play,
+  through `hostvars['localhost']`, or on hosts that ran
+  `inherit_localhost_vars`) now get an undefined variable: import `instance`
+  `export_vars` in that play and read the name directly.
+- **`deploy.yml` registers VMs in NetBox in its own play (Stage 2.1).** The
+  sub-roles load `instance` `export_vars`, which keeps the `instance` defaults
+  visible until the end of their play. Inside the Stage 2 play,
+  `netbox_register` would have used them as NetBox fallbacks for VMs that
+  don't set those values: platform `fedora-coreos`, 2 vCPUs, 2048 MB, portgroup
+  `VM Network`. In its own play it writes what it wrote before. The tag is
+  still `provision`.
 - **Patroni HAProxy connection limits raised and made observable.**
   `global maxconn` `1000` → `4000`, and the `pg-primary` server lines `maxconn`
   `100` → `1000` (matching PgBouncer's `max_client_conn = 1000`). Every listener

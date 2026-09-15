@@ -4,16 +4,17 @@ Ignition phases for [instance](../instance/). Supports Fedora CoreOS,
 Flatcar Container Linux, Red Hat CoreOS (RHCOS), and openSUSE MicroOS —
 pick via `instance_platform_preset` (see *Preset support* below).
 
-Not a standalone role — sub-role invoked from `instance/tasks/main.yml`
-via `include_role: tasks_from:`.
+Has no `main.yml` entry point: include one phase at a time with
+`include_role: tasks_from:`. `instance` does that, but any playbook can. Each
+phase imports `instance` `export_vars`, so the `instance` defaults and the
+platform preset resolve without `instance` running first.
 
 ## Preset support
 
-`instance_platform_preset` (parent-role var) selects a row in
+`instance_platform_preset` (an `instance` input) selects a row in
 `_platform_map` (`roles/common/vars/main.yml`). The row's `ignition:`
 sub-dict supplies every flavour-varying knob; callers read it as
-`_platform_preset.ignition.<field>` (published as a host fact by
-`common/tasks/resolve_platform_preset.yml`).
+`_platform_preset.ignition.<field>`, loaded by the `export_vars` import.
 
 | Preset | Butane variant | Spec version | Template prefix | Default user | Default channel | Channels | Metadata URL |
 |---|---|---|---|---|---|---|---|
@@ -25,8 +26,8 @@ sub-dict supplies every flavour-varying knob; callers read it as
 Field access from consumers:
 - `_platform_preset.ignition.butane_template` / `.butane_variant` / `.butane_spec_version`
 - `_platform_preset.ignition.default_channel` / `.metadata_url` / `.ova_url`
-- `_platform_preset.username` (top-level row field, also published as
-  `instance_user_name` host fact)
+- `_platform_preset.username` (top-level row field; phases read the user name
+  as `_resolved_instance_user_name`, which prefers `instance_user_name`)
 
 To override per-deployment, edit the map row via
 `instance_netbox_platform_map` in inventory (consumer merges on top of
@@ -47,12 +48,17 @@ pre-import the OVA into the content library manually (or via vCenter UI), set
 | `tasks/render_ignition.yml` | Before deploy | once (localhost); Butane → Ignition JSON for every VM in `instances_to_create` |
 | `tasks/inject.yml` | After deploy | per-VM loop; writes `guestinfo.ignition.config.data` + encoding |
 | `tasks/poweron.yml` | After inject | per-VM loop; powers VM on |
-| `tasks/cleanup.yml` | After verify | per-VM loop; clears ignition guestinfo |
+| `tasks/cleanup.yml` | After `bootstrap_phase=ready` | per-VM loop (`deploy.yml` Stage 3.7); clears ignition guestinfo and temp files |
 
 Also bundled:
 - `tasks/content_library_import.yml` — reusable helper used by `fcos_prepare.yml` to import an OVA URL into a content library item. Not an entry point.
 
-## Expected inputs (from parent role context)
+## Expected inputs
+
+Each phase that reads these loads the `instance` defaults and vars itself
+through `instance` `export_vars`, so set only what differs from those defaults.
+`resolve_butane.yml` reads none of them, only this role's `ignition_butane_*`
+defaults.
 
 - `item` (per-VM entries) — VM dict from the loop
 - `instances_to_create` (render/prepare) — full list for once-per-run ops

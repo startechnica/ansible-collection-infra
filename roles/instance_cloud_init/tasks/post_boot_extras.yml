@@ -14,6 +14,13 @@
 # duplicating, since the file already handles the discover-then-remove
 # logic correctly for any controller layout.
 
+# Loads the instance defaults and vars plus common's _resolved_* values, so
+# this phase also works outside the instance role. Runs no tasks.
+- name: Import instance role vars
+  ansible.builtin.import_role:
+    name: instance
+    tasks_from: export_vars
+
 - name: "Detach OVF-environment CD-ROM ISO from {{ item.name }}"
   ansible.builtin.include_role:
     name: instance

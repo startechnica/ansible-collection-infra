@@ -11,20 +11,6 @@
     name: common
     tasks_from: resolve_platform_preset
 
-# Promote role-scoped vars/defaults to localhost host facts, so later plays
-# (Stage 3.7 cleanup, anything calling instance_ignition/instance_cloud_init
-# outside this role's context) can read them without re-deriving the
-# values. Without this, those callers see `'<var>' is undefined` because
-# role vars/defaults don't survive the role's exit.
-#
-# Add a line here whenever a fact defined under instance/defaults or
-# instance/vars is read by a sibling role's tasks invoked from another
-# play.
-- name: Promote cross-stage vars to localhost host facts
-  ansible.builtin.set_fact:
-    instance_folder_path: "{{ instance_folder_path }}"
-    ignition_tmp_dir: "{{ ignition_tmp_dir }}"
-
 - name: Validate vCenter credentials
   ansible.builtin.include_tasks: validate/vcenter.yml
 

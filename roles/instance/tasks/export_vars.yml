@@ -1,0 +1,34 @@
+---
+# Export anchor — intentionally does no work.
+#
+# Importing this role with `tasks_from: export_vars` loads the instance role's
+# defaults/main.yml + vars/main.yml (vcenter_connect, instance_datacenter,
+# instance_folder_path, ignition_tmp_dir, the instance_user_* /
+# content_library_* / ignition_* knobs, etc.) into the calling play WITHOUT
+# running any of the provisioning tasks in main.yml. The common import below
+# adds _platform_map, _platform_preset and the _resolved_* fallbacks.
+#
+# Consumed by every instance_ignition / instance_cloud_init phase that reads
+# these vars, so each phase works on its own: from instance, from deploy.yml
+# Stage 3.7, or from any other playbook.
+#
+# Usage:
+#   - ansible.builtin.import_role:
+#       name: instance
+#       tasks_from: export_vars
+#
+# `include_role` only exposes the vars with `public: true`.
+#
+# Role defaults are lowest precedence, so anything the inventory sets still
+# wins. Imported vars stay visible until the end of the play, including
+# unprefixed defaults such as debug, instances, container_engine,
+# docker_enabled, podman_enabled and portgroup_name. Run roles that read those
+# names with fallbacks of their own in a separate play (deploy.yml Stage 2.1
+# does this for netbox_register), and import again in each play that needs the
+# vars. Keep this file task-free apart from the static common import; its only
+# job is to trigger var loading.
+
+- name: Import common role vars (platform preset)
+  ansible.builtin.import_role:
+    name: common
+    tasks_from: export_vars

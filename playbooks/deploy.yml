@@ -81,6 +81,19 @@
       ansible.builtin.include_role:
         name: instance
 
+# ── Stage 2.1: Register VMs in NetBox ─────────────────────────────────────────
+# A separate play on purpose: the instance sub-roles import instance's
+# export_vars, and imported vars stay visible until the end of their play. In
+# the Stage 2 play, netbox_register would read instance's defaults
+# (instance_platform_preset, instance_cpu, portgroup_name, …) as its NetBox
+# fallbacks. What it needs from provisioning (`instances`,
+# `_provisioned_vm_facts`) is host facts, which carry over.
+
+- name: "Stage 2.1: Register VMs in NetBox"
+  hosts: localhost
+  gather_facts: false
+  tags: [provision]
+  tasks:
     - name: Register VMs in NetBox
       ansible.builtin.include_role:
         name: netbox_register

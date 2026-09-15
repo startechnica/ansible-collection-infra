@@ -4,6 +4,15 @@
 # Invoked from deploy.yml's Stage 3.7, AFTER Stage 3.4 has confirmed
 # bootstrap_phase=ready (FCOS) — by that point Ignition has long since
 # consumed the guestinfo, so clearing it is race-free.
+#
+# Stage 3.7 is its own play, outside the instance role, so instance's defaults
+# and vars (instance_folder_path, ignition_tmp_dir) aren't in scope. Import
+# them; the import runs no tasks.
+
+- name: Import instance role vars
+  ansible.builtin.import_role:
+    name: instance
+    tasks_from: export_vars
 
 - name: "Clear ignition data for {{ item.name }}"
   community.vmware.vmware_guest:
