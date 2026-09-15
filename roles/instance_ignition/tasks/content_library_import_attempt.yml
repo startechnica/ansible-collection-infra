@@ -28,7 +28,7 @@
     username: "{{ vcenter_connect.username }}"
     password: "{{ vcenter_connect.password }}"
     validate_certs: "{{ vcenter_connect.validate_certs }}"
-    library_name: "{{ content_library_name }}"
+    library_name: "{{ _resolved_content_library_name }}"
     dest: "{{ _cl_item_name }}"
     state: absent
   delegate_to: localhost
@@ -42,7 +42,7 @@
     username: "{{ vcenter_connect.username }}"
     password: "{{ vcenter_connect.password }}"
     validate_certs: "{{ vcenter_connect.validate_certs }}"
-    library_name: "{{ content_library_name }}"
+    library_name: "{{ _resolved_content_library_name }}"
     dest: "{{ _cl_item_name }}"
     src: "{{ _cl_source_url }}"
     description: "{{ _cl_description | default('Imported by Ansible') }}"

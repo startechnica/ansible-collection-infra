@@ -43,6 +43,14 @@ and a complete end-to-end walkthrough.
 - Python 3.12+ (earlier versions work but some deps break on 3.13+)
 - Ansible 2.19+ (ansible-core)
 - `pip`, `git`, and network access to vCenter + NetBox + any backup S3 endpoint
+- [`butane`](https://coreos.github.io/butane/) CLI on the controller when
+  provisioning ignition presets (Fedora CoreOS, Flatcar, RHCOS, openSUSE
+  MicroOS). Nothing to install on a controller with internet access: a
+  `butane` on `PATH` is used, otherwise the pinned release is downloaded
+  (sha256-verified) into `~/.cache/startechnica/butane/`. Air-gapped
+  controllers need `butane` on `PATH`, or a mirror set in
+  `ignition_butane_release_url` — see
+  [instance_ignition](roles/instance_ignition/README.md#requirements).
 
 Python libs and Ansible collections install via `pip install -r requirements.txt`
 and `ansible-galaxy collection install -r requirements.yml` (covered under

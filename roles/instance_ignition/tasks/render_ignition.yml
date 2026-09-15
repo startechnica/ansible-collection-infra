@@ -1,44 +1,15 @@
 ---
 # Render Butane configs and convert to Ignition JSON for each VM.
 # Only runs when: instance_init_type == 'ignition'
+# Runs `_butane_bin`, published by resolve_butane.yml, which
+# instance/tasks/main.yml runs before fcos_prepare.
 
-- name: Check that butane CLI is available on the controller
-  ansible.builtin.command: which butane
-  register: _butane_check
-  changed_when: false
-  failed_when: false
-  delegate_to: localhost
-  run_once: true
-
-- name: Assert butane CLI is available on the controller
-  ansible.builtin.assert:
-    that:
-      - _butane_check.rc == 0
-    fail_msg:
-      - "The `butane` CLI is not installed on the Ansible controller, but is"
-      - "required to convert Butane (.bu) configs into Ignition JSON for FCOS."
-      - ""
-      - "Install one of:"
-      - ""
-      - "    # Linux (single static binary, no deps)"
-      - "    sudo curl -L -o /usr/local/bin/butane \\"
-      - "      https://github.com/coreos/butane/releases/latest/download/butane-x86_64-unknown-linux-gnu"
-      - "    sudo chmod +x /usr/local/bin/butane"
-      - ""
-      - "    # macOS"
-      - "    brew install butane"
-      - ""
-      - "    # Fedora / RHEL"
-      - "    sudo dnf install butane"
-      - ""
-      - "    # Or run from the official container (no host install)"
-      - "    # — set ignition.butane_via_docker: true in inventory (not yet wired)"
-      - ""
-      - "Verify with: butane --version"
-    success_msg: "butane CLI found at {{ _butane_check.stdout | default('?') }}"
-    quiet: true
-  delegate_to: localhost
-  run_once: true
+# Loads the instance defaults and vars plus common's _resolved_* values, so
+# this phase also works outside the instance role. Runs no tasks.
+- name: Import instance role vars
+  ansible.builtin.import_role:
+    name: instance
+    tasks_from: export_vars
 
 - name: Render Butane config for each VM
   ansible.builtin.template:
@@ -53,7 +24,7 @@
 
 - name: Convert Butane to Ignition JSON
   ansible.builtin.command: >
-    butane
+    {{ _butane_bin | quote }}
     {{ '--strict' if (ignition_butane_strict | bool) else '' }}
     {{ ignition_tmp_dir }}/{{ instance.name }}.bu
     --output {{ ignition_tmp_dir }}/{{ instance.name }}.ign

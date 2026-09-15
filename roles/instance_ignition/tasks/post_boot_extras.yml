@@ -9,6 +9,13 @@
 # VM's filesystem MUST use vmware_vm_shell / vmware_guest_file_operation,
 # NOT ansible.builtin.stat / command — those would run on the controller.
 
+# Loads the instance defaults and vars plus common's _resolved_* values, so
+# this phase also works outside the instance role. Runs no tasks.
+- name: Import instance role vars
+  ansible.builtin.import_role:
+    name: instance
+    tasks_from: export_vars
+
 # ── open-vm-tools /etc payload recovery ─────────────────────────────────────
 # When open-vm-tools is layered via rpm-ostree --apply-live (our Butane
 # rpm-ostree-install-open-vm-tools.service), the package's %post scriptlet
@@ -35,7 +42,7 @@
     datacenter: "{{ instance_datacenter }}"
     folder: "{{ instance_folder_path }}"
     vm_id: "{{ item.name }}"
-    vm_username: "{{ instance_user_name }}"
+    vm_username: "{{ _resolved_instance_user_name }}"
     vm_password: "{{ instance_user_password }}"
     vm_shell: /bin/bash
     # Skip the entire block when /etc/vmware-tools/vgauth/schemas/ is already

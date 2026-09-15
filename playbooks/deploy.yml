@@ -40,6 +40,22 @@
         name: common
         tasks_from: validate_inventory
 
+    # Dry run: never downloads, only warns. Whether butane is needed depends
+    # on which VMs already exist on vCenter, which Stage 0 doesn't query.
+    # Stage 2 resolves (and downloads) it for real. Skipped on runs that
+    # don't provision.
+    - name: Check butane CLI on the controller (ignition only)
+      ansible.builtin.include_role:
+        name: instance_ignition
+        tasks_from: resolve_butane.yml
+      vars:
+        butane_resolve_dry_run: true
+      when:
+        - instance_init_type == 'ignition'
+        - instances | default([]) | length > 0
+        - ('all' in ansible_run_tags)
+          or (ansible_run_tags | intersect(['provision', 'validate']) | length > 0)
+
 # ── Stage 1: Gather facts from NetBox (optional) ─────────────────────────────
 
 - name: "Stage 1: Query NetBox for VMs"
@@ -65,6 +81,19 @@
       ansible.builtin.include_role:
         name: instance
 
+# ── Stage 2.1: Register VMs in NetBox ─────────────────────────────────────────
+# A separate play on purpose: the instance sub-roles import instance's
+# export_vars, and imported vars stay visible until the end of their play. In
+# the Stage 2 play, netbox_register would read instance's defaults
+# (instance_platform_preset, instance_cpu, portgroup_name, …) as its NetBox
+# fallbacks. What it needs from provisioning (`instances`,
+# `_provisioned_vm_facts`) is host facts, which carry over.
+
+- name: "Stage 2.1: Register VMs in NetBox"
+  hosts: localhost
+  gather_facts: false
+  tags: [provision]
+  tasks:
     - name: Register VMs in NetBox
       ansible.builtin.include_role:
         name: netbox_register

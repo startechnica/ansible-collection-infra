@@ -4,9 +4,36 @@ debug: false
 # Per-preset Butane / OVA metadata lives in
 # `_platform_map[instance_platform_preset].ignition`
 # (roles/common/vars/main.yml). Consumers read it directly as
-# `_platform_preset.ignition.<field>` after `resolve_platform_preset.yml`
-# publishes `_platform_preset` as a host fact. Vendor knowledge tied to each
-# distro's release process, not a deployment knob.
+# `_platform_preset.ignition.<field>`, which each phase loads through its
+# `instance` export_vars import. Vendor knowledge tied to each distro's
+# release process, not a deployment knob.
+
+# butane CLI (controller). render_ignition.yml converts the rendered .bu
+# configs to Ignition JSON with it. resolve_butane.yml uses `butane` from
+# PATH when present; otherwise, with ignition_butane_download true, it
+# downloads the pinned release below into ignition_butane_cache_dir and
+# verifies it against ignition_butane_checksums.
+#
+# Set ignition_butane_download: false to require an operator-installed
+# butane. Air-gapped controllers can instead mirror the release assets
+# (butane-<suffix>, as keyed below) and point ignition_butane_release_url
+# at the mirror.
+ignition_butane_download: true
+ignition_butane_version: "0.29.0"
+ignition_butane_release_url: "https://github.com/coreos/butane/releases/download/v{{ ignition_butane_version }}"
+ignition_butane_cache_dir: >-
+  {{ lookup('ansible.builtin.env', 'XDG_CACHE_HOME')
+     | default(lookup('ansible.builtin.env', 'HOME') ~ '/.cache', true) }}/startechnica/butane/{{ ignition_butane_version }}
+# sha256 per release asset, keyed by the suffix after `butane-`. Update
+# every entry together with ignition_butane_version — the digests are on the
+# GitHub release page (or `gh release view v<version> -R coreos/butane`).
+ignition_butane_checksums:
+  x86_64-unknown-linux-gnu: 53a20d820fbaa7fda4f1afd1814974badc8e448db4c151d3f1ba005dc29bc4c9
+  aarch64-unknown-linux-gnu: 12c1d78eeffc72dab9c8383d9b79d7d6e6e0d6ec6fe8f19eaf93d9e13eef286f
+  ppc64le-unknown-linux-gnu: debcd5c4afd8517a19b4119f4eb77b1241d97c6cdb0d8a6fe87746ca502f5fef
+  s390x-unknown-linux-gnu: 0d193620747f1c7240ee809fc2abce1b9dc281f2473bfee82ca50e9e1544d87c
+  x86_64-apple-darwin: 89a66e40058cdaa9ba5f2fbbdc1af91812ba0f321f29f99e589fa445bd51226c
+  aarch64-apple-darwin: 9d27a4093e4908d6a66b3996ccf4aaf2ea6123972809c4d47dc1b14ac05d8417
 
 # Zincati: FCOS auto-updater. Default false on cluster nodes — an
 # unattended Zincati reboot of a Patroni leader / Mongo primary mid-

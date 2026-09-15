@@ -10,6 +10,9 @@ Ansible role and playbooks for automated VM provisioning on VMware vCenter using
   - `community.vmware` >= 6.2.0
   - `vmware.vmware` >= 2.7.0
   - `ansible.utils`
+- `butane` CLI on the controller for ignition presets — downloaded
+  automatically when not on `PATH` (see
+  [instance_ignition](../instance_ignition/README.md#requirements))
 
 Install collections:
 
@@ -25,6 +28,7 @@ roles/instance/
 ├── meta/{main.yml,argument_specs.yml}
 ├── tasks/
 │   ├── main.yml                # Orchestration (preflight → validate → deploy → configure)
+│   ├── export_vars.yml         # No-op anchor: import to load defaults/ + vars/ (see below)
 │   ├── validate/
 │   │   ├── vcenter.yml         # vCenter credentials assert (runs first)
 │   │   ├── input.yml           # Pure-data input checks (hostname, NICs, disks)
@@ -55,6 +59,16 @@ The `cloud-init` vs `ignition` first-boot injection is delegated to two dedicate
 sub-roles — [instance_cloud_init](../instance_cloud_init/) and
 [instance_ignition](../instance_ignition/) — invoked via
 `include_role: tasks_from:` from `configure_all.yml`.
+
+Both sub-roles also work without this role. Each phase file loads this role's
+defaults and vars with
+`import_role: {name: instance, tasks_from: export_vars}`, which runs no tasks
+and also loads common's exports, so a playbook can include a single phase.
+Imported vars stay visible until the end of the play, including this role's
+unprefixed defaults (`debug`, `instances`, `container_engine`,
+`docker_enabled`, `podman_enabled`, `portgroup_name`). Run roles that read
+those names with fallbacks of their own in a separate play, as `deploy.yml`
+does with `netbox_register` (Stage 2.1).
 
 ## Usage
 

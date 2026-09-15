@@ -2,7 +2,7 @@
 # ─── Grafana Alloy Role ──────────────────────────────────────────────────────
 #
 # Single-container telemetry collector deployed via docker (compose) or podman
-# (Quadlet), selected by `container_engine`. Assembles config.alloy from
+# (Quadlet), selected by `grafana_alloy_container_engine`. Assembles config.alloy from
 # per-pipeline toggles (logs→Loki, metrics→Prometheus, traces→Tempo).
 #
 # Actions (grafana_alloy_action, default: provision):
@@ -15,6 +15,16 @@
 #   ansible-playbook ...                                   # provision
 #   ansible-playbook ... -e grafana_alloy_action=status
 #   ansible-playbook ... -e grafana_alloy_action=uninstall -e grafana_alloy_destroy_data=true
+
+# ── Platform preset vars ──
+# Loads common's `_resolved_container_engine`, which
+# grafana_alloy_container_engine defaults to. Static and task-free, so the
+# vars are in place before argument validation and visible to the handlers.
+
+- name: Import common role vars (platform preset)
+  ansible.builtin.import_role:
+    name: common
+    tasks_from: export_vars
 
 # ── Skip if disabled ──
 

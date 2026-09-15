@@ -240,8 +240,65 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   restrict who can reach it with a `haproxy-direct` key in
   `firewall_service_source_map` (otherwise it is open from any source, like
   `haproxy-primary`). The port is also added to `net.ipv4.ip_local_reserved_ports`.
+- **`common` role `export_vars` entry point.** A no-op anchor like the
+  `mongodb` / `patroni` ones: `import_role: {name: common, tasks_from: export_vars}`
+  loads `_platform_map`, `_platform_preset` and the `_resolved_*` platform-preset
+  fallbacks (`_resolved_container_engine`, `_resolved_instance_init_type`,
+  `_resolved_instance_user_name`, …) into the play without running tasks or
+  setting host facts. Consumers read the `_resolved_*` names; the bare names are
+  still only overwritten by `resolve_platform_preset`.
+- **`instance` role `export_vars` entry point; `instance_ignition` and
+  `instance_cloud_init` phases work on their own.**
+  `import_role: {name: instance, tasks_from: export_vars}` is a no-op anchor
+  like common's: it loads the `instance` defaults and vars
+  (`instance_folder_path`, `ignition_tmp_dir`, `vcenter_connect`, …) and
+  common's exports into the play. Each sub-role phase that reads them imports
+  it, and reads platform-preset values through common's `_resolved_*` names. A
+  playbook can include a single phase, for example
+  `include_role: {name: startechnica.infra.instance_ignition, tasks_from: render_ignition.yml}`,
+  without running `instance` or `resolve_platform_preset` first. `deploy.yml`
+  renders the same configs as before.
+- **`butane` is downloaded automatically.** Ignition presets no longer need
+  `butane` installed on the controller. The new
+  `instance_ignition/tasks/resolve_butane.yml` uses `butane` from `PATH` when
+  present; otherwise it downloads the release pinned in
+  `ignition_butane_version` (v0.29.0) into `ignition_butane_cache_dir`
+  (`~/.cache/startechnica/butane/<version>/`) and verifies it against
+  `ignition_butane_checksums`. Set `ignition_butane_download: false` to require
+  an operator-installed copy, or `ignition_butane_release_url` to download from
+  a mirror. `instance` resolves it before `fcos_prepare` rather than at render
+  time, so a missing binary or failed download stops the run before the FCOS
+  OVA import and portgroup creation; it is still skipped when every VM already
+  exists. `deploy.yml` Stage 0 runs a dry-run probe that warns (without
+  downloading) when Stage 2 would fail, so `--tags validate` reports it. The
+  probe uses `butane --version` instead of `which`, which minimal controller
+  images don't have.
 
 ### Changed
+- **`grafana_alloy` engine fallback follows `instance_platform_preset`.**
+  `grafana_alloy_container_engine` now defaults to common's
+  `_resolved_container_engine` (loaded through `common` `export_vars`) instead
+  of `container_engine | default('podman')`. When `container_engine` is unset or
+  empty, the engine comes from the preset row (`docker` for Ubuntu, Debian,
+  SLES and Flatcar presets) before falling back to `podman`. Standalone runs on
+  those presets that relied on the old `podman` fallback now get `docker`; set
+  `grafana_alloy_container_engine: podman` to keep it. Runs where
+  `container_engine` is set are unchanged.
+- **`instance` no longer copies `instance_folder_path` and `ignition_tmp_dir`
+  to localhost host facts.** The copy existed only so `deploy.yml` Stage 3.7
+  could run the sub-roles' `cleanup.yml`, which now loads `instance`
+  `export_vars` itself. `deploy.yml` behaves the same. Your own playbooks that
+  read either name after the `instance` role has finished (in a later play,
+  through `hostvars['localhost']`, or on hosts that ran
+  `inherit_localhost_vars`) now get an undefined variable: import `instance`
+  `export_vars` in that play and read the name directly.
+- **`deploy.yml` registers VMs in NetBox in its own play (Stage 2.1).** The
+  sub-roles load `instance` `export_vars`, which keeps the `instance` defaults
+  visible until the end of their play. Inside the Stage 2 play,
+  `netbox_register` would have used them as NetBox fallbacks for VMs that
+  don't set those values: platform `fedora-coreos`, 2 vCPUs, 2048 MB, portgroup
+  `VM Network`. In its own play it writes what it wrote before. The tag is
+  still `provision`.
 - **Patroni HAProxy connection limits raised and made observable.**
   `global maxconn` `1000` → `4000`, and the `pg-primary` server lines `maxconn`
   `100` → `1000` (matching PgBouncer's `max_client_conn = 1000`). Every listener

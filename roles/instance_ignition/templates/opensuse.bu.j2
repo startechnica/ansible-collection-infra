@@ -9,8 +9,8 @@
  #     followed by a managed reboot
  #   - open-vm-tools install + enable (zypper / transactional-update)
  #   - SELinux contexts on dropped files (MicroOS has SELinux on)
- #   - default user is `root` for MicroOS by convention; override with
- #     `instance_user_name` if you've configured a different one
+ #   - MicroOS images conventionally log in as `root`; this template uses
+ #     `instance_user_name`, falling back to the preset row (`opensuse`)
  #
  # Test against your MicroOS image before relying on this for production.
  # ─────────────────────────────────────────────────────────────────────── #}
@@ -19,7 +19,7 @@ version: {{ _platform_preset.ignition.butane_spec_version }}
 
 passwd:
   users:
-    - name: {{ instance_user_name | default('root') }}
+    - name: {{ _resolved_instance_user_name }}
 {% if instance_user_password | default('') | length > 0 %}
       password_hash: {{ instance_user_password | password_hash('sha512') }}
 {% endif %}

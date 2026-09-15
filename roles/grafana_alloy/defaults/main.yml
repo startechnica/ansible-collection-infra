@@ -17,9 +17,11 @@ grafana_alloy_enabled: false
 grafana_alloy_action: provision
 
 # Authoritative engine selector for this role. Falls back to the host-wide
-# `container_engine` (set via platform preset), defaulting to podman. Set
-# directly to run Alloy on a different engine than the other roles on the host.
-grafana_alloy_container_engine: "{{ container_engine | default('podman') }}"
+# `container_engine`, then the `instance_platform_preset` row's engine, then
+# podman — common's `_resolved_container_engine`, imported at the top of
+# tasks/main.yml. Set directly to run Alloy on a different engine than the
+# other roles on the host.
+grafana_alloy_container_engine: "{{ _resolved_container_engine }}"
 
 # ── Container image ──
 grafana_alloy_version: "v1.12.1"

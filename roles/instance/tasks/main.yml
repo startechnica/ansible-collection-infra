@@ -11,20 +11,6 @@
     name: common
     tasks_from: resolve_platform_preset
 
-# Promote role-scoped vars/defaults to localhost host facts, so later plays
-# (Stage 3.7 cleanup, anything calling instance_ignition/instance_cloud_init
-# outside this role's context) can read them without re-deriving the
-# values. Without this, those callers see `'<var>' is undefined` because
-# role vars/defaults don't survive the role's exit.
-#
-# Add a line here whenever a fact defined under instance/defaults or
-# instance/vars is read by a sibling role's tasks invoked from another
-# play.
-- name: Promote cross-stage vars to localhost host facts
-  ansible.builtin.set_fact:
-    instance_folder_path: "{{ instance_folder_path }}"
-    ignition_tmp_dir: "{{ ignition_tmp_dir }}"
-
 - name: Validate vCenter credentials
   ansible.builtin.include_tasks: validate/vcenter.yml
 
@@ -104,6 +90,17 @@
 
     - name: End role early when all VMs already exist
       ansible.builtin.meta: end_role
+
+# Resolve the butane CLI for render_ignition.yml (PATH, else download the
+# pinned release). Runs here rather than at render time so a missing binary
+# or failed download stops the run before fcos_prepare's OVA import and
+# portgroup creation. Placed after the short-circuit so re-runs against
+# existing VMs don't need butane.
+- name: Resolve butane CLI on the controller (ignition only)
+  ansible.builtin.include_role:
+    name: instance_ignition
+    tasks_from: resolve_butane.yml
+  when: instance_init_type == 'ignition'
 
 # For ignition + auto-import flows, fcos_prepare must run BEFORE validate.yml:
 # it's what populates `content_library_item_name` (the OVA name to import) by
