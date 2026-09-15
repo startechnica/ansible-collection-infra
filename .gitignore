@@ -44,3 +44,5 @@ host_vars/**/vault.yml
 
 ignored.md
 wazuh/
+
+.claude/settings.local.json
