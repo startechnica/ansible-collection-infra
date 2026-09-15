@@ -42,6 +42,7 @@ pre-import the OVA into the content library manually (or via vCenter UI), set
 
 | Entry file | When | Invocation |
 |---|---|---|
+| `tasks/resolve_butane.yml` | Before `fcos_prepare.yml` | once (localhost); publishes `_butane_bin` — `butane` from `PATH`, else the pinned release downloaded into `ignition_butane_cache_dir`; fails when neither works (`butane_resolve_dry_run: true` only probes and warns; `deploy.yml` Stage 0 uses that) |
 | `tasks/fcos_prepare.yml` | Before deploy | once (localhost); fetches FCOS stream metadata, imports OVA into vCenter content library (when `content_library_auto_import: true`) |
 | `tasks/render_ignition.yml` | Before deploy | once (localhost); Butane → Ignition JSON for every VM in `instances_to_create` |
 | `tasks/inject.yml` | After deploy | per-VM loop; writes `guestinfo.ignition.config.data` + encoding |
@@ -79,10 +80,23 @@ drop-in so both code paths converge on a single file.
 
 ## Requirements
 
-- `butane` binary on the controller for render_ignition.yml. Install via:
-  - Fedora: `dnf install butane`
-  - macOS: `brew install butane`
-  - Docker (no install): wrap with `docker run --rm -i quay.io/coreos/butane:release`
+- `butane` binary on the controller for render_ignition.yml, resolved up front
+  by `resolve_butane.yml`:
+  1. `butane` on `PATH` is used as-is.
+  2. Otherwise (`ignition_butane_download: true`, the default) the release
+     pinned in `ignition_butane_version` is downloaded from
+     `ignition_butane_release_url` into `ignition_butane_cache_dir`
+     (default `~/.cache/startechnica/butane/<version>/`) and checked against
+     `ignition_butane_checksums`. Linux x86_64 / aarch64 / ppc64le / s390x
+     and macOS x86_64 / arm64 are pinned.
+  3. Otherwise the run fails with install instructions.
+
+  To bump the version, update `ignition_butane_version` and every
+  `ignition_butane_checksums` entry together (sha256 digests are on the
+  GitHub release page). Air-gapped controllers: install `butane` on `PATH`
+  (Fedora `dnf install butane`, macOS `brew install butane`, or the static
+  binary), or mirror the release assets and point `ignition_butane_release_url`
+  at the mirror.
 - `community.vmware` collection on the controller for content-library import tasks.
 
 ## Role outputs
@@ -118,4 +132,4 @@ deploy VMs from it without re-fetching metadata).
 
 - **FCOS metadata endpoint** — defaults to `https://builds.coreos.fedoraproject.org/streams/<stream>.json`. Set `ignition_metadata_url` to override (air-gapped / mirror).
 - **Auto-import lag** — pulling the OVA into vCenter's content library from `builds.coreos.fedoraproject.org` can take 5+ minutes over slow WAN links; `fcos_prepare.yml` waits synchronously.
-- **Butane binary required** — no pure-Python Butane implementation exists; `butane` must be in PATH or replaced with a container wrapper.
+- **Butane binary required** — no Python Butane implementation exists, so the role shells out to the `butane` binary. It is downloaded automatically when missing from `PATH` (see [Requirements](#requirements)); set `ignition_butane_download: false` to require an operator-installed copy.

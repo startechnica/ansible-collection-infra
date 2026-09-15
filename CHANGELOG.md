@@ -247,6 +247,21 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   `_resolved_instance_user_name`, …) into the play without running tasks or
   setting host facts. Consumers read the `_resolved_*` names; the bare names are
   still only overwritten by `resolve_platform_preset`.
+- **`butane` is downloaded automatically.** Ignition presets no longer need
+  `butane` installed on the controller. The new
+  `instance_ignition/tasks/resolve_butane.yml` uses `butane` from `PATH` when
+  present; otherwise it downloads the release pinned in
+  `ignition_butane_version` (v0.29.0) into `ignition_butane_cache_dir`
+  (`~/.cache/startechnica/butane/<version>/`) and verifies it against
+  `ignition_butane_checksums`. Set `ignition_butane_download: false` to require
+  an operator-installed copy, or `ignition_butane_release_url` to download from
+  a mirror. `instance` resolves it before `fcos_prepare` rather than at render
+  time, so a missing binary or failed download stops the run before the FCOS
+  OVA import and portgroup creation; it is still skipped when every VM already
+  exists. `deploy.yml` Stage 0 runs a dry-run probe that warns (without
+  downloading) when Stage 2 would fail, so `--tags validate` reports it. The
+  probe uses `butane --version` instead of `which`, which minimal controller
+  images don't have.
 
 ### Changed
 - **`grafana_alloy` engine fallback follows `instance_platform_preset`.**

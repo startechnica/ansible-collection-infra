@@ -105,6 +105,17 @@
     - name: End role early when all VMs already exist
       ansible.builtin.meta: end_role
 
+# Resolve the butane CLI for render_ignition.yml (PATH, else download the
+# pinned release). Runs here rather than at render time so a missing binary
+# or failed download stops the run before fcos_prepare's OVA import and
+# portgroup creation. Placed after the short-circuit so re-runs against
+# existing VMs don't need butane.
+- name: Resolve butane CLI on the controller (ignition only)
+  ansible.builtin.include_role:
+    name: instance_ignition
+    tasks_from: resolve_butane.yml
+  when: instance_init_type == 'ignition'
+
 # For ignition + auto-import flows, fcos_prepare must run BEFORE validate.yml:
 # it's what populates `content_library_item_name` (the OVA name to import) by
 # fetching FCOS stream metadata. validate/template.yml then verifies the

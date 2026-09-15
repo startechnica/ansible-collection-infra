@@ -10,6 +10,9 @@ Ansible role and playbooks for automated VM provisioning on VMware vCenter using
   - `community.vmware` >= 6.2.0
   - `vmware.vmware` >= 2.7.0
   - `ansible.utils`
+- `butane` CLI on the controller for ignition presets — downloaded
+  automatically when not on `PATH` (see
+  [instance_ignition](../instance_ignition/README.md#requirements))
 
 Install collections:
 
