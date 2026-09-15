@@ -48,6 +48,10 @@
   containers.podman.podman_image:
     name: "{{ walg_image }}"
     pull: true
+  register: _image_pull
+  retries: 10
+  delay: 20
+  until: _image_pull is succeeded
   when:
     - walg_enabled
     - not walg_build_local

@@ -47,6 +47,10 @@
   community.docker.docker_image:
     name: "{{ _new_image }}"
     source: pull
+  register: _image_pull
+  retries: 10
+  delay: 20
+  until: _image_pull is succeeded
 
 # ── Identify replica set members ─────────────────────────────────────────────
 

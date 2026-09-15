@@ -18,6 +18,9 @@
   when: patroni_vip_address | length > 0
   run_once: true
 
+# Retried: multi-hundred-MB pulls occasionally die mid-blob on transient
+# transport errors ("tls: bad record MAC", "connection reset by peer").
+# Already-copied layers are reused, so a retry only fetches what's left.
 - name: Pull required Docker images
   community.docker.docker_image:
     name: "{{ item }}"
@@ -29,9 +32,17 @@
     - "{{ pgbouncer_image }}"
   loop_control:
     label: "{{ item }}"
+  register: _image_pull
+  retries: 10
+  delay: 20
+  until: _image_pull is succeeded
 
 - name: Pull postgres-exporter image (when enabled)
   community.docker.docker_image:
     name: "{{ postgres_exporter_image }}"
     source: pull
+  register: _image_pull
+  retries: 10
+  delay: 20
+  until: _image_pull is succeeded
   when: postgres_exporter_enabled | bool
