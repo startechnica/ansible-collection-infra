@@ -1,0 +1,114 @@
+---
+# Regression coverage for roles/mongodb/tasks/_engine_bin.yml, which gives the
+# scheduled PBM backup unit the engine's absolute path:
+#   - empty mongodb_container_engine_bin: `command -v mongodb_container_engine`
+#   - set: that path, if it is an executable file
+# Failures name the value that didn't resolve. `sh` and `env` stand in for
+# docker / podman, since every host has them.
+#
+# Run from collection root:
+#   ansible-playbook tests/mongodb_engine_bin.yml
+
+- name: Engine looked up on PATH
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  vars:
+    mongodb_container_engine: sh
+    mongodb_container_engine_bin: ""
+  tasks:
+    - name: Resolve the engine binary
+      ansible.builtin.include_tasks: ../roles/mongodb/tasks/_engine_bin.yml
+
+    - name: Verify the lookup found sh
+      ansible.builtin.assert:
+        that:
+          - _mongodb_engine_bin is search('^/.*/sh$')
+
+# `_mongodb_engine_bin` is a host fact and outlives the play above, so this play
+# expects a different path (env). The engine name is unresolvable on purpose:
+# the override must win without looking it up.
+- name: Override used as is
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  vars:
+    mongodb_container_engine: no-such-engine
+    mongodb_container_engine_bin: /usr/bin/env
+  tasks:
+    - name: Resolve the engine binary
+      ansible.builtin.include_tasks: ../roles/mongodb/tasks/_engine_bin.yml
+
+    - name: Verify the override was used
+      ansible.builtin.assert:
+        that:
+          - _mongodb_engine_bin == '/usr/bin/env'
+
+- name: Engine not on PATH
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  vars:
+    mongodb_container_engine: no-such-engine
+    mongodb_container_engine_bin: ""
+  tasks:
+    - name: Resolve a missing engine
+      block:
+        - name: Resolve the engine binary
+          ansible.builtin.include_tasks: ../roles/mongodb/tasks/_engine_bin.yml
+
+        - name: Fail when it resolved
+          ansible.builtin.fail:
+            msg: _engine_bin.yml resolved an engine that is not on PATH.
+      rescue:
+        - name: Verify the failure names the engine and the override variable
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_result.msg is search('no-such-engine')
+              - ansible_failed_result.msg is search('mongodb_container_engine_bin')
+
+# dash's `command -v` returns success for any existing path, so these two
+# cover the -f / -x tests.
+- name: Override that is not executable
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  vars:
+    mongodb_container_engine: sh
+    mongodb_container_engine_bin: /etc/passwd
+  tasks:
+    - name: Resolve a non-executable override
+      block:
+        - name: Resolve the engine binary
+          ansible.builtin.include_tasks: ../roles/mongodb/tasks/_engine_bin.yml
+
+        - name: Fail when it resolved
+          ansible.builtin.fail:
+            msg: _engine_bin.yml accepted a non-executable override.
+      rescue:
+        - name: Verify the failure names the override
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_result.msg is search("mongodb_container_engine_bin '/etc/passwd'")
+
+- name: Override that is a directory
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  vars:
+    mongodb_container_engine: sh
+    mongodb_container_engine_bin: /usr/bin
+  tasks:
+    - name: Resolve a directory override
+      block:
+        - name: Resolve the engine binary
+          ansible.builtin.include_tasks: ../roles/mongodb/tasks/_engine_bin.yml
+
+        - name: Fail when it resolved
+          ansible.builtin.fail:
+            msg: _engine_bin.yml accepted a directory as the override.
+      rescue:
+        - name: Verify the failure names the override
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_result.msg is search("mongodb_container_engine_bin '/usr/bin'")

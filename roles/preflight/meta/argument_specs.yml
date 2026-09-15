@@ -4,6 +4,8 @@ argument_specs:
     short_description: Shared preflight for Docker-based cluster roles
     description:
       - Validates the Ansible controller has `cryptography` installed, the target host is root/become, Docker is running, and `docker compose` is available.
+      - On hosts in `patroni_nodes`, also checks the Patroni VIP settings (`patroni_vip_address`, `patroni_vip_mask`, `patroni_vip_engine`), importing only patroni's VIP defaults.
+      - Before the docker / podman checks, fails when the `container_engine` binary isn't on PATH.
       - Included as a role dependency by `mongodb` and `patroni`.
     options:
       debug:

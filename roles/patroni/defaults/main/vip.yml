@@ -1,0 +1,24 @@
+---
+# Patroni role defaults: the VIP, a floating IP that follows the primary.
+# The role loads every file in defaults/main/. Another role can import just
+# this file:
+#
+#   - ansible.builtin.import_role:
+#       name: patroni
+#       tasks_from: export_vars
+#       defaults_from: main/vip.yml
+#       vars_from: empty.yml
+#
+# roles/preflight/tasks/patroni_vip.yml does. The VIP engines' own settings
+# are in vip_manager.yml and keepalived.yml.
+
+# VIP engine: "vip-manager" (default), "keepalived", or any other value to disable.
+patroni_vip_engine: "vip-manager"
+
+# Floating IP served by vip-manager/keepalived on the current primary.
+# Empty (default) disables the VIP service entirely (no vip-manager, no
+# keepalived). Set per inventory to enable; patroni_vip_engine picks the implementation.
+# patroni_vip_iface is auto-detected from node_ip at runtime; override to force a specific NIC.
+patroni_vip_address: ""
+patroni_vip_mask: 32
+patroni_vip_iface: ens192

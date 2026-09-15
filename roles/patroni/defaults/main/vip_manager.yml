@@ -1,0 +1,11 @@
+---
+# Patroni role defaults: vip-manager, the default VIP engine.
+# The role loads every file in defaults/main/ (see tasks/export_vars.yml).
+
+vip_manager_version: "4.0.0"
+# Architecture suffix for the vip-manager release binary. Auto-detected
+# from `ansible_architecture` (logic in vars/main/vip_manager.yml :: _vip_manager_arch).
+# Override here in inventory to force a specific value (cross-arch build,
+# air-gapped mirror with a renamed asset, …).
+vip_manager_arch: "{{ _vip_manager_arch }}"
+vip_manager_dir: /opt/vip-manager

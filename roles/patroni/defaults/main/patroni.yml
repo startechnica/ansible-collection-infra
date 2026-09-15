@@ -1,0 +1,43 @@
+---
+# Patroni role defaults: role switches, cluster scope, the Patroni container
+# and the container engine.
+# The role loads every file in defaults/main/ (see tasks/export_vars.yml).
+
+debug: false
+dry_run: false
+
+# Debug mode (rebuild images on deploy)
+debug_mode: false
+
+patroni_enabled: false
+
+# Action dispatcher. See tasks/main.yml header for the full list:
+#   provision (default) | manage-databases | backup | status | health |
+#   switchover | renew-certs | rotate-passwords | uninstall
+patroni_action: provision
+
+# ── Uninstall safety ──
+# patroni_destroy_prune  — when true, also delete PGDATA/etcd data dirs
+#                          (everything under postgresql_root_dir, etcd_data_dir).
+#                          When false (default), keep data; only configs go.
+# patroni_skip_confirm   — when true, skip the interactive 'prune' prompt.
+#                          Mostly for unattended teardowns in CI.
+patroni_destroy_prune: false
+patroni_skip_confirm: false
+
+# Cluster
+patroni_scope: "ha-pg-cluster"
+
+# ── Container engine ──
+# Per-role selector for the container runtime. Falls back to the global
+# `container_engine` (defaults to 'podman' here when neither is set).
+# Set this directly to run patroni on a different engine than mongodb
+# / other roles on the same host group.
+patroni_container_engine: "{{ container_engine | default('podman') }}"
+
+# Patroni container
+patroni_image: "ghcr.io/parmincloud/containers/patroni:4.1.0-pg18"
+patroni_api_port: 8008
+patroni_uid: 999
+patroni_gid: 999
+patroni_dir: /opt/patroni

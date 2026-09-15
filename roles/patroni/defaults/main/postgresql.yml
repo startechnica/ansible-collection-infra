@@ -1,0 +1,73 @@
+---
+# Patroni role defaults: PostgreSQL (version, port, credentials, access,
+# logging, directories, memory, extensions and databases).
+# The role loads every file in defaults/main/ (see tasks/export_vars.yml).
+
+postgresql_version: 18
+postgresql_port: 55432
+
+# Passwords (auto-generated if empty)
+postgresql_postgres_password: ""
+postgresql_replication_password: "" # empty = TLS cert auth for replication
+
+# Direct PostgreSQL access (port {{ postgresql_port }}) — list of CIDRs allowed
+# in pg_hba.conf in addition to: localhost (PgBouncer on the same node) and
+# the cluster's own member nodes (Patroni coordination + replication).
+#
+# For day-to-day app traffic, leave this empty — clients should hit the VIP
+# via HAProxy → PgBouncer. Add CIDRs only when you need direct psql/pgcli
+# from a jump host or admin VPN. Example:
+#   postgresql_admin_cidrs:
+#     - 10.99.0.0/24    # ops VPN
+postgresql_admin_cidrs: []
+
+# PostgreSQL logging: "file", "stdout", or "both"
+postgresql_log_destination: "stdout"
+
+# Host directories
+postgresql_dir: /opt/postgresql
+postgresql_root_dir: "{{ postgresql_dir }}/pgroot"
+postgresql_log_dir: "{{ postgresql_dir }}/pg_log"
+
+# Backup & WAL archiving
+patroni_backup_dir: "{{ postgresql_dir }}/backups"
+wal_archive_dir: "{{ postgresql_dir }}/wal_archive"
+
+# PostgreSQL memory (auto-calculated if empty)
+pg_shared_buffers: ""
+pg_effective_cache: ""
+pg_work_mem: ""
+pg_maint_mem: ""
+
+# PostgreSQL extensions to preload + CREATE EXTENSION on each managed DB.
+#
+#   - pg_stat_statements — query telemetry; always bundled with Postgres core.
+#   - pgaudit            — session/object audit log; ONLY available if the
+#                          `patroni_image` bundles libpgaudit.so (e.g.
+#                          ghcr.io/zalando/spilo-* has it; generic Postgres
+#                          images don't). Adding it to a non-pgaudit image
+#                          makes postmaster fail with:
+#                             FATAL: could not access file "pgaudit":
+#                             No such file or directory
+#     Override `patroni_image` to one that bundles pgaudit before listing it.
+#   - Others (postgis, timescaledb, pg_trgm, ...) follow the same rule —
+#     the image must bundle the .so file.
+patroni_extensions:
+  - pg_stat_statements
+
+# Databases and users to create post-init. Each DB gets all listed extensions applied.
+# Example:
+#   patroni_databases:
+#     - name: app_main
+#       owner: app_main
+#       users:
+#         - name: app_main
+#           password: "{{ vault_app_main_password }}"
+#           roles: [LOGIN, CREATEDB]
+#         - name: app_main_ro
+#           password: "{{ vault_app_main_ro_password }}"
+#           roles: [LOGIN]
+#           grants:
+#             - { privs: "CONNECT", on: "database" }
+#             - { privs: "SELECT", on: "all-tables" }
+patroni_databases: []

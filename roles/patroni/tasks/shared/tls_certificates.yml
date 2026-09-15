@@ -326,7 +326,7 @@
   vars:
     # Flatten _cert_services into one entry per (leaf × ext). Local source
     # dir matches the basename of the remote dir for every service (see
-    # patroni/defaults/main.yml :: *_certs_dir), so we can derive both
+    # patroni/defaults/main/tls.yml :: *_certs_dir), so we can derive both
     # paths from `svc.dir` and never have to repeat directory names here.
     _cert_dist: >-
       {%- set out = [] -%}

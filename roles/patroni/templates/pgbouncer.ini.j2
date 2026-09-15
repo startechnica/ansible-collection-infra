@@ -121,7 +121,7 @@ stats_users = {{ pgbouncer_stats_users }}
 ;
 ; `prefer` accepts TLS and plaintext both, so turning this on doesn't
 ; cut off existing plaintext clients. See pgbouncer_client_tls_sslmode
-; in defaults/main.yml for the ladder up to `require`.
+; in defaults/main/pgbouncer.yml for the ladder up to `require`.
 client_tls_sslmode = {{ pgbouncer_client_tls_sslmode }}
 {% if pgbouncer_client_tls_sslmode != 'disable' %}
 

@@ -15,13 +15,19 @@
 #
 # Or targeted from the CLI with --tags <concern>.
 #
-# Order matters: controller checks run first (no ssh hop), then host basics,
+# Order matters: controller checks run first (no ssh hop), then the Patroni
+# VIP settings check (patroni hosts only), then host basics,
 # then venv (so subsequent modules use psycopg2/pymongo/docker SDK from the
 # venv), then docker, then memory advice last.
 
 - name: Controller-side prerequisites
   ansible.builtin.include_tasks: controller.yml
   tags: [preflight, controller]
+
+- name: Patroni VIP settings (patroni hosts)
+  ansible.builtin.include_tasks: patroni_vip.yml
+  when: "'patroni_nodes' in group_names"
+  tags: [preflight, patroni-vip]
 
 - name: Silence systemd shell-integration OSC noise (FCOS / Fedora 43+)
   ansible.builtin.include_tasks: quiet_systemd_shellint.yml
@@ -60,8 +66,16 @@
 # Container-engine validation. Strictly dispatched on `container_engine`
 # so podman-mode hosts never try to run docker checks (and vice versa).
 # Each branch lives in its own task file for clear separation:
+#   - container_engine_bin.yml: the engine binary is on PATH (either engine)
 #   - docker.yml: docker engine + Compose plugin + docker_login
 #   - podman.yml: podman engine + Quadlet generator + podman_login
+# The binary check runs first: on docker, a CLI missing from PATH would
+# otherwise surface only as "Docker Compose plugin not found".
+- name: Container engine binary on PATH
+  ansible.builtin.include_tasks: container_engine_bin.yml
+  when: container_engine | default('docker') in ['docker', 'podman']
+  tags: [preflight, docker, podman]
+
 - name: Docker engine + Compose plugin (container_engine=docker)
   ansible.builtin.include_tasks: docker.yml
   when: container_engine | default('docker') == 'docker'

@@ -1,0 +1,51 @@
+---
+# Absolute path of the container engine binary, published as
+# `_mongodb_engine_bin` for places that need a path rather than a name: for a
+# bare ExecStart= name systemd only searches a fixed list of directories.
+#
+#   mongodb_container_engine_bin set    that path, if it is an executable file
+#   mongodb_container_engine_bin empty  `command -v mongodb_container_engine`
+#
+# Runs on the host as the user Ansible runs as (root under become), the same
+# user the systemd units run as. The role resolves this itself rather than
+# taking it from preflight, so it works without preflight.
+#
+# Callers: pbm.yml (scheduled PBM backup unit).
+# Regression coverage: tests/mongodb_engine_bin.yml.
+
+- name: Resolve the container engine binary
+  vars:
+    _override: "{{ mongodb_container_engine_bin | default('') | trim }}"
+  block:
+    # `command -v` is a shell builtin (`which` isn't installed everywhere). dash
+    # prints any existing path, executable or not, hence the -f / -x tests. The
+    # value goes in through the environment, not into the command.
+    - name: Find the container engine binary
+      ansible.builtin.shell: p=$(command -v "$ENGINE") && test -f "$p" && test -x "$p" && echo "$p"
+      environment:
+        ENGINE: "{{ _override if _override | length > 0 else mongodb_container_engine }}"
+      register: _mongodb_engine_lookup
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Assert the container engine binary was found
+      vars:
+        _bad_override: >-
+          mongodb_container_engine_bin '{{ _override }}' must be an absolute
+          path to an executable file on this host.
+        _engine_not_found: >-
+          `{{ mongodb_container_engine }}` is not on PATH for the user Ansible
+          runs as on this host (root under become). Install it, or set
+          mongodb_container_engine_bin to its absolute path.
+      ansible.builtin.assert:
+        that:
+          - _mongodb_engine_lookup.rc == 0
+          - _mongodb_engine_lookup.stdout is match('/')
+        fail_msg: "{{ _bad_override if _override | length > 0 else _engine_not_found }}"
+        success_msg: "{{ mongodb_container_engine }}: {{ _mongodb_engine_lookup.stdout }}"
+        quiet: true
+
+    - name: Publish the container engine binary path
+      ansible.builtin.set_fact:
+        _mongodb_engine_bin: "{{ _mongodb_engine_lookup.stdout }}"

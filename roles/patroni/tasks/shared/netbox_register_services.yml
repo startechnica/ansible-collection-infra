@@ -1,6 +1,6 @@
 ---
 # Register every patroni_services entry against every patroni_nodes
-# member in NetBox. The service catalog itself lives in vars/main.yml
+# member in NetBox. The service catalog itself lives in vars/main/services.yml
 # (postgres_exporter_enabled gates the exporter entry), so this file
 # owns only the per-host dispatch into netbox_register's register_services
 # task.

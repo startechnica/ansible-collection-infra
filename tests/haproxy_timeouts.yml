@@ -14,13 +14,18 @@
   hosts: localhost
   gather_facts: false
   connection: local
-  vars_files:
-    - ../roles/patroni/defaults/main.yml
   vars:
     _hap_render_dir: /tmp/haproxy-timeouts-test
     node_ips: ["10.0.0.11", "10.0.0.12", "10.0.0.13"]
 
   tasks:
+    # Loads every file in patroni's defaults/main/ and vars/main/, the same
+    # variables the role sees. Runs no tasks.
+    - name: Import patroni role variables
+      ansible.builtin.import_role:
+        name: patroni
+        tasks_from: export_vars
+
     - name: Verify timeout defaults
       ansible.builtin.assert:
         that:
@@ -30,7 +35,7 @@
           - haproxy_client_timeout == '300s'
           - haproxy_server_timeout == '300s'
           - haproxy_connect_timeout == '10s'
-          # Long by design; see defaults/main.yml for why this is safe.
+          # Long by design; see defaults/main/haproxy.yml for why this is safe.
           - haproxy_tunnel_timeout == '24h'
           # Must stay well under the tunnel timeout so half-closed
           # connections don't pin FDs for hours.

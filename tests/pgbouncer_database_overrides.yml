@@ -15,8 +15,6 @@
   hosts: localhost
   gather_facts: false
   connection: local
-  vars_files:
-    - ../roles/patroni/defaults/main.yml
   vars:
     _pgb_render_dir: /tmp/pgbouncer-overrides-test
     # The GitLab shape: Rails databases opt into transaction pooling, Praefect
@@ -27,12 +25,19 @@
       - { name: gitlab_main, dbname: gitlabhq_production, pool_mode: transaction, pool_size: 100 }
 
   tasks:
+    # Loads every file in patroni's defaults/main/ and vars/main/, the same
+    # variables the role sees. Runs no tasks.
+    - name: Import patroni role variables
+      ansible.builtin.import_role:
+        name: patroni
+        tasks_from: export_vars
+
     - name: Verify overrides default to empty and session is the global default
       ansible.builtin.assert:
         that:
           # Empty default keeps existing deployments byte-identical.
           - pgbouncer_database_overrides == []
-          # Session must stay the global fallback — see defaults/main.yml.
+          # Session must stay the global fallback — see defaults/main/pgbouncer.yml.
           - pgbouncer_pool_mode == 'session'
 
     - name: Recreate render directory

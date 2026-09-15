@@ -273,8 +273,37 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   downloading) when Stage 2 would fail, so `--tags validate` reports it. The
   probe uses `butane --version` instead of `which`, which minimal controller
   images don't have.
+- **`preflight` checks the container engine binary is on PATH.** Before the
+  docker / podman checks, preflight looks up `container_engine` with
+  `command -v` and fails, naming the engine, when it isn't on PATH. On docker a
+  missing CLI used to surface only as "Docker Compose plugin not found". Can be
+  called on its own with
+  `include_role: {name: preflight, tasks_from: container_engine_bin}`.
+  Regression coverage: `tests/preflight_container_engine_bin.yml`.
+- **`preflight` checks the Patroni VIP settings.** On hosts in `patroni_nodes`,
+  preflight now fails when `patroni_vip_address` is set but `patroni_vip_mask`
+  is empty or `patroni_vip_engine` isn't `vip-manager` / `keepalived`, the same
+  assert the patroni role runs later in its engine preflight. It runs right
+  after the controller checks, before preflight changes anything on the hosts,
+  and can be called on its own with
+  `include_role: {name: preflight, tasks_from: patroni_vip}`. It imports only
+  patroni's VIP settings (`defaults_from: main/vip.yml`), not the rest of
+  patroni's variables. Regression coverage: `tests/preflight_patroni_vip.yml`.
 
 ### Changed
+- **`patroni` defaults and vars are split into one file per component.**
+  `roles/patroni/defaults/main.yml` is now a `defaults/main/` directory:
+  `patroni.yml`, `postgresql.yml`, `etcd.yml`, `haproxy.yml`, `pgbouncer.yml`,
+  `walg.yml`, `s3.yml`, `vip.yml`, `vip_manager.yml`, `keepalived.yml`,
+  `postgres_exporter.yml`, `tls.yml`, `standby.yml` and `artifacts.yml`.
+  `vars/main.yml` is now `vars/main/services.yml` and `vars/main/vip_manager.yml`.
+  The role loads every file, so variable names, values and behaviour are
+  unchanged. Another role can import one component with
+  `defaults_from: main/<component>.yml` and `vars_from: empty.yml`
+  (`vars/empty.yml` is deliberately empty, so none of the computed vars come
+  along). Playbooks or tests that load `roles/patroni/defaults/main.yml` by path
+  must import the role instead:
+  `import_role: {name: patroni, tasks_from: export_vars}`.
 - **`grafana_alloy` engine fallback follows `instance_platform_preset`.**
   `grafana_alloy_container_engine` now defaults to common's
   `_resolved_container_engine` (loaded through `common` `export_vars`) instead
@@ -321,6 +350,13 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   supported kernel/OS before deploying MongoDB.
 
 ### Fixed
+- **Scheduled PBM backups needed the container engine in `/usr/bin`.**
+  `mongodb-pbm.service` ran `/usr/bin/docker` or `/usr/bin/podman`, so on a
+  host with the engine installed elsewhere the unit failed with
+  `status=203/EXEC`. The unit now runs the path the host reports
+  (`command -v`), or `mongodb_container_engine_bin` when it is set. An override
+  must be an absolute path to an executable file on the host. Regression
+  coverage: `tests/mongodb_engine_bin.yml`.
 - **Image pulls failed the run on one transient network error.** A large pull
   such as `patroni:4.1.0-pg18` could die mid-blob with
   `tls: bad record MAC` and stop the play. The Patroni image pulls (podman and

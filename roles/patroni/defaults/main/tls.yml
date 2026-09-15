@@ -1,0 +1,34 @@
+---
+# Patroni role defaults: TLS certificates (key settings, per-service
+# directories, shared CA).
+# The role loads every file in defaults/main/ (see tasks/export_vars.yml).
+
+# TLS certificate validity (days)
+tls_cert_days: 3650
+
+# Key algorithm: ECC (ECDSA) by default — sha384 digest pairs with secp384r1.
+# Set tls_key_type: RSA with tls_key_size: 4096 to fall back to RSA.
+tls_key_type: ECC
+tls_key_curve: secp384r1
+tls_key_size: 4096
+tls_signature_digest: sha384
+
+# Renew_certs subset selector — list of cert names to inspect/regenerate
+# (e.g. ['patroni', 'haproxy', 'pgbouncer']). Empty (default) skips the
+# inspection loop; pass via `-e` for a targeted renew.
+patroni_certs_to_inspect: []
+
+# Certificate directories on the hosts
+certs_dir: "{{ patroni_dir }}/tls"
+patroni_ca_dir: "{{ certs_dir }}/ca"
+etcd_certs_dir: "{{ certs_dir }}/etcd"
+patroni_certs_dir: "{{ certs_dir }}/patroni"
+haproxy_certs_dir: "{{ certs_dir }}/haproxy"
+pgbouncer_certs_dir: "{{ certs_dir }}/pgbouncer"
+vip_manager_certs_dir: "{{ certs_dir }}/vip-manager"
+
+# Shared CA for cross-cluster TLS trust. Empty (default) = each cluster mints its
+# own self-signed "{{ patroni_scope }}-ca". Set to a controller-local dir holding
+# ca.crt + ca.key to reuse ONE CA across primary + standby, so the standby's
+# verify-ca stream trusts the primary's server cert. See §6a of the design doc.
+patroni_shared_ca_dir: ""

@@ -39,6 +39,11 @@ mongodb_tls_dir: "{{ mongodb_root_dir }}/ssl"
 # Set this directly to run mongodb on a different engine than patroni
 # / other roles on the same host group.
 mongodb_container_engine: "{{ container_engine | default('podman') }}"
+# Absolute path of the engine binary, for places that need a path rather than a
+# name (the scheduled PBM backup unit's ExecStart=). Empty (default) looks the
+# engine up on each host with `command -v`. Set it to override the lookup, e.g.
+# when the engine isn't on root's PATH; it must be an executable file.
+mongodb_container_engine_bin: ""
 
 # ── Container image ──
 mongodb_image_registry: docker.io
