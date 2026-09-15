@@ -11,9 +11,11 @@ Each pipeline is independently toggled. The `config.alloy` is assembled from
 role variables; you do not hand-write it.
 
 Runs via **docker** (compose) or **podman** (Quadlet under
-`/etc/containers/systemd/`), selected by `container_engine` — the same
-dual-engine pattern as the `mongodb` / `patroni` roles, so it works on both
-cloud-init (Ubuntu) and Ignition (FCOS) hosts.
+`/etc/containers/systemd/`), selected by `grafana_alloy_container_engine` — the
+same dual-engine pattern as the `mongodb` / `patroni` roles, so it works on both
+cloud-init (Ubuntu) and Ignition (FCOS) hosts. When you don't set it, the engine
+comes from `container_engine`, then from the `instance_platform_preset` row
+(`docker` for Ubuntu, Debian, SLES and Flatcar presets), then `podman`.
 
 ## Secrets
 
@@ -88,6 +90,7 @@ on `http://<host>:{{ '{{' }} grafana_alloy_listen_port {{ '}}' }}` (default 1234
 | Variable | Default | Purpose |
 |---|---|---|
 | `grafana_alloy_enabled` | `false` | Master switch |
+| `grafana_alloy_container_engine` | `container_engine` → preset row → `podman` | `docker` or `podman` |
 | `grafana_alloy_version` | `v1.12.1` | Image tag |
 | `grafana_alloy_logs_enabled` | `true` | journald → Loki |
 | `grafana_alloy_metrics_enabled` | `true` | node metrics → Prometheus |

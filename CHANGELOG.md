@@ -240,8 +240,24 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   restrict who can reach it with a `haproxy-direct` key in
   `firewall_service_source_map` (otherwise it is open from any source, like
   `haproxy-primary`). The port is also added to `net.ipv4.ip_local_reserved_ports`.
+- **`common` role `export_vars` entry point.** A no-op anchor like the
+  `mongodb` / `patroni` ones: `import_role: {name: common, tasks_from: export_vars}`
+  loads `_platform_map`, `_platform_preset` and the `_resolved_*` platform-preset
+  fallbacks (`_resolved_container_engine`, `_resolved_instance_init_type`,
+  `_resolved_instance_user_name`, …) into the play without running tasks or
+  setting host facts. Consumers read the `_resolved_*` names; the bare names are
+  still only overwritten by `resolve_platform_preset`.
 
 ### Changed
+- **`grafana_alloy` engine fallback follows `instance_platform_preset`.**
+  `grafana_alloy_container_engine` now defaults to common's
+  `_resolved_container_engine` (loaded through `common` `export_vars`) instead
+  of `container_engine | default('podman')`. When `container_engine` is unset or
+  empty, the engine comes from the preset row (`docker` for Ubuntu, Debian,
+  SLES and Flatcar presets) before falling back to `podman`. Standalone runs on
+  those presets that relied on the old `podman` fallback now get `docker`; set
+  `grafana_alloy_container_engine: podman` to keep it. Runs where
+  `container_engine` is set are unchanged.
 - **Patroni HAProxy connection limits raised and made observable.**
   `global maxconn` `1000` → `4000`, and the `pg-primary` server lines `maxconn`
   `100` → `1000` (matching PgBouncer's `max_client_conn = 1000`). Every listener

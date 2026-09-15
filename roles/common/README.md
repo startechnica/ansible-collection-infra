@@ -20,6 +20,7 @@ sense — it's a **bag of named task files** you pick from via `tasks_from:`.
 | `inherit_localhost_vars` | any play context | Copies non-magic vars from `hostvars['localhost']` onto the current host via a temp-file + `include_vars` trick. Used as a pre_task to surface controller-side facts (artifacts_dir, instance_tags, etc.) inside service roles. |
 | `build_host_groups` | `hosts: localhost` | Consumes the `instances` list and dispatches entries into `cluster_nodes` + (optionally) `mongodb_nodes` / `patroni_nodes` groups via `add_host`. Connection params (user, key, port) are stitched in from `default_user` and `instance_ssh_configs`. |
 | `validate_inventory` | `hosts: localhost` | Fail-fast assertions — catches S3 all-or-nothing, missing `patroni_scope`, `patroni_vip_engine` without `patroni_vip_address`, malformed `databases[]`, etc. Invoked as Stage 0 of `deploy.yml` via the `always` tag. |
+| `export_vars` | any play context | No-op anchor. `import_role` it to load `_platform_map`, `_platform_preset` and the `_resolved_*` platform-preset fallbacks into the play without running tasks or setting host facts. |
 
 Each one has a detailed comment header inside its task file and is
 documented with `argument_specs` in [meta/argument_specs.yml](meta/argument_specs.yml).
@@ -64,9 +65,27 @@ When `use_tags: true`:
 
 Takes no parameters. Reads inventory vars and asserts.
 
+### `export_vars`
+
+Takes no parameters and runs no tasks. Import it from another role to read
+common's platform vars (`include_role` only exposes them with `public: true`):
+
+```yaml
+- ansible.builtin.import_role:
+    name: common
+    tasks_from: export_vars
+```
+
+- Read `_resolved_container_engine`, `_resolved_instance_init_type`,
+  `_resolved_instance_user_name`, etc. The bare `container_engine` /
+  `instance_init_type` / … are only overwritten by `resolve_platform_preset`.
+- Each host resolves the values from its own `instance_platform_preset` and
+  bare names, so set those in `all.vars`.
+- The vars are visible to every host in the play and last only for that play.
+
 ## Design notes
 
-- **Localhost-first:** every task except `inherit_localhost_vars` expects to
+- **Localhost-first:** every task except `inherit_localhost_vars` and `export_vars` expects to
   run in a `hosts: localhost` context. They're orchestration primitives,
   not target-side tasks.
 - **No side-effects on skip:** each task file is safe to `include_role`
