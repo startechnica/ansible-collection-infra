@@ -7,6 +7,52 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
 ## 1.0.3 (unreleased)
 
 ### Breaking changes
+- **Every `mongodb` role variable is now `mongodb_`-prefixed, and
+  `defaults/main.yml` is split into `defaults/main/*.yml`.** The split mirrors
+  `patroni`: one file per topic (`mongodb`, `engine`, `system`, `ports`,
+  `resources`, `tls`, `auth`, `backup`, `pbm`, `s3`, `exporter`, `artifacts`),
+  so a consumer can import one slice with `defaults_from` instead of all 90
+  variables. `vars/main.yml` is split the same way, and `vars/empty.yml` is
+  added for the `vars_from: empty.yml` narrow-import idiom.
+
+  21 variables are renamed with **no aliases** — an old name is silently
+  ignored and the role default applies. Full table + migration:
+  [docs/UPGRADING.md](docs/UPGRADING.md). In brief: `mongod_*` / `configsvr_*` /
+  `mongos_*` gain the prefix (`mongod_mem_limit_mb` →
+  `mongodb_mongod_mem_limit_mb`, and likewise for `_oom_score_adj` and
+  `_tls_mode`); `ssl_days` / `ssl_ca_days` become `mongodb_tls_days` /
+  `mongodb_tls_ca_days`; `tls_key_{type,curve,size}` and
+  `s3_{endpoint,bucket,access_key,secret_key,region,force_path_style,client_image}`
+  gain the prefix.
+
+  **The S3 rename fails quietly, so read this one.** `s3_*` is still a valid
+  variable — it belongs to `patroni` now. A dual-stack inventory that set it
+  once for both roles keeps validating and keeps running, but mongodb no longer
+  sees it: `mongodb_s3_bucket` is empty, so `mongodb_backup_mode` falls back to
+  `local` and **scheduled MongoDB backups stop being uploaded to S3** while
+  still succeeding locally. Add a `mongodb_s3_*` set (it may name the same
+  bucket) before the next run.
+
+  **Why:** `tls_key_curve` was defined by both roles with *different* values
+  (`secp256r1` vs `secp384r1`) and both feed certificate generation, so
+  whichever role's defaults loaded last silently chose the curve for the
+  other's certificates. That collision is what forced cross-role imports to
+  stay narrow, and it would have recurred with every new shared name. The two
+  roles now share no variable name except the collection-wide `debug`, which
+  `tests/preflight_mem_budget.yml` asserts by diffing the two defaults
+  directories — so the next collision fails a test instead of mis-issuing a
+  certificate.
+- **Renamed `pgbouncer_default_pool_size` → `patroni_pgbouncer_default_pool_size`,
+  and changed its default from `20` to `50`.** The old variable was **dead**:
+  `templates/pgbouncer.ini.j2` hardcoded `default_pool_size = 50` and never read
+  it, so the effective pool size has always been 50 no matter what inventory
+  said. The new default is that 50, which means **the rendered config does not
+  change**. Wiring the old name up as-is would instead have cut every
+  deployment that set it from 50 server connections per pool to 20 — a silent
+  capacity reduction caused by fixing the bug — so it is renamed rather than
+  switched on. No alias; a leftover `pgbouncer_default_pool_size` is ignored,
+  exactly as it was before. Migration:
+  [docs/UPGRADING.md](docs/UPGRADING.md).
 - **Removed `s3_retain_days`.** Remote (S3) backup retention now always follows
   `mongodb_backup_retain_days` — the var was a needless second knob (its default
   was already `{{ mongodb_backup_retain_days }}`). Only affects deployments that
@@ -32,6 +78,56 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   it before the next run. Migration: [docs/UPGRADING.md](docs/UPGRADING.md).
 
 ### Added
+- **PostgreSQL connection budget in preflight (`pg_connections.yml`).** The
+  connection analogue of the memory budget, and the same failure shape: several
+  independently-sized consumers of one resource with nothing adding them up.
+  PgBouncer's pool sizes are **per (user, database) pair**, so the demand is a
+  *product* — adding one application database silently adds
+  `default_pool_size + reserve_pool_size` real PostgreSQL backends. The check
+  reports `(pool + reserve) x pairs + bypass + overhead` against
+  `max_connections` on every run, warns when it overflows, and fails when
+  `patroni_pg_conn_strict: true`. New knobs: `patroni_pg_conn_overhead`
+  (default `20` — `superuser_reserved_connections`, Patroni's monitoring
+  connection, the exporter, WAL-G, admin sessions) and `patroni_pg_conn_strict`
+  (default `false`). The pair count is derived from `patroni_databases` —
+  every declared user under every declared database, plus PgBouncer's own
+  `auth_query` pool — in `vars/main/connections.yml`, so it needs no
+  maintenance.
+
+  **This surfaces an existing over-commitment.** At the shipped defaults the
+  budget runs out at the **third** user/database pair, not the fourth:
+  `3 x (50 + 10) + 20 bypass + 20 overhead = 220` against `max_connections`
+  200. Any inventory declaring one database with two users is already at three
+  pairs once PgBouncer's auth pool is counted, and will now print a warning.
+  Such clusters are fine in practice — PgBouncer fills pools on demand and they
+  are never all saturated at once — which is exactly why this needed a check
+  rather than an incident to surface it. The defaults are deliberately **not**
+  adjusted to make the warning go away: `50`/`10` are the values the template
+  has always rendered, so changing them would re-size live pools, and raising
+  `max_connections` would put every existing cluster into `pending_restart`.
+  Lower `patroni_pgbouncer_default_pool_size`, or raise
+  `patroni_pg_max_connections` and accept the rolling restart.
+- **`patroni_pg_max_connections`, reconciled post-bootstrap.** PostgreSQL's
+  `max_connections` was the literal `200` in `templates/patroni.yml.j2`, so the
+  ceiling every connection cap in the role was reasoned against could not be
+  read, checked or raised from inventory. It is now a variable defaulting to the
+  same `200`. Because `bootstrap.dcs.postgresql.parameters` is only consumed at
+  first cluster init, `shared/reconcile_pg_parameters.yml` pushes the value to
+  DCS via `patronictl edit-config` when the two differ — the same bridge
+  `reconcile_archiving.yml` provides for `archive_command`, and without it the
+  new variable would have done nothing on every existing cluster. It is a
+  postmaster parameter, so a change leaves members in `pending_restart`: the
+  role reports the restart order (replicas first, leader last — reversed when
+  lowering the value, since a replica below the primary's `max_connections`
+  refuses to start) and never restarts anything itself.
+- **PgBouncer pool sizing is configurable** —
+  `patroni_pgbouncer_max_client_conn` (1000),
+  `patroni_pgbouncer_default_pool_size` (50),
+  `patroni_pgbouncer_reserve_pool_size` (10) and
+  `patroni_pgbouncer_min_pool_size` (10). All four were hardcoded in
+  `templates/pgbouncer.ini.j2`; each default is the literal that template
+  already rendered, so the output is byte-identical until one is set. See
+  Breaking changes for why `default_pool_size` is a rename.
 - **Per-database PgBouncer pool modes (`pgbouncer_database_overrides`).**
   PgBouncer resolves an exact database name before its `*` fallback, so a
   single pooler can serve databases needing different pool modes. Each list
@@ -207,7 +303,7 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   mongos, so keep it off on sharded clusters. Both
   `mongodb_backup` and `mongodb_restore` gained `tls`/`tls_host_ca_file`/
   `tls_cert_file` params; the backup/restore tasks now auto-pass TLS when
-  `mongos_tls_mode` is `requireTLS`/`preferTLS`, so backups keep working if
+  `mongodb_mongos_tls_mode` is `requireTLS`/`preferTLS`, so backups keep working if
   mongos is hardened to `requireTLS`.
 
 - **Content-library OVA import is now retried** — the auto-import path wraps the
@@ -302,9 +398,9 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   | vip-manager | `vip_manager_oom_score_adj` | -500 |
   | haproxy | `haproxy_oom_score_adj` | -300 |
   | pgbouncer | `pgbouncer_oom_score_adj` | -300 |
-  | mongod | `mongod_oom_score_adj` | 0 |
-  | configsvr | `configsvr_oom_score_adj` | 0 |
-  | mongos | `mongos_oom_score_adj` | 500 |
+  | mongod | `mongodb_mongod_oom_score_adj` | 0 |
+  | configsvr | `mongodb_configsvr_oom_score_adj` | 0 |
+  | mongos | `mongodb_mongos_oom_score_adj` | 500 |
   | pbm-agent | `mongodb_backup_pbm_oom_score_adj` | 800 |
   | exporters | `{mongodb,postgres}_exporter_oom_score_adj` | 1000 |
 
@@ -418,7 +514,7 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   `tests/preflight_mem_budget.yml` (suffix parsing, both roles' aggregates,
   strict-mode boundaries at exactly RAM and RAM+1) plus strict-mode coverage in
   the preflight molecule scenario, which is what CI actually runs.
-- **Raised `mongos_mem_limit_mb` from 512 to 1024.** mongod and configsvr get
+- **Raised `mongodb_mongos_mem_limit_mb` from 512 to 1024.** mongod and configsvr get
   `--wiredTigerCacheSizeGB` at 50% of their cap, so they self-throttle and the
   cgroup limit is a backstop they should never reach. mongos has no equivalent
   knob: its footprint is per-connection thread stacks, cross-shard sort/merge

@@ -1,0 +1,11 @@
+---
+# MongoDB role defaults: host-side service ports.
+# The role loads every file in defaults/main/ (see tasks/export_vars.yml).
+#
+# These are the ports each service binds on the HOST. The port used for
+# `<engine> exec ... mongosh --port` differs on docker (bridge networking means
+# every container binds 27017 internally) — see vars/main/ports.yml.
+
+mongodb_mongos_node_port: 27017
+mongodb_configsvr_node_port: 27018
+mongodb_mongod_node_port: 27019

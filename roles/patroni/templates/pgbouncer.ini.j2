@@ -45,8 +45,10 @@ auth_type = scram-sha-256
 ; max seconds client has to authenticate before being dropped
 client_login_timeout = 60
 
-; number of server connections per user/database pair
-default_pool_size = 50
+; number of server connections per user/database pair — REAL PostgreSQL
+; backends, multiplied by the number of pairs. See patroni_pg_conn_overhead
+; in defaults/main/postgresql.yml for how this fits under max_connections.
+default_pool_size = {{ patroni_pgbouncer_default_pool_size }}
 
 ; startup parameters pgbouncer should ignore from clients
 ignore_startup_parameters = extra_float_digits,search_path,application_name
@@ -69,14 +71,14 @@ log_pooler_errors = 1
 ; log aggregated stats periodically
 log_stats = 1
 
-; max total client connections allowed
-max_client_conn = 1000
+; max total client connections allowed (pooled clients, not backends)
+max_client_conn = {{ patroni_pgbouncer_max_client_conn }}
 
 ; cache prepared statements in transaction/statement mode
 max_prepared_statements = 128
 
 ; minimum server connections kept open per pool
-min_pool_size = 10
+min_pool_size = {{ patroni_pgbouncer_min_pool_size }}
 
 ; pooling mode: session, transaction, or statement
 pool_mode = {{ pgbouncer_pool_mode }}
@@ -87,8 +89,9 @@ query_timeout = 0
 ; max seconds a client waits for a server connection
 query_wait_timeout = 120
 
-; extra connections above default_pool_size for burst traffic
-reserve_pool_size = 10
+; extra connections above default_pool_size for burst traffic — also per pair,
+; so each pair's worst case is (default_pool_size + reserve_pool_size)
+reserve_pool_size = {{ patroni_pgbouncer_reserve_pool_size }}
 
 ; seconds before reserve pool connections are used
 reserve_pool_timeout = 3

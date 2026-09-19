@@ -100,13 +100,26 @@ all:
             grants:
               - { privs: ALL, on_type: database, on_target: app_primary }
 
-    # ── S3 backups (shared by MongoDB and Patroni) ──────────────────────────
+    # ── S3 backups ──────────────────────────────────────────────────────────
+    # Each role has its own credential set: patroni's WAL-G and etcd snapshots
+    # read s3_*, mongodb's backups and PBM read mongodb_s3_*. They can point at
+    # the same bucket, as here, but both must be set — neither role falls back
+    # to the other's values.
     s3_endpoint: https://s3.example.com
     s3_bucket: <your-project>-backups
     s3_access_key: "{{ vault_s3_access_key }}"
     s3_secret_key: "{{ vault_s3_secret_key }}"
     s3_region: us-east-1
-    s3_prefix: <your-project>
+
+    mongodb_s3_endpoint: https://s3.example.com
+    mongodb_s3_bucket: <your-project>-backups
+    mongodb_s3_access_key: "{{ vault_s3_access_key }}"
+    mongodb_s3_secret_key: "{{ vault_s3_secret_key }}"
+    mongodb_s3_region: us-east-1
+
+    # Key prefixes keep the two stacks' objects apart inside one bucket.
+    patroni_walg_s3_prefix: <your-project>/patroni
+    mongodb_backup_s3_prefix: <your-project>/mongodb
     walg_retention: 14 # keep 14 full Patroni backups
     mongodb_backup_retain_days: 14 # keep 14 days of MongoDB dumps
 

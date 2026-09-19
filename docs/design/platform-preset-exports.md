@@ -113,7 +113,7 @@ must switch in the same change that deletes the resolver (see Phase 5).
 | `roles/grafana_alloy/defaults/main.yml` | 22 | `container_engine \| default('podman')` | `_resolved_container_engine` — **done** |
 | `roles/grafana_alloy/tasks/main.yml` | top | — | import common `export_vars` — **done** |
 | `roles/grafana_alloy/meta/argument_specs.yml` | 26–28 | documented default | match defaults — **done** |
-| `roles/mongodb/defaults/main.yml` | 41 | `container_engine \| default('podman')` | `_resolved_container_engine` |
+| `roles/mongodb/defaults/main/engine.yml` | 9 | `container_engine \| default('podman')` | `_resolved_container_engine` |
 | `roles/mongodb/tasks/main.yml` | top | — | import common `export_vars` |
 | `roles/mongodb/tasks/export_vars.yml` | — | task-free | import common `export_vars`, so `mongodb_smoke` (reads `mongodb_container_engine`) still resolves |
 | `roles/patroni/defaults/main/patroni.yml` | 36 | `container_engine \| default('podman')` | `_resolved_container_engine` |

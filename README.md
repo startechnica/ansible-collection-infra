@@ -272,11 +272,17 @@ patroni_scope: <unique-scope>   # e.g. projectname-pg
 patroni_vip_address: "<unused-ip-on-subnet>"    # floating IP for leader
 # postgresql_postgres_password: ""         # leave empty to auto-generate
 
-# S3 backups (optional; shared by mongodb + patroni)
+# S3 backups (optional). Per-role credential sets: s3_* drives patroni's
+# WAL-G + etcd snapshots, mongodb_s3_* drives mongodb's backups + PBM.
+# Set both on a node running both stacks, even for one bucket.
 s3_endpoint: "https://s3.example.com"
 s3_bucket: "backups"
 s3_access_key: "..."
 s3_secret_key: "..."
+mongodb_s3_endpoint: "https://s3.example.com"
+mongodb_s3_bucket: "backups"
+mongodb_s3_access_key: "..."
+mongodb_s3_secret_key: "..."
 ```
 
 NetBox connection + vCenter credentials are best kept in

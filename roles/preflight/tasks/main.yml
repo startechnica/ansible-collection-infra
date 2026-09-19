@@ -18,7 +18,9 @@
 # Order matters: controller checks run first (no ssh hop), then the Patroni
 # VIP settings check (patroni hosts only), then host basics,
 # then venv (so subsequent modules use psycopg2/pymongo/docker SDK from the
-# venv), then docker, then memory advice last.
+# venv), then docker, then the resource budgets (memory, PostgreSQL
+# connections) last — those are advisory arithmetic, not prerequisites, so
+# nothing below them depends on their outcome.
 
 - name: Controller-side prerequisites
   ansible.builtin.include_tasks: controller.yml
@@ -89,3 +91,9 @@
 - name: Memory advisory
   ansible.builtin.include_tasks: memory.yml
   tags: [preflight, memory]
+
+# Self-skipping: does nothing unless the caller passes pg_conn_max, so only
+# PostgreSQL callers ever trigger it.
+- name: PostgreSQL connection budget advisory
+  ansible.builtin.include_tasks: pg_connections.yml
+  tags: [preflight, pg-connections]

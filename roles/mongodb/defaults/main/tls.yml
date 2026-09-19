@@ -1,0 +1,40 @@
+---
+# MongoDB role defaults: TLS key settings, certificate validity, PKI naming and
+# per-service TLS modes.
+# The role loads every file in defaults/main/ (see tasks/export_vars.yml).
+#
+# Everything here is mongodb_-prefixed, including the key settings. They used to
+# be bare "tls_key_type" / "tls_key_curve" / "tls_key_size", which COLLIDED with
+# patroni's identically-named defaults — and the curve differed (secp256r1 here,
+# secp384r1 there). A role that imported patroni's defaults wholesale silently
+# changed the curve of every certificate this role then generated, which is why
+# the cross-role memory-budget import had to be kept narrow. With the prefix the
+# two roles share no name at all except `debug`.
+
+# ── Certificate validity (days) ──
+# Formerly "ssl_days" / "ssl_ca_days". Renamed to tls_ so the whole block reads
+# as one family and matches patroni's tls_cert_days — nothing here has spoken
+# SSL rather than TLS for a very long time.
+mongodb_tls_days: 365
+mongodb_tls_ca_days: 3650
+
+# Key algorithm: ECC (ECDSA) by default — MongoDB 4.0+ / drivers all support it.
+# Set mongodb_tls_key_type: RSA with mongodb_tls_key_size: 4096 to fall back to RSA.
+mongodb_tls_key_type: ECC
+mongodb_tls_key_curve: secp256r1
+mongodb_tls_key_size: 4096
+
+# ── PKI naming (single source for CSR subjects and MONGODB-X509 auth DNs) ──
+mongodb_pki_o: MongoDB
+mongodb_pki_member_ou: MongoDBCluster
+mongodb_pki_client_ou: MongoDBClient
+mongodb_pki_ca_cn: MongoDB-CA
+mongodb_healthcheck_cn: mongodb-healthcheck
+mongodb_exporter_cn: mongodb-exporter
+
+# ── TLS mode ──
+# mongod/configsvr: always requireTLS for inter-member security
+# mongos: preferTLS so clients can optionally connect without TLS
+mongodb_mongod_tls_mode: requireTLS
+mongodb_configsvr_tls_mode: requireTLS
+mongodb_mongos_tls_mode: preferTLS

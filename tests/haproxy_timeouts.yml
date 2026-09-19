@@ -140,17 +140,40 @@
         that:
           - patroni_haproxy_direct_server_maxconn | int < patroni_haproxy_primary_server_maxconn | int
           - patroni_haproxy_direct_server_maxconn | int < patroni_haproxy_replicas_server_maxconn | int
-          # Real headroom check: PgBouncer's pools plus the bypass path have to
-          # fit inside PostgreSQL's max_connections with room for Patroni, the
-          # exporter and WAL-G. 60 is default_pool_size + reserve_pool_size.
-          - (patroni_haproxy_direct_server_maxconn | int) + 60 < 200
+          # Real headroom check: the bypass path plus ONE PgBouncer pair's
+          # worst case has to still leave room under max_connections. Read from
+          # the variables rather than written as literals — when these were
+          # hardcoded 60 and 200 here, the 200 was itself a literal in
+          # patroni.yml.j2 and the 60 came from values the template ignored.
+          - (patroni_haproxy_direct_server_maxconn | int) + (_pair_worst_case | int)
+            < (patroni_pg_max_connections | int)
         fail_msg: >-
           pg-direct's per-server maxconn
           ({{ patroni_haproxy_direct_server_maxconn }}) is no longer small
           relative to the pooled listeners. Every connection on that path is a
-          real PostgreSQL backend competing for max_connections (200) with
-          PgBouncer's pools — see patroni_haproxy_direct_server_maxconn in
-          defaults/main/haproxy.yml.
+          real PostgreSQL backend competing for max_connections
+          ({{ patroni_pg_max_connections }}) with PgBouncer's pools
+          ({{ _pair_worst_case }} per user/database pair) — see
+          patroni_haproxy_direct_server_maxconn in defaults/main/haproxy.yml.
+      vars:
+        _pair_worst_case: >-
+          {{ (patroni_pgbouncer_default_pool_size | int)
+             + (patroni_pgbouncer_reserve_pool_size | int) }}
+
+    # The pooled listeners exist to feed PgBouncer, so HAProxy must not be able
+    # to offer it more clients than it will accept — excess would be accepted by
+    # HAProxy and then dropped by PgBouncer, which looks like a network fault
+    # rather than a capacity limit.
+    - name: Verify the pooled listeners cannot overrun PgBouncer's client cap
+      ansible.builtin.assert:
+        that:
+          - patroni_haproxy_primary_server_maxconn | int <= patroni_pgbouncer_max_client_conn | int
+          - patroni_haproxy_replicas_server_maxconn | int <= patroni_pgbouncer_max_client_conn | int
+        fail_msg: >-
+          A pooled listener's per-server cap exceeds
+          patroni_pgbouncer_max_client_conn
+          ({{ patroni_pgbouncer_max_client_conn }}), so HAProxy would accept
+          clients PgBouncer then refuses.
 
     # Each frontend must sit above its own server cap (so excess queues inside
     # HAProxy instead of being refused at accept), and their sum must sit below

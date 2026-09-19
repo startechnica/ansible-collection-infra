@@ -1,0 +1,60 @@
+---
+# MongoDB role defaults: per-container memory caps and OOM victim ordering.
+# The role loads every file in defaults/main/ (see tasks/export_vars.yml).
+#
+# Deliberately self-contained — every value here is a plain number with no
+# reference to another defaults file. That is what lets a consumer import the
+# memory budget with a single `defaults_from: main/resources.yml`, the same
+# discipline patroni's main/postgresql.yml keeps for patroni_mem_request_mb.
+# The exporter's and PBM's caps therefore live HERE rather than beside their
+# other settings in exporter.yml / pbm.yml: they are part of the budget, and
+# splitting the budget across files would defeat the narrow import.
+
+# ── Container resources (MB) ──
+# mongod and configsvr get --wiredTigerCacheSizeGB at 50% of their limit, so
+# they self-throttle and the cgroup cap is a backstop they shouldn't reach.
+# mongos has no such knob: its footprint is per-connection thread stacks,
+# cross-shard sort/merge buffers and the cached routing table, none of which it
+# will voluntarily shrink. For mongos the limit is a cliff, not a ceiling —
+# reaching it is an OOM kill that drops every client connection on the node —
+# so it is budgeted more generously than its idle footprint suggests.
+mongodb_mongod_mem_limit_mb: 2048
+mongodb_configsvr_mem_limit_mb: 512
+mongodb_mongos_mem_limit_mb: 1024
+# Was hardcoded in the Quadlet/compose templates; named so the preflight memory
+# budget can count it instead of silently under-reporting by this much.
+mongodb_exporter_mem_limit_mb: 128
+mongodb_backup_pbm_mem_limit_mb: 256
+
+# ── OOM victim selection ──
+# Per-container oom_score_adj (-1000..1000, higher = killed first). These only
+# matter once the HOST runs out of memory, which is a real possibility when a
+# node also runs another memory-hungry stack (e.g. co-located Patroni). They
+# matter most without swap: FCOS never has any, so page cache is the only
+# reclaimable memory and the kernel goes straight from "full" to an OOM kill
+# with no paging step. On Ubuntu, swap plus the strict-overcommit sysctls the
+# patroni role applies when swap is present make these a backstop instead.
+#
+# Left at the kernel default (0) the victim is chosen by proportional RSS,
+# i.e. whichever process is biggest — mongod here. That is the most expensive
+# thing to lose, so bias the cheap, restartable processes upward instead and
+# let them absorb the kill:
+#   mongod / configsvr  0     data-bearing; a kill means recovery on restart
+#   mongos              500   stateless router, Restart=always reconnects
+#   pbm-agent           800   backup agent; a missed window is recoverable
+#   exporter            1000  telemetry only, nothing depends on it
+# Negative values are permitted because these units run rootful (Quadlets in
+# /etc/containers/systemd). Set any of these to 0 for the kernel default.
+mongodb_mongod_oom_score_adj: 0
+mongodb_configsvr_oom_score_adj: 0
+mongodb_mongos_oom_score_adj: 500
+mongodb_backup_pbm_oom_score_adj: 800
+mongodb_exporter_oom_score_adj: 1000
+
+# Extra memory committed on this node that the collection cannot introspect —
+# a non-container daemon, another tenant, something outside this collection.
+# ADDED to preflight's budget on top of what is discovered automatically: when
+# patroni_enabled is true this role imports patroni's own patroni_mem_request_mb
+# rather than asking you to restate it here, so leave this at 0 for a plain
+# mongodb+patroni node.
+mongodb_mem_reserved_mb: 0

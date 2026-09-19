@@ -210,19 +210,42 @@
     - instances is defined
     - (instances | rejectattr('ipv4', 'defined') | list | length > 0)
 
-# ── S3 (shared by mongodb backup + patroni WAL-G) ──
+# ── S3 object storage ──
+# Two INDEPENDENT credential sets. patroni's WAL-G and etcd snapshots read the
+# bare s3_* names; mongodb's backups and PBM read mongodb_s3_*. They were one
+# shared set until mongodb's variables were namespaced, so a node running both
+# stacks now sets both — even when they point at the same bucket. Each is
+# validated on its own so a half-filled set is caught for the role that owns it.
 
-- name: Assert S3 config is all-or-nothing
+- name: Assert S3 config is all-or-nothing — {{ _s3.role }}
   ansible.builtin.assert:
     that:
-      - s3_endpoint | default('') | length > 0
-      - s3_access_key | default('') | length > 0
-      - s3_secret_key | default('') | length > 0
+      - _s3.endpoint | length > 0
+      - _s3.access_key | length > 0
+      - _s3.secret_key | length > 0
     fail_msg: >-
-      s3_bucket is set but one of {s3_endpoint, s3_access_key, s3_secret_key}
-      is empty. Fill all four, or clear s3_bucket to disable S3 backups.
-    success_msg: "S3 backup target configured ({{ s3_endpoint | default('') }} bucket={{ s3_bucket | default('') }})."
-  when: s3_bucket | default('') | length > 0
+      {{ _s3.prefix }}bucket is set but one of {{ _s3.prefix }}endpoint,
+      {{ _s3.prefix }}access_key, {{ _s3.prefix }}secret_key is empty. Fill all
+      four, or clear {{ _s3.prefix }}bucket to disable S3 backups for
+      {{ _s3.role }}.
+    success_msg: "S3 target for {{ _s3.role }}: {{ _s3.endpoint }} bucket={{ _s3.bucket }}"
+  when: _s3.bucket | length > 0
+  loop:
+    - role: patroni (WAL-G + etcd snapshots)
+      prefix: s3_
+      bucket: "{{ s3_bucket | default('') }}"
+      endpoint: "{{ s3_endpoint | default('') }}"
+      access_key: "{{ s3_access_key | default('') }}"
+      secret_key: "{{ s3_secret_key | default('') }}"
+    - role: mongodb (backups + PBM)
+      prefix: mongodb_s3_
+      bucket: "{{ mongodb_s3_bucket | default('') }}"
+      endpoint: "{{ mongodb_s3_endpoint | default('') }}"
+      access_key: "{{ mongodb_s3_access_key | default('') }}"
+      secret_key: "{{ mongodb_s3_secret_key | default('') }}"
+  loop_control:
+    loop_var: _s3
+    label: "{{ _s3.prefix }}"
 
 # ── WAL-G object-storage backend (patroni) ──
 
@@ -389,7 +412,9 @@
       - "VMs declared: {{ instances | default([]) | length }}"
       - "NetBox enrichment: {{ 'on' if netbox_enabled | default(false) | bool else 'off' }}"
       - "Cluster scope: {{ instance_cluster_name | default('(instance_folder: ' ~ (instance_folder | default('(unscoped)')) ~ ')') }}"
-      - "S3 backups: {{ 'configured' if s3_bucket | default('') | length > 0 else 'disabled' }}"
+      - >-
+        S3 backups: patroni {{ 'configured' if s3_bucket | default('') | length > 0 else 'disabled' }},
+        mongodb {{ 'configured' if mongodb_s3_bucket | default('') | length > 0 else 'disabled' }}
       - >-
         WAL-G archive: {{
           ('gs://' ~ (walg_gcs_bucket | default('')) ~ '/' ~ (walg_gcs_prefix | default('')))

@@ -6,18 +6,24 @@
   hosts: localhost
   gather_facts: false
   connection: local
-  vars_files:
-    - ../roles/mongodb/defaults/main.yml
   vars:
     _pbm_render_dir: /tmp/pbm-storage-config-test
 
   tasks:
+    # Loads every file in mongodb's defaults/main/ and vars/main/, the same
+    # variables the role sees. Runs no tasks. (Was a vars_files pointing at
+    # defaults/main.yml, which is a directory since the split.)
+    - name: Import mongodb role variables
+      ansible.builtin.import_role:
+        name: mongodb
+        tasks_from: export_vars
+
     - name: Set PBM storage test inputs
       ansible.builtin.set_fact:
-        s3_endpoint: https://s3.example.test:9443
-        s3_bucket: test-backup-bucket
-        s3_access_key: test-access-key
-        s3_secret_key: test-secret-key
+        mongodb_s3_endpoint: https://s3.example.test:9443
+        mongodb_s3_bucket: test-backup-bucket
+        mongodb_s3_access_key: test-access-key
+        mongodb_s3_secret_key: test-secret-key
         mongodb_backup_s3_prefix: mongodb-test
         mongodb_backup_gcs_bucket: test-gcs-bucket
         # Raw JSON string, as pasted from the key file GCP produces.
@@ -75,22 +81,22 @@
           - _pbm_minio_config.storage.minio.endpoint == 's3.example.test:9443'
           - _pbm_minio_config.storage.minio.secure == true
           - _pbm_minio_config.storage.minio.forcePathStyle == true
-          - _pbm_minio_config.storage.minio.bucket == s3_bucket
+          - _pbm_minio_config.storage.minio.bucket == mongodb_s3_bucket
           - _pbm_minio_config.storage.minio.prefix == 'mongodb-test/pbm'
-          - _pbm_minio_config.storage.minio.credentials['access-key-id'] == s3_access_key
-          - _pbm_minio_config.storage.minio.credentials['secret-access-key'] == s3_secret_key
+          - _pbm_minio_config.storage.minio.credentials['access-key-id'] == mongodb_s3_access_key
+          - _pbm_minio_config.storage.minio.credentials['secret-access-key'] == mongodb_s3_secret_key
           - _pbm_minio_config.storage.s3 is not defined
 
     - name: Verify AWS S3 backend configuration
       ansible.builtin.assert:
         that:
           - _pbm_s3_config.storage.type == 's3'
-          - _pbm_s3_config.storage.s3.endpointUrl == s3_endpoint
+          - _pbm_s3_config.storage.s3.endpointUrl == mongodb_s3_endpoint
           - _pbm_s3_config.storage.s3.forcePathStyle == true
-          - _pbm_s3_config.storage.s3.bucket == s3_bucket
+          - _pbm_s3_config.storage.s3.bucket == mongodb_s3_bucket
           - _pbm_s3_config.storage.s3.prefix == 'mongodb-test/pbm'
-          - _pbm_s3_config.storage.s3.credentials['access-key-id'] == s3_access_key
-          - _pbm_s3_config.storage.s3.credentials['secret-access-key'] == s3_secret_key
+          - _pbm_s3_config.storage.s3.credentials['access-key-id'] == mongodb_s3_access_key
+          - _pbm_s3_config.storage.s3.credentials['secret-access-key'] == mongodb_s3_secret_key
           - _pbm_s3_config.storage.minio is not defined
 
     - name: Verify native GCS backend configuration

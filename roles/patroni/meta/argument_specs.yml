@@ -208,6 +208,75 @@ argument_specs:
           Use this for ops VPN / jump-host access; leave empty for
           PgBouncer-only ingress (recommended).
 
+      # ── Connection budget: PgBouncer pools vs PostgreSQL max_connections ──
+      # The pooled term is a PRODUCT — pool sizes are per (user, database) pair,
+      # so adding one application database adds (default + reserve) backends.
+      # preflight's pg_connections check does this arithmetic every run.
+      patroni_pg_max_connections:
+        type: int
+        default: 200
+        description: >-
+          PostgreSQL max_connections. Only seeds the cluster at BOOTSTRAP on its
+          own — after that the runtime value lives in DCS, and
+          shared/reconcile_pg_parameters.yml is what pushes a change there via
+          `patronictl edit-config`. max_connections is a postmaster parameter,
+          so a change leaves every member in pending_restart until an operator
+          performs a rolling restart; the role reports that but never restarts.
+          This value wins over an out-of-band edit-config, so a hand-tuned
+          cluster must have its inventory updated to match. Raising it is not
+          free — each connection is a backend with its own work_mem.
+      patroni_pg_conn_overhead:
+        type: int
+        default: 20
+        description: >-
+          Backends held by everything that is neither a PgBouncer pool nor the
+          pooler-bypass path: superuser_reserved_connections (3), Patroni's
+          monitoring connection, postgres_exporter, WAL-G, this role's own
+          postgresql_* tasks, and headroom for admin sessions. Advisory only —
+          used by preflight's connection budget, never enforced.
+      patroni_pg_conn_strict:
+        type: bool
+        default: false
+        description: >-
+          Fail the run instead of warning when the connection budget exceeds
+          patroni_pg_max_connections. Off by default for the same reason as
+          container_mem_strict — an already over-committed cluster has to stay
+          manageable.
+      patroni_pgbouncer_max_client_conn:
+        type: int
+        default: 1000
+        description: >-
+          Total CLIENT connections PgBouncer accepts. Cheap (a socket and a
+          buffer, not a backend), and sized to match
+          patroni_haproxy_primary_server_maxconn so HAProxy can never offer more
+          than PgBouncer will take.
+      patroni_pgbouncer_default_pool_size:
+        type: int
+        default: 50
+        description: >-
+          SERVER connections PER user/database pair — real PostgreSQL backends,
+          multiplied by the number of pairs. Replaces the dead
+          `pgbouncer_default_pool_size` (which was 20 but never read by
+          templates/pgbouncer.ini.j2, where the effective value has always been
+          50); renamed rather than switched on so nobody's pools silently drop
+          from 50 to 20.
+      patroni_pgbouncer_reserve_pool_size:
+        type: int
+        default: 10
+        description: >-
+          Burst server connections above default_pool_size, also PER pair, so
+          each pair's worst case is (default + reserve) = 60 backends by
+          default. Three pairs is then 180 for pools alone, and 220 once the
+          bypass listener and patroni_pg_conn_overhead are counted — already
+          over a max_connections of 200.
+      patroni_pgbouncer_min_pool_size:
+        type: int
+        default: 10
+        description: >-
+          Server connections kept warm per pair while idle, so the first request
+          after a quiet period doesn't pay connection setup. Must not exceed
+          patroni_pgbouncer_default_pool_size.
+
       pgbouncer_database_overrides:
         type: list
         elements: dict
@@ -241,7 +310,9 @@ argument_specs:
             description: Pool mode for this database only; omit to inherit pgbouncer_pool_mode.
           pool_size:
             type: int
-            description: Server connections for this database; omit to inherit default_pool_size.
+            description: >-
+              Server connections for this database; omit to inherit
+              patroni_pgbouncer_default_pool_size.
           min_pool_size:
             type: int
           reserve_pool:
@@ -348,12 +419,14 @@ argument_specs:
         description: >-
           Per-server cap on pg-direct, an order of magnitude below the pooled
           listeners because this path BYPASSES PgBouncer — every connection is a
-          real PostgreSQL backend competing for max_connections (200), against
-          PgBouncer's pools at (default_pool_size + reserve_pool_size) per
-          user/database pair plus Patroni, the exporter and WAL-G. Three app
-          databases already put the pooler near that limit. Held small so a
-          runaway migration cannot starve PgBouncer's pool and take the
-          application down; raise max_connections alongside it.
+          real PostgreSQL backend competing for patroni_pg_max_connections,
+          against PgBouncer's pools at (patroni_pgbouncer_default_pool_size +
+          patroni_pgbouncer_reserve_pool_size) per user/database pair plus
+          Patroni, the exporter and WAL-G. Three pairs already exceed that
+          limit at the shipped defaults. Held small so a runaway migration cannot
+          starve PgBouncer's pool and take the application down. Feeds
+          preflight's connection budget as pg_conn_bypass, so raising it is
+          checked against max_connections on the next run.
       patroni_haproxy_global_maxconn:
         type: int
         default: 4000

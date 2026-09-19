@@ -24,7 +24,7 @@ Exec=mongos \
   --configdb {{ mongodb_config_replset }}/{{ mongodb_nodes | map(attribute='ipv4') | map('regex_replace', '^(.*)$', '\\1:' ~ mongodb_configsvr_node_port) | join(',') }} \
   --port={{ mongodb_mongos_node_port }} \
   --bind_ip_all \
-  --tlsMode={{ mongos_tls_mode }} \
+  --tlsMode={{ mongodb_mongos_tls_mode }} \
   --tlsCertificateKeyFile=/etc/mongo/ssl/mongodb-mongos.pem \
   --tlsCAFile=/etc/mongo/ssl/ca.pem \
   --tlsClusterFile=/etc/mongo/ssl/mongodb-mongos.pem \
@@ -36,12 +36,12 @@ Volume={{ mongodb_tls_dir }}/ca.pem:/etc/mongo/ssl/ca.pem:ro,z
 Volume={{ mongodb_tls_dir }}/healthcheck.pem:/etc/mongo/ssl/healthcheck.pem:ro,z
 
 # mongos is the preferred OOM victim by default: stateless router, cheapest
-# thing on the node to lose. See mongos_oom_score_adj in defaults.
+# thing on the node to lose. See mongodb_mongos_oom_score_adj in defaults.
 PodmanArgs=--ulimit nofile={{ mongodb_ulimit_nofile }}:{{ mongodb_ulimit_nofile }} \
           --ulimit nproc=-1:-1 \
-          --oom-score-adj={{ mongos_oom_score_adj }}
+          --oom-score-adj={{ mongodb_mongos_oom_score_adj }}
 
-Memory={{ mongos_mem_limit_mb }}m
+Memory={{ mongodb_mongos_mem_limit_mb }}m
 
 HealthCmd=mongosh --port {{ mongodb_mongos_node_port }} --quiet --tls --tlsCertificateKeyFile /etc/mongo/ssl/healthcheck.pem --tlsCAFile /etc/mongo/ssl/ca.pem --authenticationMechanism MONGODB-X509 --authenticationDatabase '$external' --eval 'db.adminCommand("ping")'
 HealthInterval=30s

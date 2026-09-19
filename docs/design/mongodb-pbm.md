@@ -111,15 +111,15 @@ The default configuration renders as:
 storage:
   type: minio
   minio:
-    region: "{{ s3_region }}"
-    endpoint: "{{ s3_endpoint | regex_replace('^https?://', '') }}"
+    region: "{{ mongodb_s3_region }}"
+    endpoint: "{{ mongodb_s3_endpoint | regex_replace('^https?://', '') }}"
     secure: true
     forcePathStyle: true
-    bucket: "{{ s3_bucket }}"
+    bucket: "{{ mongodb_s3_bucket }}"
     prefix: "{{ mongodb_backup_s3_prefix }}/pbm"
     credentials:
-      access-key-id: "{{ s3_access_key }}"
-      secret-access-key: "{{ s3_secret_key }}"
+      access-key-id: "{{ mongodb_s3_access_key }}"
+      secret-access-key: "{{ mongodb_s3_secret_key }}"
 pitr:
   enabled: "{{ mongodb_backup_pitr_enabled | bool }}"
   compression: "{{ mongodb_backup_compression_type }}"

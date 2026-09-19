@@ -43,19 +43,21 @@ haproxy_check_timeout: "10s"
 #
 #   pg-primary / pg-replicas → PgBouncer. These are CLIENT connections to a
 #     pooler, which is what a pooler is for. The real ceiling is PgBouncer's
-#     own `max_client_conn` (1000 in templates/pgbouncer.ini.j2), so 1000 here
-#     lines up with it exactly. PgBouncer's server-side pool — not this cap —
-#     is what bounds real PostgreSQL backends.
+#     own `patroni_pgbouncer_max_client_conn`, so 1000 here lines up with it
+#     exactly. PgBouncer's server-side pool — not this cap — is what bounds
+#     real PostgreSQL backends.
 #
 #   pg-direct → PostgreSQL, bypassing the pooler. EVERY connection here is a
-#     real backend competing for max_connections (200 in patroni.yml.j2),
-#     against PgBouncer's pools at (default_pool_size + reserve_pool_size) per
-#     user/database pair plus Patroni, the exporter and WAL-G. Three app
-#     databases already put the pooler near that limit. This path is for
-#     migrations and admin tooling — low concurrency by design — and is held
-#     deliberately small so a runaway job cannot starve PgBouncer's pool and
-#     take the application down with it. Raise it only after checking what is
-#     actually free, and prefer raising max_connections with it.
+#     real backend competing for patroni_pg_max_connections, against
+#     PgBouncer's pools at (patroni_pgbouncer_default_pool_size +
+#     patroni_pgbouncer_reserve_pool_size) per user/database pair plus Patroni,
+#     the exporter and WAL-G. Three pairs already exceed that limit at the
+#     shipped defaults. This path is for migrations and admin tooling — low
+#     concurrency by design — and is held deliberately small so a runaway job
+#     cannot starve PgBouncer's pool and take the application down with it.
+#     This cap is one term in preflight's connection budget (passed as
+#     pg_conn_bypass), so raising it is checked against max_connections on the
+#     next run rather than discovered in production.
 patroni_haproxy_primary_maxconn: 1100
 patroni_haproxy_primary_server_maxconn: 1000
 patroni_haproxy_replicas_maxconn: 1100

@@ -1,0 +1,24 @@
+---
+# MongoDB role defaults: S3-compatible object storage for mongodump uploads and
+# PBM backups.
+# The role loads every file in defaults/main/ (see tasks/export_vars.yml).
+#
+# These were bare `s3_*` and shared with the patroni role — one set of
+# credentials served both stacks on a co-located node. They are now
+# mongodb_-prefixed, so a node running both stacks sets each role's credentials
+# separately. The gain is that mongodb and patroni no longer share ANY variable
+# name (bar the collection-wide `debug`), so neither role can silently reconfigure
+# the other; the cost is duplication in inventory when both point at the same
+# bucket. Leaving mongodb_s3_bucket empty disables S3 upload for mongodb.
+
+mongodb_s3_endpoint: ""
+mongodb_s3_bucket: ""
+mongodb_s3_access_key: ""
+mongodb_s3_secret_key: ""
+mongodb_s3_region: "us-east-1"
+# Force path-style S3 addressing (bucket in the path, not the hostname).
+# Required by most S3-compatible gateways (Ceph RGW, MinIO, custom). Mirrors
+# patroni's wal-g AWS_S3_FORCE_PATH_STYLE. Consumed by PBM's storage config.
+mongodb_s3_force_path_style: "true"
+# Container image used to run the S3 client (mc). No host install needed.
+mongodb_s3_client_image: "minio/mc:latest"

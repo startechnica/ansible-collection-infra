@@ -1,0 +1,17 @@
+---
+# MongoDB role defaults: Prometheus mongodb_exporter.
+# The role loads every file in defaults/main/ (see tasks/export_vars.yml).
+#
+# The exporter's memory cap and OOM bias live in main/resources.yml with the
+# rest of the memory budget, and its CN in main/tls.yml with the rest of the
+# PKI naming — see those files for why.
+
+mongodb_exporter_enabled: true
+# Fully-qualified registry path is required for podman / Quadlet on
+# FCOS, which ships with short-name-mode=enforcing — `percona/...`
+# alone fails with "short-name resolution enforced but cannot prompt
+# without a TTY" inside a systemd service. docker is more forgiving
+# and auto-resolves bare names to docker.io, but explicit is better
+# than implicit.
+mongodb_exporter_image: "docker.io/percona/mongodb_exporter:0.52.0"
+mongodb_exporter_port: 9216

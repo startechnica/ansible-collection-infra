@@ -1,0 +1,50 @@
+---
+# Internal computed vars for the preflight connection budget — vars/ precedence
+# so they can't be overridden from inventory. The user-facing knobs the budget
+# reads (patroni_pg_max_connections, patroni_pg_conn_overhead,
+# patroni_pgbouncer_default_pool_size, patroni_pgbouncer_reserve_pool_size) are
+# all defaults, so inventory still steers the result.
+#
+# LAZY expressions, not set_facts, for the same two reasons as
+# vars/main/memory.yml: another role could read them via `tasks_from:
+# export_vars` without patroni having run, and overriding patroni_databases at
+# any higher precedence re-evaluates the whole chain with no stale copy.
+#
+# Everything here depends only on patroni_databases, i.e. on
+# defaults/main/postgresql.yml alone — matching memory.yml's single-file
+# discipline, so a consumer could import this budget with one `defaults_from`
+# and none of patroni's other topics. Note that the FULL arithmetic does span
+# three defaults files (pgbouncer pool sizes, the HAProxy bypass cap, the
+# PostgreSQL ceiling), which is exactly why the sum is done inside preflight
+# from separately-passed components rather than assembled here.
+
+# PgBouncer opens one server-side pool per (user, database) pair, so the pair
+# count — not the number of databases — is what multiplies the pool size.
+# Every user listed under a database gets its own pool once it connects,
+# read-only users included; counting all of them is the conservative reading,
+# which is the right direction for a budget.
+#
+# Two separate defensive filters, because `users` can be absent in two different
+# ways and each needs its own:
+#   - MISSING key — a database declared with just an owner. Handled by
+#     `default=[]` on the attribute lookup; a bare map(attribute='users')
+#     raises on the first entry that omits it.
+#   - PRESENT but null — `users:` written with nothing under it, which is valid
+#     YAML and parses to None. `default=[]` does NOT cover this (the attribute
+#     exists), so `map('default', [], true)` coerces it; the `true` is what makes
+#     the filter treat None as empty rather than as a value to keep.
+# Both shapes reach us from hand-edited inventories, and either one would
+# otherwise fail the run with "object of type 'NoneType' has no len()" — from a
+# preflight check, before anything has been deployed.
+_pg_conn_pairs_declared: >-
+  {{ patroni_databases | default([], true)
+     | map(attribute='users', default=[])
+     | map('default', [], true)
+     | map('length') | sum }}
+
+# +1 for PgBouncer's own auth_query pool: the dedicated `pgbouncer` role against
+# the `postgres` database (auth_user=pgbouncer auth_dbname=postgres in
+# templates/pgbouncer.ini.j2), which is a pair like any other and exists even on
+# a cluster with no application databases yet.
+patroni_pg_conn_pairs: >-
+  {{ (_pg_conn_pairs_declared | int) + 1 }}

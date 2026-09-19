@@ -221,9 +221,9 @@
       port: "{{ mongodb_mongod_node_port }}"
     # Each Quadlet paired with the variable whose value it must render.
     _mongodb_oom_units:
-      - {unit: mongodb-mongod, expect: "{{ mongod_oom_score_adj }}"}
-      - {unit: mongodb-configsvr, expect: "{{ configsvr_oom_score_adj }}"}
-      - {unit: mongodb-mongos, expect: "{{ mongos_oom_score_adj }}"}
+      - {unit: mongodb-mongod, expect: "{{ mongodb_mongod_oom_score_adj }}"}
+      - {unit: mongodb-configsvr, expect: "{{ mongodb_configsvr_oom_score_adj }}"}
+      - {unit: mongodb-mongos, expect: "{{ mongodb_mongos_oom_score_adj }}"}
       - {unit: mongodb-pbm, expect: "{{ mongodb_backup_pbm_oom_score_adj }}"}
       - {unit: mongodb-exporter, expect: "{{ mongodb_exporter_oom_score_adj }}"}
 
@@ -238,28 +238,28 @@
         that:
           # The data-bearing nodes must never be a more attractive target than
           # the stateless router or the backup agent in front of them.
-          - mongod_oom_score_adj < mongos_oom_score_adj
-          - configsvr_oom_score_adj < mongos_oom_score_adj
-          - mongos_oom_score_adj < mongodb_backup_pbm_oom_score_adj
+          - mongodb_mongod_oom_score_adj < mongodb_mongos_oom_score_adj
+          - mongodb_configsvr_oom_score_adj < mongodb_mongos_oom_score_adj
+          - mongodb_mongos_oom_score_adj < mongodb_backup_pbm_oom_score_adj
           - mongodb_backup_pbm_oom_score_adj < mongodb_exporter_oom_score_adj
           - mongodb_exporter_oom_score_adj <= 1000
         fail_msg: >-
           The OOM ranking no longer holds. mongod/configsvr hold data and must
           be the last to be killed; mongos, the PBM agent and the exporter are
-          the cheap victims — see mongod_oom_score_adj in
-          roles/mongodb/defaults/main.yml.
+          the cheap victims — see mongodb_mongod_oom_score_adj in
+          roles/mongodb/defaults/main/resources.yml.
 
     - name: "Mongodb :: verify documented default values"
       ansible.builtin.assert:
         that:
-          - mongod_oom_score_adj == 0
-          - configsvr_oom_score_adj == 0
-          - mongos_oom_score_adj == 500
+          - mongodb_mongod_oom_score_adj == 0
+          - mongodb_configsvr_oom_score_adj == 0
+          - mongodb_mongos_oom_score_adj == 500
           - mongodb_backup_pbm_oom_score_adj == 800
           - mongodb_exporter_oom_score_adj == 1000
           # mongos has no wiredTigerCacheSizeGB equivalent, so its cap is a
           # cliff rather than a ceiling and is budgeted above idle footprint.
-          - mongos_mem_limit_mb == 1024
+          - mongodb_mongos_mem_limit_mb == 1024
 
     - name: "Mongodb :: recreate render directory"
       ansible.builtin.file:
@@ -312,12 +312,12 @@
     - name: "Mongodb :: verify compose carries the same scores as the Quadlets"
       ansible.builtin.assert:
         that:
-          - _svc.mongod.oom_score_adj | int == mongod_oom_score_adj | int
-          - _svc.configsvr.oom_score_adj | int == configsvr_oom_score_adj | int
-          - _svc.mongos.oom_score_adj | int == mongos_oom_score_adj | int
+          - _svc.mongod.oom_score_adj | int == mongodb_mongod_oom_score_adj | int
+          - _svc.configsvr.oom_score_adj | int == mongodb_configsvr_oom_score_adj | int
+          - _svc.mongos.oom_score_adj | int == mongodb_mongos_oom_score_adj | int
           - _svc['mongodb-exporter'].oom_score_adj | int == mongodb_exporter_oom_score_adj | int
           # The compose cap must track the same variable the Quadlet uses.
-          - _svc.mongos.deploy.resources.limits.memory == mongos_mem_limit_mb ~ 'm'
+          - _svc.mongos.deploy.resources.limits.memory == mongodb_mongos_mem_limit_mb ~ 'm'
         fail_msg: >-
           The compose path has drifted from the Quadlet path. Both engines must
           apply the same ranking or the same inventory behaves differently

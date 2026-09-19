@@ -7,6 +7,152 @@ documents the migration steps for breaking changes.
 
 ## 1.0.3 (unreleased)
 
+### Breaking — every `mongodb` role variable is now `mongodb_`-prefixed
+
+`roles/mongodb/defaults/main.yml` is split into `defaults/main/*.yml` (one file
+per topic, like `patroni`), and the 21 variables that weren't namespaced have
+been renamed. There are **no aliases** — an inventory using an old name is
+silently ignored and the role's default applies.
+
+| Old name | New name |
+| --- | --- |
+| `mongod_mem_limit_mb` | `mongodb_mongod_mem_limit_mb` |
+| `configsvr_mem_limit_mb` | `mongodb_configsvr_mem_limit_mb` |
+| `mongos_mem_limit_mb` | `mongodb_mongos_mem_limit_mb` |
+| `mongod_oom_score_adj` | `mongodb_mongod_oom_score_adj` |
+| `configsvr_oom_score_adj` | `mongodb_configsvr_oom_score_adj` |
+| `mongos_oom_score_adj` | `mongodb_mongos_oom_score_adj` |
+| `mongod_tls_mode` | `mongodb_mongod_tls_mode` |
+| `configsvr_tls_mode` | `mongodb_configsvr_tls_mode` |
+| `mongos_tls_mode` | `mongodb_mongos_tls_mode` |
+| `ssl_days` | `mongodb_tls_days` |
+| `ssl_ca_days` | `mongodb_tls_ca_days` |
+| `tls_key_type` | `mongodb_tls_key_type` |
+| `tls_key_curve` | `mongodb_tls_key_curve` |
+| `tls_key_size` | `mongodb_tls_key_size` |
+| `s3_endpoint` | `mongodb_s3_endpoint` |
+| `s3_bucket` | `mongodb_s3_bucket` |
+| `s3_access_key` | `mongodb_s3_access_key` |
+| `s3_secret_key` | `mongodb_s3_secret_key` |
+| `s3_region` | `mongodb_s3_region` |
+| `s3_force_path_style` | `mongodb_s3_force_path_style` |
+| `s3_client_image` | `mongodb_s3_client_image` |
+
+#### The one that bites quietly: S3
+
+**`s3_*` and `tls_key_*` are still valid variables — they belong to `patroni`
+now.** So a dual-stack inventory that set them once for both roles keeps
+validating, keeps running, and produces no error. What changes is that mongodb
+stops seeing them:
+
+- `mongodb_s3_bucket` is empty → `mongodb_backup_mode` falls back to `local`,
+  and **scheduled MongoDB backups stop being uploaded to S3.** They still run,
+  still succeed, still write to `mongodb_backup_dir` on the node. Nothing fails.
+- PBM's storage config loses its endpoint and credentials, so `pbm` backups
+  fail at the agent rather than at deploy time.
+
+Check whether you are affected:
+
+```bash
+grep -rlE '^\s*s3_(bucket|endpoint|access_key|secret_key):' inventories/ \
+  | xargs grep -l 'mongodb_enabled: *true'
+```
+
+**Action:** in every inventory that runs mongodb, add a `mongodb_s3_*` set. The
+two roles may point at the same bucket — only the variable names are per-role:
+
+```yaml
+# patroni: WAL-G + etcd snapshots (unchanged)
+s3_endpoint: https://s3.example.com
+s3_bucket: myproject-backups
+s3_access_key: "{{ vault_s3_access_key }}"
+s3_secret_key: "{{ vault_s3_secret_key }}"
+
+# mongodb: mongodump upload + PBM (new)
+mongodb_s3_endpoint: https://s3.example.com
+mongodb_s3_bucket: myproject-backups
+mongodb_s3_access_key: "{{ vault_s3_access_key }}"
+mongodb_s3_secret_key: "{{ vault_s3_secret_key }}"
+```
+
+For an inventory that runs **only** mongodb, rename in place instead of
+duplicating:
+
+```bash
+sed -i -E 's/\bs3_(bucket|endpoint|access_key|secret_key|region|force_path_style):/mongodb_s3_\1:/' inventories/<inv>.yml
+```
+
+#### Why
+
+`tls_key_curve` was defined by **both** roles with **different** values —
+`secp256r1` for mongodb, `secp384r1` for patroni. Both feed certificate
+generation, so whichever role's defaults loaded last silently decided the curve
+of the other's certificates. That one collision is why cross-role variable
+imports (added in 1.0.3 for the memory budget) had to be kept to a single
+`defaults_from` file, and it would have recurred with every new shared name.
+
+After the rename the two roles share **no** variable name at all except the
+collection-wide `debug`, which `tests/preflight_mem_budget.yml` now asserts
+directly by diffing the two roles' defaults directories. `debug` is deliberately
+left unprefixed: every role in the collection declares it, and `-e debug=true`
+has to reach all of them at once.
+
+### Breaking — `pgbouncer_default_pool_size` renamed, and PgBouncer pool sizes are now real variables
+
+`templates/pgbouncer.ini.j2` hardcoded `default_pool_size = 50`,
+`min_pool_size = 10`, `reserve_pool_size = 10` and `max_client_conn = 1000`.
+`pgbouncer_default_pool_size` existed as a variable set to `20`, but **nothing
+read it** — the effective pool size has always been 50. All four are now wired
+to variables:
+
+| Setting | Variable | Default |
+| --- | --- | --- |
+| `max_client_conn` | `patroni_pgbouncer_max_client_conn` | `1000` |
+| `default_pool_size` | `patroni_pgbouncer_default_pool_size` | `50` |
+| `reserve_pool_size` | `patroni_pgbouncer_reserve_pool_size` | `10` |
+| `min_pool_size` | `patroni_pgbouncer_min_pool_size` | `10` |
+
+Each default equals the literal the template already rendered, so **the
+rendered config is byte-identical unless you set one of the new variables.**
+
+**Why a rename rather than switching the old name on:** wiring
+`pgbouncer_default_pool_size` up as-is would have dropped every deployment that
+set it from 50 server connections per pool to 20 — a silent capacity cut caused
+by "fixing" the variable. Renaming makes the old key inert, which is what it
+already was.
+
+**Action:** none, unless you set `pgbouncer_default_pool_size` in inventory. If
+you did, it was never taking effect; decide what you actually want and set
+`patroni_pgbouncer_default_pool_size`. To keep today's behaviour, remove the old
+key and set nothing.
+
+### New — PostgreSQL `max_connections` is a variable, and is reconciled post-bootstrap
+
+`max_connections` was the literal `200` in `templates/patroni.yml.j2`. It is now
+`patroni_pg_max_connections`, default `200` — the same value, so nothing changes
+on upgrade.
+
+Two things to know before you change it:
+
+- **It is a postmaster parameter.** `bootstrap.dcs` only seeds the cluster at
+  first init, so the new `shared/reconcile_pg_parameters.yml` pushes the value
+  to DCS via `patronictl edit-config` when it differs — the same bridge
+  `reconcile_archiving.yml` provides for `archive_command`. That leaves every
+  member in `pending_restart`; the role reports this and **does not restart
+  anything**, because a rolling restart is an operator's decision.
+- **The inventory value now wins over an out-of-band `patronictl edit-config`.**
+  If you have hand-tuned `max_connections` on a live cluster, set
+  `patroni_pg_max_connections` to match *before* the next provision run or it
+  will be pushed back to 200. Check with:
+
+  ```bash
+  patronictl -c /etc/patroni/patroni.yml show-config | grep max_connections
+  ```
+
+When lowering the value, restart the leader first: a replica whose
+`max_connections` is below the primary's refuses to start (hot standby requires
+`>=`).
+
 ### Breaking — `s3_retain_days` removed
 
 The `s3_retain_days` variable is gone. S3 backup retention now always follows

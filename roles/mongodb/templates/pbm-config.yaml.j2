@@ -6,27 +6,27 @@ storage:
   type: {{ mongodb_backup_storage_type }}
 {% if mongodb_backup_storage_type == 'minio' %}
   minio:
-    region: "{{ s3_region }}"
+    region: "{{ mongodb_s3_region }}"
     # PBM's MinIO client requires host[:port] without a URL scheme. Keep the
-    # shared s3_endpoint URL-shaped for mc/WAL-G and derive MinIO's form here.
-    endpoint: "{{ s3_endpoint | regex_replace('^https?://', '') | regex_replace('/+$', '') }}"
-    secure: {{ 'true' if s3_endpoint | lower | regex_search('^https://') else 'false' }}
-    forcePathStyle: {{ 'true' if s3_force_path_style | bool else 'false' }}
-    bucket: "{{ s3_bucket }}"
+    # shared mongodb_s3_endpoint URL-shaped for mc/WAL-G and derive MinIO's form here.
+    endpoint: "{{ mongodb_s3_endpoint | regex_replace('^https?://', '') | regex_replace('/+$', '') }}"
+    secure: {{ 'true' if mongodb_s3_endpoint | lower | regex_search('^https://') else 'false' }}
+    forcePathStyle: {{ 'true' if mongodb_s3_force_path_style | bool else 'false' }}
+    bucket: "{{ mongodb_s3_bucket }}"
     prefix: "{{ mongodb_backup_s3_prefix }}/pbm"
     credentials:
-      access-key-id: "{{ s3_access_key }}"
-      secret-access-key: "{{ s3_secret_key }}"
+      access-key-id: "{{ mongodb_s3_access_key }}"
+      secret-access-key: "{{ mongodb_s3_secret_key }}"
 {% elif mongodb_backup_storage_type == 's3' %}
   s3:
-    region: "{{ s3_region }}"
-    endpointUrl: "{{ s3_endpoint }}"
-    forcePathStyle: {{ 'true' if s3_force_path_style | bool else 'false' }}
-    bucket: "{{ s3_bucket }}"
+    region: "{{ mongodb_s3_region }}"
+    endpointUrl: "{{ mongodb_s3_endpoint }}"
+    forcePathStyle: {{ 'true' if mongodb_s3_force_path_style | bool else 'false' }}
+    bucket: "{{ mongodb_s3_bucket }}"
     prefix: "{{ mongodb_backup_s3_prefix }}/pbm"
     credentials:
-      access-key-id: "{{ s3_access_key }}"
-      secret-access-key: "{{ s3_secret_key }}"
+      access-key-id: "{{ mongodb_s3_access_key }}"
+      secret-access-key: "{{ mongodb_s3_secret_key }}"
 {% elif mongodb_backup_storage_type == 'gcs' %}
 {%   set _gcs_sa = mongodb_backup_gcs_service_account if mongodb_backup_gcs_service_account is mapping else (mongodb_backup_gcs_service_account | from_json) %}
   gcs:

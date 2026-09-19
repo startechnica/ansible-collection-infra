@@ -108,6 +108,17 @@
     # See mongodb/tasks/main.yml for why this is a per-role var and not one
     # host-wide figure: each role needs "everything except me".
     container_mem_reserved_mb: "{{ patroni_mem_reserved_mb | default(0) }}"
+    # Connection budget. Passed as components rather than one total so
+    # preflight's failure message can name whichever term is oversized —
+    # and because the pooled term is a product, the one people miss.
+    pg_conn_max: "{{ patroni_pg_max_connections }}"
+    pg_conn_pool_size: "{{ patroni_pgbouncer_default_pool_size }}"
+    pg_conn_reserve_size: "{{ patroni_pgbouncer_reserve_pool_size }}"
+    pg_conn_pairs: "{{ patroni_pg_conn_pairs }}"
+    # The pooler-bypass listener: real backends, not pooled clients.
+    pg_conn_bypass: "{{ patroni_haproxy_direct_server_maxconn }}"
+    pg_conn_overhead: "{{ patroni_pg_conn_overhead }}"
+    pg_conn_strict: "{{ patroni_pg_conn_strict }}"
   when: >-
     patroni_action in
     ['provision', 'backup', 'manage-databases', 'rotate-passwords', 'renew-certs']
@@ -194,6 +205,12 @@
 
 - name: Reconcile WAL archiving config in DCS (idempotent, both directions)
   ansible.builtin.include_tasks: shared/reconcile_archiving.yml
+  when: patroni_action == 'provision'
+
+# Same bridge for max_connections: bootstrap.dcs only seeds at first init, so
+# without this the variable would do nothing on an existing cluster.
+- name: Reconcile PostgreSQL parameters in DCS (max_connections)
+  ansible.builtin.include_tasks: shared/reconcile_pg_parameters.yml
   when: patroni_action == 'provision'
 
 # Keep bootstrap.dcs.standby_cluster in sync post-bootstrap (it only seeds at

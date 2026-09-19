@@ -1,10 +1,10 @@
 ---
 # Export anchor — intentionally does no work.
 #
-# Importing this role with `tasks_from: export_vars` loads the mongodb role's
-# defaults/main.yml + vars/main.yml (the engine-derived *_exec_port, replset
-# names, cluster_type, feature flags, etc.) into the calling play WITHOUT
-# running any of the deploy/day-2 tasks in main.yml.
+# Importing this role with `tasks_from: export_vars` loads every file in the
+# mongodb role's defaults/main/ and vars/main/ (the engine-derived *_exec_port,
+# replset names, cluster_type, feature flags, etc.) into the calling play
+# WITHOUT running any of the deploy/day-2 tasks in main.yml.
 #
 # Consumed by roles/mongodb_smoke (its dispatcher imports this first) so the
 # smoke checks read the SAME variables the deploy used — single source of
@@ -14,6 +14,28 @@
 #   - ansible.builtin.import_role:
 #       name: mongodb
 #       tasks_from: export_vars
+#
+# defaults/main/ has one file per topic: mongodb, engine, system, ports,
+# resources, tls, auth, backup, pbm, s3, exporter, artifacts. To import only the
+# variables you use, name one with `defaults_from`, and pass
+# `vars_from: empty.yml` to skip the computed vars in vars/main/ (image.yml,
+# ports.yml, services.yml, pbm.yml):
+#
+#   - ansible.builtin.import_role:
+#       name: mongodb
+#       tasks_from: export_vars
+#       defaults_from: main/resources.yml
+#       vars_from: empty.yml
+#
+# `vars_from` must name an existing file; without it, all of vars/main/ loads.
+# main/resources.yml is deliberately self-contained (plain numbers, no
+# references to other defaults files) so the memory budget can be imported that
+# way — the same discipline patroni keeps for main/postgresql.yml.
+#
+# Every variable here is mongodb_-prefixed except the collection-wide `debug`,
+# so importing this role cannot redefine another role's settings. That is
+# enforced by tests/preflight_mem_budget.yml, which asserts mongodb and patroni
+# share no name but `debug`.
 #
 # Role defaults are lowest precedence, so anything the inventory sets still
 # wins. Keep this file task-free; its only job is to trigger var loading.

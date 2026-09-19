@@ -1,0 +1,40 @@
+---
+# Computed: public service catalog — consumed by:
+#   - roles/mongodb/tasks/netbox_register_services.yml  (NetBox registration)
+#   - roles/firewall/tasks/main.yml                     (auto-include ports)
+#
+# Two underscore-prefixed candidates + one public selector keyed on
+# mongodb_cluster_type. Lazy-evaluated, so changes to port vars in
+# defaults/inventory propagate without re-rendering anything.
+
+_mongodb_services_sharded:
+  - name: mongos
+    port: "{{ mongodb_mongos_node_port | int }}"
+    protocol: tcp
+    description: "MongoDB query router"
+  - name: mongod
+    port: "{{ mongodb_mongod_node_port | int }}"
+    protocol: tcp
+    description: "MongoDB shard server"
+  - name: configsvr
+    port: "{{ mongodb_configsvr_node_port | int }}"
+    protocol: tcp
+    description: "MongoDB config server"
+  - name: mongodb-exporter
+    port: "{{ mongodb_exporter_port | int }}"
+    protocol: tcp
+    description: "Prometheus MongoDB exporter"
+
+_mongodb_services_replicaset:
+  - name: mongod
+    port: "{{ mongodb_mongod_node_port | int }}"
+    protocol: tcp
+    description: "MongoDB replica set member"
+  - name: mongodb-exporter
+    port: "{{ mongodb_exporter_port | int }}"
+    protocol: tcp
+    description: "Prometheus MongoDB exporter"
+
+mongodb_services: >-
+  {{ _mongodb_services_sharded if mongodb_cluster_type == 'sharded'
+     else _mongodb_services_replicaset }}

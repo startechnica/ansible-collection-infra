@@ -88,10 +88,10 @@ mongodb_databases:
           - { role: read, db: app_main }
 
 # (optional) S3 backup target — shared with patroni
-s3_endpoint: "https://s3.example.com"
-s3_bucket: "backups"
-s3_access_key: "{{ vault_s3_access_key }}"
-s3_secret_key: "{{ vault_s3_secret_key }}"
+mongodb_s3_endpoint: "https://s3.example.com"
+mongodb_s3_bucket: "backups"
+mongodb_s3_access_key: "{{ vault_s3_access_key }}"
+mongodb_s3_secret_key: "{{ vault_s3_secret_key }}"
 ```
 
 Full variable reference: [meta/argument_specs.yml](meta/argument_specs.yml).
@@ -150,7 +150,7 @@ X.509 client auth users (auto-created):
 `mongodb_backup_mode` selects the destination — `local` (node only, kept under
 `mongodb_backup_retain_days`) or `s3` (dump locally, upload, then delete the
 local copy so the bucket is the system of record). It defaults to `s3` when
-`s3_bucket` is set, else `local`.
+`mongodb_s3_bucket` is set, else `local`.
 
 **Scheduled backups** — provisioning installs a host-level systemd timer
 (`mongodb-backup.timer` → `mongodb-backup.service`) on one node that runs the
@@ -264,22 +264,32 @@ cluster. Design notes: [docs/design/mongodb-pbm.md](../../docs/design/mongodb-pb
 
 ## Variables reference
 
-Inputs are validated by [meta/argument_specs.yml](meta/argument_specs.yml). Highlights:
+Inputs are validated by [meta/argument_specs.yml](meta/argument_specs.yml), and
+defined in [defaults/main/](defaults/main/) — one file per topic (`mongodb`,
+`engine`, `system`, `ports`, `resources`, `tls`, `auth`, `backup`, `pbm`, `s3`,
+`exporter`, `artifacts`), so another role can import just the slice it needs
+with `defaults_from`. See [tasks/export_vars.yml](tasks/export_vars.yml).
+
+**Every variable is `mongodb_`-prefixed** except the collection-wide `debug`.
+That is deliberate and enforced by a test: mongodb and patroni share no variable
+name, so importing one role's variables can never silently redefine the other's.
+
+Highlights:
 
 | Category | Key variables |
 |---|---|
 | Topology | `mongodb_cluster_type`, `mongodb_version` |
 | Identity | `mongodb_uid`/`_gid`, `mongodb_pki_o`/`_member_ou`/`_client_ou` |
-| TLS | `tls_key_type`, `tls_key_curve`, `ssl_days`, `ssl_ca_days` |
+| TLS | `mongodb_tls_key_type`, `mongodb_tls_key_curve`, `mongodb_tls_days`, `mongodb_tls_ca_days` |
 | Admin | `mongodb_admin_user`, `mongodb_admin_password` (auto-gen if empty) |
 | App DBs | `mongodb_databases` (list of {name, users[{name, password, roles[]}]}) |
 | Backup local | `mongodb_backup_type`, `mongodb_backup_dir`, `mongodb_backup_retain_days`, `mongodb_backup_pitr_enabled`, `mongodb_backup_enabled`, `mongodb_backup_schedule`, `mongodb_backup_mode` |
-| Backup S3 | `s3_bucket`, `s3_endpoint`, `s3_access_key`, `s3_secret_key`, `mongodb_backup_s3_prefix` |
+| Backup S3 | `mongodb_s3_bucket`, `mongodb_s3_endpoint`, `mongodb_s3_access_key`, `mongodb_s3_secret_key`, `mongodb_backup_s3_prefix` |
 | PBM (sharded PITR) | `mongodb_backup_pbm_enabled`, `mongodb_backup_init`, `mongodb_backup_pbm_image`, `mongodb_backup_storage_type`, `mongodb_backup_gcs_bucket`, `mongodb_backup_gcs_service_account`, `mongodb_backup_gcs_prefix`, `mongodb_backup_compression_type`, `mongodb_backup_compression_level`, `mongodb_backup_pbm_mem_limit_mb` (schedule/retention via `mongodb_backup_schedule`/`mongodb_backup_retain_days`) |
 | Monitoring | `mongodb_exporter_enabled`, `mongodb_exporter_port` |
-| Container memory | `mongod_mem_limit_mb`, `configsvr_mem_limit_mb`, `mongos_mem_limit_mb`, `mongodb_exporter_mem_limit_mb`, `mongodb_backup_pbm_mem_limit_mb` (mongod/configsvr also get `--wiredTigerCacheSizeGB` at 50% of their cap; mongos has no such knob, so its cap is a hard cliff) |
+| Container memory | `mongodb_mongod_mem_limit_mb`, `mongodb_configsvr_mem_limit_mb`, `mongodb_mongos_mem_limit_mb`, `mongodb_exporter_mem_limit_mb`, `mongodb_backup_pbm_mem_limit_mb` (mongod/configsvr also get `--wiredTigerCacheSizeGB` at 50% of their cap; mongos has no such knob, so its cap is a hard cliff) |
 | Memory budget | `mongodb_mem_reserved_mb` — *additive* escape hatch for memory the collection can't introspect. When `patroni_enabled` is true this role imports patroni's own `patroni_mem_request_mb`, so a plain mongodb+patroni node needs no number here |
-| OOM victim order | `mongod_oom_score_adj` / `configsvr_oom_score_adj` (0), `mongos_oom_score_adj` (500), `mongodb_backup_pbm_oom_score_adj` (800), `mongodb_exporter_oom_score_adj` (1000) — applies when the **host** runs out of memory, not when one container hits its own cap |
+| OOM victim order | `mongodb_mongod_oom_score_adj` / `mongodb_configsvr_oom_score_adj` (0), `mongodb_mongos_oom_score_adj` (500), `mongodb_backup_pbm_oom_score_adj` (800), `mongodb_exporter_oom_score_adj` (1000) — applies when the **host** runs out of memory, not when one container hits its own cap |
 | Uninstall | `mongodb_destroy_prune`, `mongodb_skip_confirm` |
 
 ## Artifacts (controller-side)

@@ -34,7 +34,53 @@ pgbouncer_admin_users: "pgbouncer"
 # from the auth_user so monitoring credentials can rotate independently
 # and a SHOW-only credential leak doesn't expose pg_shadow access.
 pgbouncer_stats_users: "pgbouncer_stats"
-pgbouncer_default_pool_size: 20
+
+# ── PgBouncer pool sizing ──────────────────────────────────────────────
+# These four were hardcoded in templates/pgbouncer.ini.j2 until now; the
+# defaults below are the values that template already rendered, so wiring them
+# up changes nothing on an existing deployment. (`pgbouncer_default_pool_size`
+# did exist as a variable, set to 20, but the template never read it — the
+# effective pool size has always been 50. It is renamed here rather than
+# quietly switched on, because turning the old name on would have dropped every
+# pool from 50 to 20 for anyone who had set it.)
+#
+# What each one bounds, and against which resource:
+#
+#   max_client_conn   — CLIENT connections PgBouncer will accept in total.
+#                       Cheap: an idle pooled client is a socket and a small
+#                       buffer, not a PostgreSQL backend. Sized to match
+#                       patroni_haproxy_primary_server_maxconn so HAProxy can
+#                       never offer more than PgBouncer will take.
+#
+#   default_pool_size — SERVER connections per user/database pair. This is the
+#                       expensive one: every connection here is a real
+#                       PostgreSQL backend drawn from patroni_pg_max_connections.
+#   reserve_pool_size — extra server connections per pair for bursts, on top of
+#                       default_pool_size. So each pair's worst case is
+#                       (default + reserve) = 60 backends by default.
+#
+#   min_pool_size     — server connections kept warm per pair even when idle,
+#                       so the first request after a quiet period doesn't pay
+#                       connection setup. Must not exceed default_pool_size.
+#
+# The multiplication is what catches people out: the ceiling is per PAIR, not
+# per pooler. At 60 per pair against a max_connections of 200, these defaults
+# run out at the THIRD pair — 3 x 60 = 180 for the pools, plus 20 for the
+# pooler-bypass listener and 20 for everything else holding a backend, is 220.
+# And a pair is a (user, database) combination, not a database: one database
+# with a read-write and a read-only user is two, plus PgBouncer's own auth_query
+# pool makes three. So a single-database cluster can already be over.
+#
+# Such a cluster still works, because PgBouncer fills pools on demand and they
+# are rarely all saturated at once — which is why this needed preflight's
+# pg_connections check rather than an incident to surface it. The symptom when
+# it does bite is "FATAL: sorry, too many clients already" in the APPLICATION,
+# not in PostgreSQL's startup. See patroni_pg_max_connections and
+# patroni_pg_conn_overhead in defaults/main/postgresql.yml for the whole budget.
+patroni_pgbouncer_max_client_conn: 1000
+patroni_pgbouncer_default_pool_size: 50
+patroni_pgbouncer_reserve_pool_size: 10
+patroni_pgbouncer_min_pool_size: 10
 
 # Per-database overrides for the [databases] section. PgBouncer resolves an
 # exact database name before falling back to the `*` entry, so each item here
@@ -56,7 +102,7 @@ pgbouncer_default_pool_size: 20
 #                         key above is an alias.
 #   pool_mode           — session | transaction | statement
 #   pool_size           — server connections for this database (else
-#                         default_pool_size)
+#                         patroni_pgbouncer_default_pool_size)
 #   min_pool_size, reserve_pool, max_db_connections — optional passthrough
 #
 # GitLab is the motivating case: Rails requires transaction pooling, while

@@ -20,10 +20,10 @@ Exec=mongod \
   --configsvr \
   --port={{ mongodb_configsvr_node_port }} \
   --replSet={{ mongodb_config_replset }} \
-  --wiredTigerCacheSizeGB={{ (configsvr_mem_limit_mb * 0.5 / 1024) | float | round(2) }} \
+  --wiredTigerCacheSizeGB={{ (mongodb_configsvr_mem_limit_mb * 0.5 / 1024) | float | round(2) }} \
   --bind_ip_all \
   --quiet \
-  --tlsMode={{ configsvr_tls_mode }} \
+  --tlsMode={{ mongodb_configsvr_tls_mode }} \
   --tlsCertificateKeyFile=/etc/mongo/ssl/mongodb-configsvr.pem \
   --tlsCAFile=/etc/mongo/ssl/ca.pem \
   --tlsClusterFile=/etc/mongo/ssl/mongodb-configsvr.pem \
@@ -37,9 +37,9 @@ Volume={{ mongodb_tls_dir }}/healthcheck.pem:/etc/mongo/ssl/healthcheck.pem:ro,z
 
 PodmanArgs=--ulimit nofile={{ mongodb_ulimit_nofile }}:{{ mongodb_ulimit_nofile }} \
           --ulimit nproc=-1:-1 \
-          --oom-score-adj={{ configsvr_oom_score_adj }}
+          --oom-score-adj={{ mongodb_configsvr_oom_score_adj }}
 
-Memory={{ configsvr_mem_limit_mb }}m
+Memory={{ mongodb_configsvr_mem_limit_mb }}m
 
 HealthCmd=mongosh --port {{ mongodb_configsvr_node_port }} --quiet --tls --tlsCertificateKeyFile /etc/mongo/ssl/healthcheck.pem --tlsCAFile /etc/mongo/ssl/ca.pem --authenticationMechanism MONGODB-X509 --authenticationDatabase '$external' --eval 'db.adminCommand("ping")'
 HealthInterval=30s
