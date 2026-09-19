@@ -13,7 +13,7 @@
 set -eu
 
 ENGINE={{ patroni_container_engine }}
-RETAIN={{ walg_retention }}
+RETAIN={{ patroni_walg_retention }}
 MEMBER={{ inventory_hostname_short }}
 TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 

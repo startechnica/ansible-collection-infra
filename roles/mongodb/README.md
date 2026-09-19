@@ -87,7 +87,7 @@ mongodb_databases:
         roles:
           - { role: read, db: app_main }
 
-# (optional) S3 backup target — shared with patroni
+# (optional) S3 backup target (patroni has its own patroni_s3_* set)
 mongodb_s3_endpoint: "https://s3.example.com"
 mongodb_s3_bucket: "backups"
 mongodb_s3_access_key: "{{ vault_s3_access_key }}"
@@ -198,7 +198,7 @@ the configsvr; one per host on replica sets), authenticating with an X.509
 client cert (`CN=mongodb-pbm`) and storing backups through PBM's selected native
 object-storage client.
 
-The default `mongodb_backup_storage_type: minio` uses the shared `s3_*`
+The default `mongodb_backup_storage_type: minio` uses the role's own `mongodb_s3_*`
 settings for MinIO and compatible gateways. Use `s3` for Amazon S3. For native
 Google Cloud Storage JSON API access, pass the service-account JSON key GCP
 produces at "Create key → JSON" — the raw JSON string or a parsed mapping. The

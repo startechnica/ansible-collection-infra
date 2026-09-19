@@ -10,7 +10,7 @@ Requires=etcd.service
 
 [Container]
 ContainerName=vip-manager
-Image=localhost/vip-manager:v{{ vip_manager_version }}
+Image=localhost/vip-manager:v{{ patroni_vip_manager_version }}
 Network=host
 
 # CAP_NET_ADMIN + CAP_NET_RAW: needed to add/remove the VIP on the
@@ -18,16 +18,16 @@ Network=host
 AddCapability=NET_ADMIN
 AddCapability=NET_RAW
 
-Volume={{ vip_manager_dir }}/vip-manager.yml:/etc/default/vip-manager.yml:ro,Z
-Volume={{ vip_manager_certs_dir }}:/etc/certs:ro,Z
+Volume={{ patroni_vip_manager_dir }}/vip-manager.yml:/etc/default/vip-manager.yml:ro,Z
+Volume={{ patroni_vip_manager_certs_dir }}:/etc/certs:ro,Z
 
-# Holds the VIP — a kill moves client traffic. See vip_manager_oom_score_adj.
-PodmanArgs=--oom-score-adj={{ vip_manager_oom_score_adj }}
+# Holds the VIP — a kill moves client traffic. See patroni_vip_manager_oom_score_adj.
+PodmanArgs=--oom-score-adj={{ patroni_vip_manager_oom_score_adj }}
 
 # vip-manager has no health endpoint of its own. Best proxy for
 # liveness is "can it still talk to etcd?" — without etcd it can't
 # decide who holds the leader key, so the VIP can't move correctly.
-HealthCmd=curl -sf --cert /etc/certs/vip-manager.crt --key /etc/certs/vip-manager.key --cacert /etc/certs/ca.crt https://127.0.0.1:{{ etcd_client_port }}/health -o /dev/null || exit 1
+HealthCmd=curl -sf --cert /etc/certs/vip-manager.crt --key /etc/certs/vip-manager.key --cacert /etc/certs/ca.crt https://127.0.0.1:{{ patroni_etcd_client_port }}/health -o /dev/null || exit 1
 HealthInterval=30s
 HealthTimeout=5s
 HealthRetries=3

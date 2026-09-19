@@ -216,7 +216,7 @@ See [VIP manager choice](../roles/patroni/README.md#vip-manager-choice).
 
 **Cause:** the `walg.env` file in the container isn't refreshed until the
 next playbook run rewrites it. Same for the GCS service-account key at
-`/opt/walg/gcs/credentials.json` when `walg_storage_type: gcs`.
+`/opt/walg/gcs/credentials.json` when `patroni_walg_storage_type: gcs`.
 
 **Fix:**
 ```bash
@@ -248,8 +248,8 @@ podman exec patroni /opt/walg/wal-g backup-list
 ```
 An empty file in step 1 means the host file isn't readable by the patroni UID.
 A permission error in step 3 means the service account lacks
-`roles/storage.objectAdmin` on `walg_gcs_bucket` — wal-g needs list, read,
-write, **and** delete (`walg_retention` prunes old backups).
+`roles/storage.objectAdmin` on `patroni_walg_gcs_bucket` — wal-g needs list, read,
+write, **and** delete (`patroni_walg_retention` prunes old backups).
 
 ---
 

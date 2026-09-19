@@ -6,7 +6,7 @@
   containers.podman.podman_image:
     name: "localhost/keepalived"
     tag: "latest"
-    path: "{{ keepalived_dir }}"
+    path: "{{ patroni_keepalived_dir }}"
     build:
       format: oci
       force_rm: true

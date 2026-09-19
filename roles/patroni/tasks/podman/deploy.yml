@@ -20,8 +20,8 @@
     mode: "0755"
 
 # ── VIP failover: build image + render Quadlet (split per engine) ─────
-# The Dockerfile templates are rendered to {{ vip_manager_dir }} /
-# {{ keepalived_dir }} by shared/vip_manager.yml / shared/keepalived.yml
+# The Dockerfile templates are rendered to {{ patroni_vip_manager_dir }} /
+# {{ patroni_keepalived_dir }} by shared/vip_manager.yml / shared/keepalived.yml
 # as part of provision-time preparation. The two include files below
 # build the image AND render the Quadlet for whichever VIP backend is
 # active, so we skip both entirely when patroni_vip_enabled=false.
@@ -41,20 +41,20 @@
 - name: Wal-g — build local image (no upstream container published)
   ansible.builtin.include_tasks: walg.yml
   when:
-    - walg_enabled
-    - walg_build_local
+    - patroni_walg_enabled
+    - patroni_walg_build_local
 
 - name: Wal-g — pull prebuilt image
   containers.podman.podman_image:
-    name: "{{ walg_image }}"
+    name: "{{ patroni_walg_image }}"
     pull: true
   register: _image_pull
   retries: 10
   delay: 20
   until: _image_pull is succeeded
   when:
-    - walg_enabled
-    - not walg_build_local
+    - patroni_walg_enabled
+    - not patroni_walg_build_local
 
 # ── Render Quadlets ───────────────────────────────────────────────────
 
@@ -75,7 +75,7 @@
     group: root
     mode: "0644"
   register: _q_walg_init
-  when: walg_enabled | bool
+  when: patroni_walg_enabled | bool
 
 # Rollback path: walg was enabled previously, now disabled. Stop services
 # (Quadlet-managed walg-init + host-managed walg-cron timer/service) and
@@ -93,7 +93,7 @@
     - walg-cron.timer
     - walg-cron.service
   failed_when: false
-  when: not (walg_enabled | bool)
+  when: not (patroni_walg_enabled | bool)
 
 - name: Remove walg Quadlets (walg disabled — rollback)
   ansible.builtin.file:
@@ -102,7 +102,7 @@
   loop:
     - walg-init.container
   register: _q_walg_removed
-  when: not (walg_enabled | bool)
+  when: not (patroni_walg_enabled | bool)
 
 - name: Remove walg-cron host units + helper script (walg disabled — rollback)
   ansible.builtin.file:
@@ -112,7 +112,7 @@
     - /etc/systemd/system/walg-cron.timer
     - /etc/systemd/system/walg-cron.service
     - "{{ patroni_dir }}/walg-backup.sh"
-  when: not (walg_enabled | bool)
+  when: not (patroni_walg_enabled | bool)
 
 - name: Render patroni Quadlet
   ansible.builtin.template:
@@ -149,7 +149,7 @@
     group: root
     mode: "0644"
   register: _q_pg_exporter
-  when: postgres_exporter_enabled | bool
+  when: patroni_postgres_exporter_enabled | bool
 
 - name: Reload systemd to materialize Quadlet units
   ansible.builtin.systemd:
@@ -173,9 +173,9 @@
   ansible.builtin.set_fact:
     _patroni_services: >-
       {{ ['etcd.service']
-         + (['walg-init.service'] if (walg_enabled | bool) else [])
+         + (['walg-init.service'] if (patroni_walg_enabled | bool) else [])
          + ['patroni.service', 'haproxy.service', 'pgbouncer.service']
-         + (['postgres-exporter.service'] if (postgres_exporter_enabled | bool) else [])
+         + (['postgres-exporter.service'] if (patroni_postgres_exporter_enabled | bool) else [])
          + (['vip-manager.service'] if (patroni_vip_enabled and use_vip_manager) else [])
          + (['keepalived.service'] if (patroni_vip_enabled and not use_vip_manager) else [])
       }}

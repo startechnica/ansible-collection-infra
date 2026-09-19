@@ -35,15 +35,15 @@
           # Unchanged from the pre-tunnel hardcoded values. On the pg
           # listeners `tunnel` supersedes these; they still govern the
           # mode-http stats listener, so they stay conservative.
-          - haproxy_client_timeout == '300s'
-          - haproxy_server_timeout == '300s'
-          - haproxy_connect_timeout == '10s'
+          - patroni_haproxy_client_timeout == '300s'
+          - patroni_haproxy_server_timeout == '300s'
+          - patroni_haproxy_connect_timeout == '10s'
           # Long by design; see defaults/main/haproxy.yml for why this is safe.
-          - haproxy_tunnel_timeout == '24h'
+          - patroni_haproxy_tunnel_timeout == '24h'
           # Must stay well under the tunnel timeout so half-closed
           # connections don't pin FDs for hours.
-          - haproxy_client_fin_timeout == '30s'
-          - haproxy_server_fin_timeout == '30s'
+          - patroni_haproxy_client_fin_timeout == '30s'
+          - patroni_haproxy_server_fin_timeout == '30s'
 
     - name: Recreate HAProxy render directory
       ansible.builtin.file:
@@ -64,8 +64,8 @@
         dest: "{{ _hap_render_dir }}/haproxy-override.cfg"
         mode: "0644"
       vars:
-        haproxy_tunnel_timeout: "2h"
-        haproxy_client_timeout: "45s"
+        patroni_haproxy_tunnel_timeout: "2h"
+        patroni_haproxy_client_timeout: "45s"
 
     - name: Read rendered configs
       ansible.builtin.slurp:
@@ -85,13 +85,13 @@
     - name: Verify every timeout renders from its variable
       ansible.builtin.assert:
         that:
-          - _hap_default.client == haproxy_client_timeout
-          - _hap_default.server == haproxy_server_timeout
-          - _hap_default.connect == haproxy_connect_timeout
-          - _hap_default.check == haproxy_check_timeout
-          - _hap_default.tunnel == haproxy_tunnel_timeout
-          - _hap_default['client-fin'] == haproxy_client_fin_timeout
-          - _hap_default['server-fin'] == haproxy_server_fin_timeout
+          - _hap_default.client == patroni_haproxy_client_timeout
+          - _hap_default.server == patroni_haproxy_server_timeout
+          - _hap_default.connect == patroni_haproxy_connect_timeout
+          - _hap_default.check == patroni_haproxy_check_timeout
+          - _hap_default.tunnel == patroni_haproxy_tunnel_timeout
+          - _hap_default['client-fin'] == patroni_haproxy_client_fin_timeout
+          - _hap_default['server-fin'] == patroni_haproxy_server_fin_timeout
 
     - name: Verify tunnel timeout is present (the whole point of this block)
       ansible.builtin.assert:
@@ -100,7 +100,7 @@
         fail_msg: >-
           `timeout tunnel` is missing from the rendered haproxy.cfg. Without
           it, timeout client/server govern established connections and every
-          idle LISTEN/NOTIFY session is dropped after haproxy_client_timeout.
+          idle LISTEN/NOTIFY session is dropped after patroni_haproxy_client_timeout.
 
     - name: Verify overrides reach the rendered config
       ansible.builtin.assert:
@@ -108,7 +108,7 @@
           - _hap_override.tunnel == '2h'
           - _hap_override.client == '45s'
           # Untouched vars keep their defaults.
-          - _hap_override.server == haproxy_server_timeout
+          - _hap_override.server == patroni_haproxy_server_timeout
 
     - name: Verify keepalive options survive alongside the timeouts
       ansible.builtin.assert:

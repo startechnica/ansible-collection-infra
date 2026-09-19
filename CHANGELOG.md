@@ -7,6 +7,33 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
 ## 1.0.3 (unreleased)
 
 ### Breaking changes
+- **Every `patroni` role variable is now `patroni_`-prefixed.** The companion to
+  the mongodb rename below: **111 variables**, **no aliases**, an old name is
+  silently ignored and the role default applies. Full table + a migration `sed`:
+  [docs/UPGRADING.md](docs/UPGRADING.md).
+
+  The transformation is mechanical — prepend `patroni_` — so whole families move
+  at once: `postgresql_*`, `pg_*`, `etcd_*`, `haproxy_*`, `pgbouncer_*`,
+  `walg_*`, `postgres_exporter_*`, `s3_*`, `tls_*`, `vip_manager_*`,
+  `keepalived_*`, `wal_archive_dir`. Two exceptions: `certs_dir` →
+  **`patroni_tls_dir`** (a plain prefix would collide with the existing
+  `patroni_certs_dir`, which is patroni's own leaf-cert directory rather than the
+  root of the tree; the new name matches `mongodb_tls_dir`), and `debug` /
+  `dry_run` → `patroni_debug` / `patroni_dry_run`, each defaulting to the
+  collection-wide value so the role reads it without owning the name and
+  `-e debug=true` still works.
+
+  With both roles renamed, **mongodb and patroni share no variable name at
+  all** — 90 and 165 defaults, zero intersection.
+  `tests/preflight_mem_budget.yml` now asserts that in both directions: an empty
+  intersection between the two defaults directories, plus a per-role check that
+  neither has an unprefixed default. A collection-wide name is consumed by
+  declaring a prefixed variable that falls back to it, never by declaring the
+  bare name.
+
+  If you are migrating both, do mongodb first: `s3_*` belongs to patroni after
+  this change, so copy the values out to `mongodb_s3_*` before renaming `s3_*`
+  away.
 - **Every `mongodb` role variable is now `mongodb_`-prefixed, and
   `defaults/main.yml` is split into `defaults/main/*.yml`.** The split mirrors
   `patroni`: one file per topic (`mongodb`, `engine`, `system`, `ports`,

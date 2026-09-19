@@ -391,7 +391,7 @@ argument_specs:
           timer (mongodb-backup.timer). Empty string disables the timer;
           on-demand `mongodb_action: backup` still works.
 
-      # ── S3 (shared with patroni) ──
+      # ── S3 (mongodb-only; patroni has its own patroni_s3_* set) ──
       mongodb_s3_endpoint:
         type: str
         default: ""

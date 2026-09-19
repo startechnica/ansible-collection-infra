@@ -13,9 +13,9 @@ everything sensitive.
 | vCenter | `vcenter_connect.username`, `vcenter_connect.password` | `instance`, `vcenter_sync` |
 | MongoDB admin | `mongodb_admin_password` | `mongodb` role, written to artifacts/admin.password |
 | MongoDB app users | `mongodb_databases[*].users[*].password` | `mongodb` role manage_users.yml |
-| Patroni | `postgresql_postgres_password`, `postgresql_replication_password` | `patroni` role, written to artifacts/credentials.txt |
+| Patroni | `patroni_postgresql_postgres_password`, `patroni_postgresql_replication_password` | `patroni` role, written to artifacts/credentials.txt |
 | Patroni app users | `patroni_databases[*].users[*].password` | `patroni` role manage_databases.yml |
-| S3 backup target (Patroni) | `s3_access_key`, `s3_secret_key` | `patroni` WAL-G + etcd snapshot upload |
+| S3 backup target (Patroni) | `patroni_s3_access_key`, `patroni_s3_secret_key` | `patroni` WAL-G + etcd snapshot upload |
 | S3 backup target (MongoDB) | `mongodb_s3_access_key`, `mongodb_s3_secret_key` | `mongodb` mongodump upload + PBM |
 | Webhook tokens | GitLab webhook tokens if you use the optional gitlab_project role | `gitlab_project` role |
 
@@ -29,7 +29,7 @@ inventories/
       vcenter.vault.yml    ← vault-encrypted (username, password)
       netbox.yml           ← public NetBox config (url)
       netbox.vault.yml     ← vault-encrypted (token)
-      s3.vault.yml         ← vault-encrypted (s3_access_key, s3_secret_key)
+      s3.vault.yml         ← vault-encrypted (patroni_s3_access_key, patroni_s3_secret_key)
   <project>.yml            ← per-project inventory (instances, scope)
 ```
 
@@ -71,8 +71,8 @@ all:
         mongodb_admin_password: "{{ vault_mongodb_admin_password }}"
         # One vault value can feed both roles' credential sets; the variable
         # names are per-role, the secret behind them need not be.
-        s3_access_key: "{{ vault_s3_access_key }}"
-        s3_secret_key: "{{ vault_s3_secret_key }}"
+        patroni_s3_access_key: "{{ vault_s3_access_key }}"
+        patroni_s3_secret_key: "{{ vault_s3_secret_key }}"
         mongodb_s3_access_key: "{{ vault_s3_access_key }}"
         mongodb_s3_secret_key: "{{ vault_s3_secret_key }}"
         netbox_connect:
@@ -135,7 +135,7 @@ passwords, per-DB credentials). `.gitignore` excludes the whole directory.
 Back it up out-of-band — if you lose the `ca.key`, you can't renew member
 certs without rotating the CA, which means a cluster restart.
 
-Recommended backup target: the same S3 bucket as `s3_bucket` /
+Recommended backup target: the same S3 bucket as `patroni_s3_bucket` /
 `mongodb_s3_bucket`, under a separate `secrets/` prefix, encrypted with GPG or
 SSE-KMS.
 

@@ -8,7 +8,7 @@
 # because add_host nodes have inventory_file == None.
 patroni_credentials_dir: "{{ hostvars['localhost'].artifacts_dir }}/patroni"
 patroni_credentials_file: "{{ patroni_credentials_dir }}/postgres.password"
-pgbouncer_credentials_file: "{{ patroni_credentials_dir }}/pgbouncer.password"
-pgbouncer_stats_credentials_file: "{{ patroni_credentials_dir }}/pgbouncer_stats.password"
-walg_credentials_file: "{{ patroni_credentials_dir }}/walg.password"
+patroni_pgbouncer_credentials_file: "{{ patroni_credentials_dir }}/pgbouncer.password"
+patroni_pgbouncer_stats_credentials_file: "{{ patroni_credentials_dir }}/pgbouncer_stats.password"
+patroni_walg_credentials_file: "{{ patroni_credentials_dir }}/walg.password"
 patroni_local_certs_dir: "{{ patroni_credentials_dir }}/certs"

@@ -8,16 +8,16 @@ Requires=patroni.service
 
 [Container]
 ContainerName=pgbouncer
-Image={{ pgbouncer_image }}
-User={{ pgbouncer_uid }}
-Group={{ pgbouncer_gid }}
+Image={{ patroni_pgbouncer_image }}
+User={{ patroni_pgbouncer_uid }}
+Group={{ patroni_pgbouncer_gid }}
 Network=host
 
-Volume={{ pgbouncer_dir }}/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro,Z
-Volume={{ pgbouncer_dir }}/userlist.txt:/etc/pgbouncer/userlist.txt:ro,Z
-Volume={{ pgbouncer_certs_dir }}:/etc/certs:ro,Z
+Volume={{ patroni_pgbouncer_dir }}/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro,Z
+Volume={{ patroni_pgbouncer_dir }}/userlist.txt:/etc/pgbouncer/userlist.txt:ro,Z
+Volume={{ patroni_pgbouncer_certs_dir }}:/etc/certs:ro,Z
 
-PodmanArgs=--ulimit nofile=65536:65536 --oom-score-adj={{ pgbouncer_oom_score_adj }}
+PodmanArgs=--ulimit nofile=65536:65536 --oom-score-adj={{ patroni_pgbouncer_oom_score_adj }}
 
 LogDriver=journald
 

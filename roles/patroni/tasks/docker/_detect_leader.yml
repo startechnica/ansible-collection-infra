@@ -7,7 +7,7 @@
 #                            delegate_to: target for direct PG operations)
 #
 # Use this whenever a task must hit the writable primary directly (port
-# postgresql_port = 55432) without going through HAProxy → PgBouncer —
+# patroni_postgresql_port = 55432) without going through HAProxy → PgBouncer —
 # e.g., bootstrap-time work that creates the very PG roles/functions
 # PgBouncer's auth_query depends on.
 
@@ -53,7 +53,7 @@
       - "Common causes: etcd quorum failure, leftover etcd state from a"
       - "prior attempt (delete /var/lib/etcd on all nodes if so), uid/gid"
       - "mismatch on the postgres data dir bind-mount, port 5432 already"
-      - "in use on the host, or wrong postgresql_postgres_password."
+      - "in use on the host, or wrong patroni_postgresql_postgres_password."
       - "If leader count > 1 you have split-brain — investigate etcd state"
       - "and member network reachability before re-running."
   when:
@@ -76,7 +76,7 @@
 - name: Wait for direct PostgreSQL on leader
   ansible.builtin.wait_for:
     host: 127.0.0.1
-    port: "{{ postgresql_port }}"
+    port: "{{ patroni_postgresql_port }}"
     timeout: 120
   delegate_to: "{{ _patroni_leader_host }}"
   run_once: true

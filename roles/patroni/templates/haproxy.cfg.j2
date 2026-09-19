@@ -26,10 +26,10 @@ defaults
     # the mode-http `listen stats` block, and stand as backstops should a
     # tcp-request rule ever be added. `timeout connect` is the one that bounds
     # backend connection setup.
-    timeout client {{ haproxy_client_timeout }}
-    timeout connect {{ haproxy_connect_timeout }}
-    timeout server {{ haproxy_server_timeout }}
-    timeout check {{ haproxy_check_timeout }}
+    timeout client {{ patroni_haproxy_client_timeout }}
+    timeout connect {{ patroni_haproxy_connect_timeout }}
+    timeout server {{ patroni_haproxy_server_timeout }}
+    timeout check {{ patroni_haproxy_check_timeout }}
 
     # Time a connection may sit in a server queue once `maxconn` on a server
     # line is reached. Unset, it inherits `timeout connect`; with `retries 3`
@@ -47,7 +47,7 @@ defaults
     #   * Long statements (CREATE INDEX, analytical queries, pg_dump) move
     #     no bytes while running. PgBouncer intentionally doesn't cap them
     #     (query_timeout = 0), so this is the only limit in the path.
-    timeout tunnel {{ haproxy_tunnel_timeout }}
+    timeout tunnel {{ patroni_haproxy_tunnel_timeout }}
 
     # Cap half-closed (FIN sent, peer hasn't closed back) connections so
     # FDs from abrupt client/PgBouncer disconnects free quickly. These
@@ -55,8 +55,8 @@ defaults
     # one direction, so they — not the tunnel timeout above — are what bounds
     # FIN_WAIT. Without them a lossy-network disconnect holds its slot for the
     # full tunnel window.
-    timeout client-fin {{ haproxy_client_fin_timeout }}
-    timeout server-fin {{ haproxy_server_fin_timeout }}
+    timeout client-fin {{ patroni_haproxy_client_fin_timeout }}
+    timeout server-fin {{ patroni_haproxy_server_fin_timeout }}
 
     # Kernel TCP keepalives on both client- and server-side sockets. With
     # os_tuning.yml's tcp_keepalive_time=60 / intvl=10 / probes=6, a dead
@@ -73,7 +73,7 @@ defaults
 
 listen stats
     mode http
-    bind *:{{ haproxy_stats_port }}
+    bind *:{{ patroni_haproxy_stats_port }}
 
     # Frontend cap. Same argument as pg-primary/pg-replicas: unset, this
     # inherits `global maxconn` (4000) and a monitoring endpoint could claim
@@ -117,7 +117,7 @@ listen stats
     # `maxconn`, so the per-server limit is static and fullconn is a display value.
 
 listen pg-primary
-    bind *:{{ haproxy_primary_port }}
+    bind *:{{ patroni_haproxy_primary_port }}
 
     # Frontend cap — limits what HAProxy ACCEPTS on this entry. Unset, it
     # inherits `global maxconn` ({{ patroni_haproxy_global_maxconn }}) and this one entry could consume
@@ -132,14 +132,14 @@ listen pg-primary
 
     option httpchk GET /primary
     http-check expect status 200
-    default-server inter {{ haproxy_check_inter }} fall {{ haproxy_check_fall }} rise {{ haproxy_check_rise }} on-marked-down shutdown-sessions
+    default-server inter {{ patroni_haproxy_check_inter }} fall {{ patroni_haproxy_check_fall }} rise {{ patroni_haproxy_check_rise }} on-marked-down shutdown-sessions
 
 {% for node in patroni_nodes %}
-    server {{ node.name }} {{ node.ipv4 }}:{{ pgbouncer_port }} maxconn {{ patroni_haproxy_primary_server_maxconn }} check port {{ patroni_api_port }} check-ssl ca-file /etc/certs/ca.crt crt /etc/certs/haproxy-client.pem verify required
+    server {{ node.name }} {{ node.ipv4 }}:{{ patroni_pgbouncer_port }} maxconn {{ patroni_haproxy_primary_server_maxconn }} check port {{ patroni_api_port }} check-ssl ca-file /etc/certs/ca.crt crt /etc/certs/haproxy-client.pem verify required
 {% endfor %}
 
 listen pg-replicas
-    bind *:{{ haproxy_replicas_port }}
+    bind *:{{ patroni_haproxy_replicas_port }}
 
     # Frontend cap, for the same reason as pg-primary: without it this entry
     # inherits `global maxconn` ({{ patroni_haproxy_global_maxconn }}) and an unused endpoint could starve
@@ -155,15 +155,15 @@ listen pg-replicas
     balance roundrobin
     option httpchk GET /replica
     http-check expect status 200
-    default-server inter {{ haproxy_check_inter }} fall {{ haproxy_check_fall }} rise {{ haproxy_check_rise }} on-marked-down shutdown-sessions
+    default-server inter {{ patroni_haproxy_check_inter }} fall {{ patroni_haproxy_check_fall }} rise {{ patroni_haproxy_check_rise }} on-marked-down shutdown-sessions
 
 {% for node in patroni_nodes %}
-    server {{ node.name }} {{ node.ipv4 }}:{{ pgbouncer_port }} maxconn {{ patroni_haproxy_replicas_server_maxconn }} check port {{ patroni_api_port }} check-ssl ca-file /etc/certs/ca.crt crt /etc/certs/haproxy-client.pem verify required
+    server {{ node.name }} {{ node.ipv4 }}:{{ patroni_pgbouncer_port }} maxconn {{ patroni_haproxy_replicas_server_maxconn }} check port {{ patroni_api_port }} check-ssl ca-file /etc/certs/ca.crt crt /etc/certs/haproxy-client.pem verify required
 {% endfor %}
 
 # POOLER BYPASS, direct to the Patroni leader.
 listen pg-direct
-    bind *:{{ haproxy_direct_port }}
+    bind *:{{ patroni_haproxy_direct_port }}
 
     # Frontend cap: accepts up to {{ patroni_haproxy_direct_maxconn }}, above the server-side limit of
     # {{ patroni_haproxy_direct_server_maxconn }} below, so excess connections queue inside HAProxy
@@ -187,5 +187,5 @@ listen pg-direct
     # socket for its duration. If timeout tunnel is ever removed from defaults,
     # set it explicitly HERE first.
 {% for node in patroni_nodes %}
-    server {{ node.name }} {{ node.ipv4 }}:{{ postgresql_port }} maxconn {{ patroni_haproxy_direct_server_maxconn }} check port {{ patroni_api_port }} check-ssl ca-file /etc/certs/ca.crt crt /etc/certs/haproxy-client.pem verify required
+    server {{ node.name }} {{ node.ipv4 }}:{{ patroni_postgresql_port }} maxconn {{ patroni_haproxy_direct_server_maxconn }} check port {{ patroni_api_port }} check-ssl ca-file /etc/certs/ca.crt crt /etc/certs/haproxy-client.pem verify required
 {% endfor %}

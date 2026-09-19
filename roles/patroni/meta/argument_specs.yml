@@ -7,10 +7,20 @@ argument_specs:
       - TLS everywhere (etcd, Patroni API, PostgreSQL, replication, HAProxy).
       - Integrated WAL-G backups (when S3 is configured), PITR, rolling restart, cert rotation, password rotation, and scale-up/down flows.
     options:
-      debug:
+      patroni_debug:
         type: bool
-        default: false
-        description: Verbose / introspection output. Defensive `| bool` filter still used in tasks because CLI `-e debug=true` arrives as a string.
+        description: >-
+          Verbose / introspection output for this role. Defaults to the
+          collection-wide `debug` when that is set, so `-e debug=true` still
+          reaches it; set patroni_debug directly to turn it on for patroni alone.
+          No literal default is declared here because the real one is that
+          fallback. Read it with a defensive `| bool` — CLI `-e debug=true`
+          arrives as a string.
+      patroni_dry_run:
+        type: bool
+        description: >-
+          Reserved no-op switch, defaulting to the collection-wide `dry_run`.
+          Nothing in this role reads it yet.
       # ── Cluster identity ──
       patroni_scope:
         type: str
@@ -38,7 +48,7 @@ argument_specs:
       patroni_standby_primary_port:
         type: int
         default: 55432
-        description: Remote primary's direct-postgres port (its `postgresql_port`).
+        description: Remote primary's direct-postgres port (its `patroni_postgresql_port`).
       patroni_standby_primary_slot:
         type: str
         default: ""
@@ -53,7 +63,7 @@ argument_specs:
           TLS mode for the outbound replication stream. `verify-ca` verifies the
           primary's server cert (set `patroni_shared_ca_dir` so both clusters
           chain to one CA); `require` encrypts without CA verification (use when
-          clusters can't share a CA; pair with `postgresql_replication_password`).
+          clusters can't share a CA; pair with `patroni_postgresql_replication_password`).
       patroni_standby_create_replica_methods:
         type: list
         elements: str
@@ -61,16 +71,16 @@ argument_specs:
         description: >-
           Replica creation methods in order. `basebackup` clones from the primary
           over the stream; WAL-G restore_command is added automatically when
-          `walg_enabled` so the standby can wal-fetch the primary's archive.
+          `patroni_walg_enabled` so the standby can wal-fetch the primary's archive.
       patroni_standby_primary_walg_prefix:
         type: str
         default: ""
         description: >-
           Object-storage key prefix (under the shared bucket) of the PRIMARY's
           WAL-G archive for the standby's wal-fetch fallback — set to the
-          primary's patroni_walg_s3_prefix / walg_gcs_prefix (default
+          primary's patroni_walg_s3_prefix / patroni_walg_gcs_prefix (default
           patroni-walg-<primary_scope>). Empty = bucket root. Backend-agnostic:
-          the standby must share the primary's walg_storage_type and bucket.
+          the standby must share the primary's patroni_walg_storage_type and bucket.
       patroni_shared_ca_dir:
         type: str
         default: ""
@@ -111,61 +121,61 @@ argument_specs:
         description: NIC name. Empty = auto-detected from `node_ip`.
 
       # ── Docker images ──
-      postgresql_version:
+      patroni_postgresql_version:
         type: int
         default: 18
       patroni_image:
         type: str
         default: "ghcr.io/parmincloud/containers/patroni:4.1.0-pg18"
-      etcd_image:
+      patroni_etcd_image:
         type: str
         default: "gcr.io/etcd-development/etcd:v3.6.0"
-      haproxy_image:
+      patroni_haproxy_image:
         type: str
         default: "haproxy:3.3-alpine"
-      pgbouncer_image:
+      patroni_pgbouncer_image:
         type: str
         default: "edoburu/pgbouncer:v1.25.1-p0"
-      vip_manager_version:
+      patroni_vip_manager_version:
         type: str
         default: "4.0.0"
-      vip_manager_arch:
+      patroni_vip_manager_arch:
         type: str
         description: Computed from ansible_architecture.
-      walg_version:
+      patroni_walg_version:
         type: str
         default: "v3.0.8"
         description: >-
           Upstream WAL-G release tag (with the leading `v`). Used both
           as the build URL component and as part of the image tag.
-      walg_image:
+      patroni_walg_image:
         type: str
         default: "localhost/wal-g:pg-v3.0.8"
         description: >-
-          Image reference. Defaults to `localhost/wal-g:pg-<walg_version>`
-          (locally built). Override + set `walg_build_local: false` to pull
+          Image reference. Defaults to `localhost/wal-g:pg-<patroni_walg_version>`
+          (locally built). Override + set `patroni_walg_build_local: false` to pull
           a prebuilt image from a public/mirrored registry.
-      walg_build_local:
+      patroni_walg_build_local:
         type: bool
         default: true
         description: >-
           When true (default), build wal-g locally from the bundled
-          Dockerfile. When false, pull `walg_image` from a registry instead
+          Dockerfile. When false, pull `patroni_walg_image` from a registry instead
           (no Dockerfile / build step). Use when upstream eventually
           ships a container image or you mirror one yourself.
 
       # ── Passwords ──
-      postgresql_postgres_password:
+      patroni_postgresql_postgres_password:
         type: str
         default: ""
         description: >-
           Auto-generated (64-char alphanumeric) when empty. Stored at
           `<artifacts_dir>/patroni/credentials.txt` on the controller.
-      postgresql_replication_password:
+      patroni_postgresql_replication_password:
         type: str
         default: ""
         description: Empty = TLS client-cert auth for replication.
-      pgbouncer_auth_password:
+      patroni_pgbouncer_auth_password:
         type: str
         default: ""
         description: >-
@@ -174,31 +184,31 @@ argument_specs:
           and EXECUTE on `pgbouncer.user_search()` — no direct pg_shadow
           access. Auto-generated if empty and persisted to
           artifacts/<inv>/patroni/pgbouncer.password on the controller.
-      pgbouncer_stats_password:
+      patroni_pgbouncer_stats_password:
         type: str
         default: ""
         description: >-
           Password for the read-only `pgbouncer_stats` PgBouncer admin
-          console user (referenced by pgbouncer_stats_users). PgBouncer-
+          console user (referenced by patroni_pgbouncer_stats_users). PgBouncer-
           internal only — no PostgreSQL role is created, the credential
           lives only in userlist.txt. Auto-generated if empty and persisted
           to artifacts/<inv>/patroni/pgbouncer_stats.password on the
           controller.
-      walg_auth_user:
+      patroni_walg_auth_user:
         type: str
         default: walg
         description: >-
           Dedicated PostgreSQL role used by WAL-G for backup-push. LOGIN +
           REPLICATION only — no superuser, no user-data read access. Lets
           us keep the postgres superuser password out of walg.env.
-      walg_auth_password:
+      patroni_walg_auth_password:
         type: str
         default: ""
         description: >-
-          Password for `walg_auth_user`. Auto-generated if empty and
+          Password for `patroni_walg_auth_user`. Auto-generated if empty and
           persisted to artifacts/<inv>/patroni/walg.password on the
           controller.
-      postgresql_admin_cidrs:
+      patroni_postgresql_admin_cidrs:
         type: list
         elements: str
         default: []
@@ -277,14 +287,14 @@ argument_specs:
           after a quiet period doesn't pay connection setup. Must not exceed
           patroni_pgbouncer_default_pool_size.
 
-      pgbouncer_database_overrides:
+      patroni_pgbouncer_database_overrides:
         type: list
         elements: dict
         default: []
         description: >-
           Per-database entries for PgBouncer's [databases] section. PgBouncer
           resolves an exact database name before the `*` fallback, so each item
-          carves one database out of the global pgbouncer_pool_mode. Keep
+          carves one database out of the global patroni_pgbouncer_pool_mode. Keep
           `session` global and opt databases INTO transaction pooling — session
           mode is always correct, whereas transaction mode silently breaks
           LISTEN/NOTIFY, session-level SET, cross-transaction advisory locks,
@@ -307,7 +317,7 @@ argument_specs:
           pool_mode:
             type: str
             choices: [session, transaction, statement]
-            description: Pool mode for this database only; omit to inherit pgbouncer_pool_mode.
+            description: Pool mode for this database only; omit to inherit patroni_pgbouncer_pool_mode.
           pool_size:
             type: int
             description: >-
@@ -321,7 +331,7 @@ argument_specs:
             type: int
 
       # ── PgBouncer client-facing TLS (clients → PgBouncer) ──
-      pgbouncer_client_tls_sslmode:
+      patroni_pgbouncer_client_tls_sslmode:
         type: str
         default: prefer
         choices: [disable, allow, prefer, require, verify-ca, verify-full]
@@ -334,14 +344,14 @@ argument_specs:
           identical in PgBouncer and additionally make a valid CLIENT
           certificate mandatory — issue per-app certs and switch auth_type to
           `cert` before selecting either.
-      pgbouncer_client_tls_protocols:
+      patroni_pgbouncer_client_tls_protocols:
         type: str
         default: secure
         description: >-
           TLS versions accepted from clients. `secure` = tlsv1.2 + tlsv1.3
           (PgBouncer's own default, pinned here); `all` also admits
           tlsv1.0/tlsv1.1. A specific version may also be named.
-      pgbouncer_client_tls_ciphers:
+      patroni_pgbouncer_client_tls_ciphers:
         type: str
         default: default
         description: >-
@@ -350,37 +360,37 @@ argument_specs:
           cipher string.
 
       # ── Ports ──
-      pgbouncer_port:
+      patroni_pgbouncer_port:
         type: int
         default: 6543
-      haproxy_primary_port:
+      patroni_haproxy_primary_port:
         type: int
         default: 5432
-      haproxy_replicas_port:
+      patroni_haproxy_replicas_port:
         type: int
         default: 5433
-      haproxy_direct_port:
+      patroni_haproxy_direct_port:
         type: int
         default: 5434
         description: >-
           HAProxy `pg-direct` listener port — bypasses PgBouncer and routes
           straight to the Patroni leader's PostgreSQL.
-      haproxy_stats_port:
+      patroni_haproxy_stats_port:
         type: int
         default: 7000
-      haproxy_check_inter:
+      patroni_haproxy_check_inter:
         type: str
         default: "3s"
         description: Seconds between HAProxy health checks of the Patroni REST API.
-      haproxy_check_fall:
+      patroni_haproxy_check_fall:
         type: int
         default: 5
         description: Consecutive failed checks before a backend is marked down (detection latency ≈ inter × fall).
-      haproxy_check_rise:
+      patroni_haproxy_check_rise:
         type: int
         default: 2
         description: Consecutive successful checks before a backend is marked up again.
-      haproxy_check_timeout:
+      patroni_haproxy_check_timeout:
         type: str
         default: "10s"
         description: Per-check timeout; a Patroni REST API response slower than this counts as a failed check.
@@ -436,27 +446,27 @@ argument_specs:
           frontends silently cap here instead of at their own limits.
 
       # ── HAProxy connection timeouts (inactivity, not absolute age) ──
-      haproxy_client_timeout:
+      patroni_haproxy_client_timeout:
         type: str
         default: "300s"
         description: >-
           Max inactivity on the client side. Largely a backstop on the pg
-          listeners: haproxy_tunnel_timeout supersedes it as soon as no
+          listeners: patroni_haproxy_tunnel_timeout supersedes it as soon as no
           analyser is attached, which for a plain mode-tcp listener with no
           tcp-request rules is immediately. It does govern the mode-http stats
           listener. Kernel TCP keepalives do NOT reset this timer.
-      haproxy_server_timeout:
+      patroni_haproxy_server_timeout:
         type: str
         default: "300s"
-        description: Max inactivity on the server (PgBouncer) side. Same semantics as haproxy_client_timeout.
-      haproxy_connect_timeout:
+        description: Max inactivity on the server (PgBouncer) side. Same semantics as patroni_haproxy_client_timeout.
+      patroni_haproxy_connect_timeout:
         type: str
         default: "10s"
         description: >-
           Max time to establish a TCP connection to a backend. Not superseded
           by the tunnel timeout, so this is what actually bounds connection
           setup.
-      haproxy_tunnel_timeout:
+      patroni_haproxy_tunnel_timeout:
         type: str
         default: "24h"
         description: >-
@@ -469,29 +479,29 @@ argument_specs:
           ~2 min, and because the *-fin timeouts below override it for
           half-closed connections. Lower THIS to bound session lifetime;
           raising client/server will not do it.
-      haproxy_client_fin_timeout:
+      patroni_haproxy_client_fin_timeout:
         type: str
         default: "30s"
         description: >-
           Max time a half-closed (client sent FIN) connection is kept before
-          its FDs are freed. Overrides haproxy_tunnel_timeout once the
+          its FDs are freed. Overrides patroni_haproxy_tunnel_timeout once the
           connection is shut down in one direction, so this — not the tunnel
           timeout — is what bounds FIN_WAIT.
-      haproxy_server_fin_timeout:
+      patroni_haproxy_server_fin_timeout:
         type: str
         default: "30s"
-        description: Max time a half-closed (server sent FIN) connection is kept before its FDs are freed. Same override semantics as haproxy_client_fin_timeout.
+        description: Max time a half-closed (server sent FIN) connection is kept before its FDs are freed. Same override semantics as patroni_haproxy_client_fin_timeout.
 
-      postgresql_port:
+      patroni_postgresql_port:
         type: int
         default: 55432
       patroni_api_port:
         type: int
         default: 8008
-      etcd_client_port:
+      patroni_etcd_client_port:
         type: int
         default: 2379
-      etcd_peer_port:
+      patroni_etcd_peer_port:
         type: int
         default: 2380
 
@@ -502,61 +512,61 @@ argument_specs:
       patroni_gid:
         type: int
         default: 999
-      etcd_uid:
+      patroni_etcd_uid:
         type: int
         default: 42782
-      etcd_gid:
+      patroni_etcd_gid:
         type: int
         default: 42782
-      haproxy_uid:
+      patroni_haproxy_uid:
         type: int
         default: 99
-      haproxy_gid:
+      patroni_haproxy_gid:
         type: int
         default: 99
 
       # ── Logging / debug ──
-      postgresql_log_destination:
+      patroni_postgresql_log_destination:
         type: str
         default: file
         choices: [file, stdout, both]
-      debug_mode:
+      patroni_debug_mode:
         type: bool
         default: false
         description: Rebuild container images on deploy (dev only).
 
       # ── Host directories ──
-      postgresql_dir:
+      patroni_postgresql_dir:
         type: str
         default: /opt/postgresql
-      postgresql_root_dir:
+      patroni_postgresql_root_dir:
         type: str
         default: /opt/postgresql/pgroot
-      postgresql_log_dir:
+      patroni_postgresql_log_dir:
         type: str
-        default: /opt/postgresql/postgresql_log_dir
-      etcd_dir:
+        default: /opt/postgresql/patroni_postgresql_log_dir
+      patroni_etcd_dir:
         type: str
         default: /opt/etcd
-      etcd_data_dir:
+      patroni_etcd_data_dir:
         type: str
         default: /opt/etcd/data
       patroni_dir:
         type: str
         default: /opt/patroni
-      haproxy_dir:
+      patroni_haproxy_dir:
         type: str
         default: /opt/haproxy
-      pgbouncer_dir:
+      patroni_pgbouncer_dir:
         type: str
         default: /opt/pgbouncer
-      keepalived_dir:
+      patroni_keepalived_dir:
         type: str
         default: /opt/keepalived
-      vip_manager_dir:
+      patroni_vip_manager_dir:
         type: str
         default: /opt/vip-manager
-      walg_dir:
+      patroni_walg_dir:
         type: str
         default: /opt/walg
 
@@ -564,37 +574,37 @@ argument_specs:
       patroni_backup_dir:
         type: str
         default: /opt/postgresql/backups
-      wal_archive_dir:
+      patroni_wal_archive_dir:
         type: str
         default: /opt/postgresql/wal_archive
 
       # ── S3 / WAL-G (shared with mongodb) ──
-      s3_bucket:
+      patroni_s3_bucket:
         type: str
         default: ""
         description: Set to enable WAL-G + etcd snapshot upload. Empty disables.
-      s3_endpoint:
+      patroni_s3_endpoint:
         type: str
         default: ""
-      s3_access_key:
+      patroni_s3_access_key:
         type: str
         default: ""
-      s3_secret_key:
+      patroni_s3_secret_key:
         type: str
         default: ""
-      s3_region:
+      patroni_s3_region:
         type: str
         default: us-east-1
-      s3_force_path_style:
+      patroni_s3_force_path_style:
         type: str
         default: "true"
-      walg_retention:
+      patroni_walg_retention:
         type: int
         default: 7
-      walg_compression:
+      patroni_walg_compression:
         type: str
         default: lz4
-      walg_storage_type:
+      patroni_walg_storage_type:
         type: str
         default: s3
         choices: [s3, gcs]
@@ -602,44 +612,44 @@ argument_specs:
           WAL-G object-storage backend. `s3` uses the shared s3_* vars (AWS S3,
           MinIO, Ceph, any S3-compatible gateway); `gcs` uses the native Google
           Cloud Storage JSON API via the walg_gcs_* vars. Selects the WAL-G
-          archive target only — etcd snapshots always upload to s3_bucket.
-      walg_gcs_bucket:
+          archive target only — etcd snapshots always upload to patroni_s3_bucket.
+      patroni_walg_gcs_bucket:
         type: str
         default: ""
-        description: GCS bucket for the WAL-G archive. Required when walg_storage_type is gcs.
-      walg_gcs_service_account_json:
+        description: GCS bucket for the WAL-G archive. Required when patroni_walg_storage_type is gcs.
+      patroni_walg_gcs_service_account_json:
         type: raw
         default: ""
         description: >-
           Google service-account JSON key granting WAL-G access to
-          walg_gcs_bucket — the file GCP produces at "Create key → JSON".
+          patroni_walg_gcs_bucket — the file GCP produces at "Create key → JSON".
           Accepts the raw JSON string or an already-parsed mapping. Required
-          when walg_storage_type is gcs. Keep it in Ansible Vault; the role
-          writes it to walg_gcs_service_account_file (0600, patroni-owned) and
+          when patroni_walg_storage_type is gcs. Keep it in Ansible Vault; the role
+          writes it to patroni_walg_gcs_service_account_file (0600, patroni-owned) and
           mounts it read-only into the patroni container.
-      walg_gcs_prefix:
+      patroni_walg_gcs_prefix:
         type: str
         default: patroni-walg-{{ patroni_scope }}
         description: >-
-          GCS object prefix (under walg_gcs_bucket) for this cluster's base
+          GCS object prefix (under patroni_walg_gcs_bucket) for this cluster's base
           backups + WAL archive. Same scope-namespacing rationale as
           patroni_walg_s3_prefix. Set "" to use the bucket root.
-      walg_gcs_service_account_dir:
+      patroni_walg_gcs_service_account_dir:
         type: str
         default: /opt/walg/gcs
         description: >-
           Host directory holding the rendered service-account key. Bind-mounted
           (as a directory, so a re-rendered key's new inode is picked up)
-          read-only into the patroni container at walg_gcs_service_account_mount.
-      walg_gcs_service_account_file:
+          read-only into the patroni container at patroni_walg_gcs_service_account_mount.
+      patroni_walg_gcs_service_account_file:
         type: str
         default: /opt/walg/gcs/credentials.json
         description: Host file the role renders the service-account key to (0600, patroni-owned).
-      walg_gcs_service_account_mount:
+      patroni_walg_gcs_service_account_mount:
         type: str
         default: /etc/walg
-        description: Container-side bind-mount target for walg_gcs_service_account_dir.
-      walg_gcs_service_account_path:
+        description: Container-side bind-mount target for patroni_walg_gcs_service_account_dir.
+      patroni_walg_gcs_service_account_path:
         type: str
         default: /etc/walg/credentials.json
         description: Container-side path wal-g reads via GOOGLE_APPLICATION_CREDENTIALS.
@@ -647,13 +657,13 @@ argument_specs:
         type: str
         default: patroni-walg-{{ patroni_scope }}
         description: >-
-          WAL-G S3 key prefix (under s3_bucket) for this cluster's base backups +
+          WAL-G S3 key prefix (under patroni_s3_bucket) for this cluster's base backups +
           WAL archive. Defaults to a scope-namespaced path
           (patroni-walg-<patroni_scope>) so multiple Patroni clusters can share one
           bucket without colliding at the root. Set "" to use the bucket root. A
           standby's wal-fetch fallback (patroni_standby_primary_walg_prefix) points
           at the primary's prefix.
-      walg_schedule:
+      patroni_walg_schedule:
         type: str
         default: "*-*-* 02:00:00"
         description:
@@ -661,16 +671,16 @@ argument_specs:
           - Empty string disables the timer (on-demand backups still work).
 
       # ── etcd snapshots ──
-      etcd_snapshot_schedule:
+      patroni_etcd_snapshot_schedule:
         type: str
         default: "00,06,12,18:00:00"
         description:
           - systemd OnCalendar expression (see `man systemd.time`).
           - Empty string disables scheduled snapshots.
-      etcd_snapshot_dir:
+      patroni_etcd_snapshot_dir:
         type: str
         default: /opt/etcd/snapshots
-      etcd_snapshot_retain:
+      patroni_etcd_snapshot_retain:
         type: int
         default: 7
       patroni_etcd_s3_prefix:
@@ -687,11 +697,11 @@ argument_specs:
       # assumes PostgreSQL is the only significant consumer on the node. On a
       # host shared with another memory-hungry stack (co-located MongoDB, for
       # instance) the defaults will over-commit the box — set them explicitly.
-      pg_shared_buffers:
+      patroni_pg_shared_buffers:
         type: str
         default: ""
         description: e.g. "2GB". Empty = ansible_facts['memtotal_mb'] / 4.
-      pg_effective_cache:
+      patroni_pg_effective_cache:
         type: str
         default: ""
         description: >-
@@ -699,14 +709,14 @@ argument_specs:
           ansible_facts['memtotal_mb'] * 3 / 4, which overstates it on a shared
           host and biases the planner toward index scans over cache that isn't
           there.
-      pg_work_mem:
+      patroni_pg_work_mem:
         type: str
         default: ""
         description: >-
           Per sort/hash operation, per backend — not a global budget, so the
           real worst case is this times the concurrent operation count. Empty =
           max(mem/64, 4)MB.
-      pg_maint_mem:
+      patroni_pg_maint_mem:
         type: str
         default: ""
         description: >-
@@ -735,10 +745,10 @@ argument_specs:
           capping a consensus store or the VIP holder turns memory pressure into
           a cluster event. One declared estimate rather than a sum of limits,
           used only by the preflight budget and never enforced. Flat rather than
-          conditional on postgres_exporter_enabled so the whole budget depends
+          conditional on patroni_postgres_exporter_enabled so the whole budget depends
           on this one defaults file, which is what lets another role import it
           with a single `defaults_from`.
-      postgres_exporter_mem_limit_mb:
+      patroni_postgres_exporter_mem_limit_mb:
         type: int
         default: 128
         description: >-
@@ -766,54 +776,54 @@ argument_specs:
         type: int
         default: 0
         description: Score the postmaster assigns to its backends.
-      etcd_oom_score_adj:
+      patroni_etcd_oom_score_adj:
         type: int
         default: -900
         description: >-
           Most protected in the stack — losing the DCS demotes the cluster.
-      haproxy_oom_score_adj:
+      patroni_haproxy_oom_score_adj:
         type: int
         default: -300
-      pgbouncer_oom_score_adj:
+      patroni_pgbouncer_oom_score_adj:
         type: int
         default: -300
-      keepalived_oom_score_adj:
+      patroni_keepalived_oom_score_adj:
         type: int
         default: -500
-      vip_manager_oom_score_adj:
+      patroni_vip_manager_oom_score_adj:
         type: int
         default: -500
-      postgres_exporter_oom_score_adj:
+      patroni_postgres_exporter_oom_score_adj:
         type: int
         default: 1000
         description: Telemetry only — first in line for the OOM killer.
 
       # ── Monitoring ──
-      postgres_exporter_enabled:
+      patroni_postgres_exporter_enabled:
         type: bool
         default: false
-      postgres_exporter_image:
+      patroni_postgres_exporter_image:
         type: str
         default: "prometheuscommunity/postgres-exporter:v0.16.0"
-      postgres_exporter_port:
+      patroni_postgres_exporter_port:
         type: int
         default: 9187
 
       # ── TLS ──
-      tls_cert_days:
+      patroni_tls_cert_days:
         type: int
         default: 3650
-      tls_key_type:
+      patroni_tls_key_type:
         type: str
         default: ECC
         choices: [ECC, RSA]
-      tls_key_curve:
+      patroni_tls_key_curve:
         type: str
         default: secp384r1
-      tls_key_size:
+      patroni_tls_key_size:
         type: int
         default: 4096
-      tls_signature_digest:
+      patroni_tls_signature_digest:
         type: str
         default: sha384
 

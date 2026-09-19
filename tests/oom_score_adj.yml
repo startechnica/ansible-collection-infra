@@ -10,7 +10,7 @@
 # later, on the one node under real pressure.
 #
 # Two plays, one per role: `export_vars` imports are play-wide, and the mongodb
-# and patroni roles share variable names (s3_*, node_ip, …), so importing both
+# and patroni roles shared variable names before both were namespaced, so importing both
 # into one play would let one role's defaults shadow the other's.
 #
 # Run from collection root:
@@ -26,23 +26,23 @@
     node_ip: 10.0.0.11
     node_ips: [10.0.0.11, 10.0.0.12, 10.0.0.13]
     etcd_cluster_state: new
-    postgresql_postgres_password: test-only
+    patroni_postgresql_postgres_password: test-only
     # Normally derived by shared/_computed_vars.yml from patroni_vip_address,
     # but that task file needs a `patroni_nodes` inventory group — set the two
     # flags the compose template reads directly instead.
     patroni_vip_enabled: true
     use_vip_manager: true
     # Off by default, so the exporter service would not render at all.
-    postgres_exporter_enabled: true
+    patroni_postgres_exporter_enabled: true
     # Each Quadlet paired with the variable whose value it must render.
     _patroni_oom_units:
-      - {unit: etcd, expect: "{{ etcd_oom_score_adj }}"}
+      - {unit: etcd, expect: "{{ patroni_etcd_oom_score_adj }}"}
       - {unit: patroni, expect: "{{ patroni_oom_score_adj }}"}
-      - {unit: haproxy, expect: "{{ haproxy_oom_score_adj }}"}
-      - {unit: pgbouncer, expect: "{{ pgbouncer_oom_score_adj }}"}
-      - {unit: keepalived, expect: "{{ keepalived_oom_score_adj }}"}
-      - {unit: vip-manager, expect: "{{ vip_manager_oom_score_adj }}"}
-      - {unit: postgres-exporter, expect: "{{ postgres_exporter_oom_score_adj }}"}
+      - {unit: haproxy, expect: "{{ patroni_haproxy_oom_score_adj }}"}
+      - {unit: pgbouncer, expect: "{{ patroni_pgbouncer_oom_score_adj }}"}
+      - {unit: keepalived, expect: "{{ patroni_keepalived_oom_score_adj }}"}
+      - {unit: vip-manager, expect: "{{ patroni_vip_manager_oom_score_adj }}"}
+      - {unit: postgres-exporter, expect: "{{ patroni_postgres_exporter_oom_score_adj }}"}
 
   tasks:
     # Loads every file in patroni's defaults/main/ and vars/main/ — the same
@@ -58,17 +58,17 @@
           # etcd must outlive everything: losing the DCS makes Patroni demote
           # the primary cluster-wide, which is strictly worse than any single
           # container dying.
-          - etcd_oom_score_adj < patroni_oom_score_adj
-          - etcd_oom_score_adj < haproxy_oom_score_adj
-          - etcd_oom_score_adj < pgbouncer_oom_score_adj
+          - patroni_etcd_oom_score_adj < patroni_oom_score_adj
+          - patroni_etcd_oom_score_adj < patroni_haproxy_oom_score_adj
+          - patroni_etcd_oom_score_adj < patroni_pgbouncer_oom_score_adj
           # The data/VIP path is protected; telemetry is expendable.
           - patroni_oom_score_adj < 0
-          - keepalived_oom_score_adj < 0
-          - vip_manager_oom_score_adj < 0
-          - postgres_exporter_oom_score_adj > 0
+          - patroni_keepalived_oom_score_adj < 0
+          - patroni_vip_manager_oom_score_adj < 0
+          - patroni_postgres_exporter_oom_score_adj > 0
           # Everything stays inside the kernel's accepted range.
-          - etcd_oom_score_adj >= -1000
-          - postgres_exporter_oom_score_adj <= 1000
+          - patroni_etcd_oom_score_adj >= -1000
+          - patroni_postgres_exporter_oom_score_adj <= 1000
         fail_msg: >-
           The OOM ranking no longer holds. etcd must be the most protected
           container in the stack and the exporter the least — see
@@ -77,13 +77,13 @@
     - name: "Patroni :: verify documented default values"
       ansible.builtin.assert:
         that:
-          - etcd_oom_score_adj == -900
+          - patroni_etcd_oom_score_adj == -900
           - patroni_oom_score_adj == -500
-          - keepalived_oom_score_adj == -500
-          - vip_manager_oom_score_adj == -500
-          - haproxy_oom_score_adj == -300
-          - pgbouncer_oom_score_adj == -300
-          - postgres_exporter_oom_score_adj == 1000
+          - patroni_keepalived_oom_score_adj == -500
+          - patroni_vip_manager_oom_score_adj == -500
+          - patroni_haproxy_oom_score_adj == -300
+          - patroni_pgbouncer_oom_score_adj == -300
+          - patroni_postgres_exporter_oom_score_adj == 1000
           - patroni_pg_backend_oom_adjust_enabled | bool
           - patroni_pg_backend_oom_score_adj == 0
 
@@ -179,12 +179,12 @@
     - name: "Patroni :: verify compose carries the same scores as the Quadlets"
       ansible.builtin.assert:
         that:
-          - _svc.etcd.oom_score_adj | int == etcd_oom_score_adj | int
+          - _svc.etcd.oom_score_adj | int == patroni_etcd_oom_score_adj | int
           - _svc.patroni.oom_score_adj | int == patroni_oom_score_adj | int
-          - _svc.haproxy.oom_score_adj | int == haproxy_oom_score_adj | int
-          - _svc.pgbouncer.oom_score_adj | int == pgbouncer_oom_score_adj | int
-          - _svc['postgres-exporter'].oom_score_adj | int == postgres_exporter_oom_score_adj | int
-          - _svc['vip-manager'].oom_score_adj | int == vip_manager_oom_score_adj | int
+          - _svc.haproxy.oom_score_adj | int == patroni_haproxy_oom_score_adj | int
+          - _svc.pgbouncer.oom_score_adj | int == patroni_pgbouncer_oom_score_adj | int
+          - _svc['postgres-exporter'].oom_score_adj | int == patroni_postgres_exporter_oom_score_adj | int
+          - _svc['vip-manager'].oom_score_adj | int == patroni_vip_manager_oom_score_adj | int
           - _svc.patroni.environment.PG_OOM_ADJUST_FILE == '/proc/self/oom_score_adj'
           - _svc.patroni.environment.PG_OOM_ADJUST_VALUE | int == patroni_pg_backend_oom_score_adj | int
         fail_msg: >-
@@ -197,7 +197,7 @@
     - name: "Patroni :: verify the keepalived branch is scored too"
       ansible.builtin.assert:
         that:
-          - _svc.keepalived.oom_score_adj | int == keepalived_oom_score_adj | int
+          - _svc.keepalived.oom_score_adj | int == patroni_keepalived_oom_score_adj | int
           - "'vip-manager' not in _svc"
       vars:
         _svc: "{{ (lookup('file', _oom_dir ~ '/docker-compose-keepalived.yml') | from_yaml).services }}"

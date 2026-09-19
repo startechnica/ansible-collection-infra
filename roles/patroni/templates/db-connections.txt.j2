@@ -10,16 +10,16 @@ Password:  {{ _user.password }}
 Roles:     {{ _user.roles | default(['LOGIN']) | join(', ') }}
 
 # Direct-to-primary (single node, 5432 on each VM = HAProxy r/w frontend)
-postgresql://{{ _user.name }}:{{ _user.password | urlencode }}@{{ patroni_vip_address | default('') }}:{{ haproxy_primary_port }}/{{ _db.name }}?sslmode=verify-ca
+postgresql://{{ _user.name }}:{{ _user.password | urlencode }}@{{ patroni_vip_address | default('') }}:{{ patroni_haproxy_primary_port }}/{{ _db.name }}?sslmode=verify-ca
 
 # Read-only replicas via HAProxy
-postgresql://{{ _user.name }}:{{ _user.password | urlencode }}@{{ patroni_vip_address | default('') }}:{{ haproxy_replicas_port }}/{{ _db.name }}?sslmode=verify-ca
+postgresql://{{ _user.name }}:{{ _user.password | urlencode }}@{{ patroni_vip_address | default('') }}:{{ patroni_haproxy_replicas_port }}/{{ _db.name }}?sslmode=verify-ca
 
 # Pooled via PgBouncer (per node)
-postgresql://{{ _user.name }}:{{ _user.password | urlencode }}@{{ patroni_vip_address | default('') }}:{{ pgbouncer_port }}/{{ _db.name }}?sslmode=verify-ca
+postgresql://{{ _user.name }}:{{ _user.password | urlencode }}@{{ patroni_vip_address | default('') }}:{{ patroni_pgbouncer_port }}/{{ _db.name }}?sslmode=verify-ca
 
 # Direct, multi-host (libpq target_session_attrs=read-write)
 postgresql://{{ _user.name }}:{{ _user.password | urlencode }}@{{ node_ips | join(',') }}/{{ _db.name }}?target_session_attrs=read-write&sslmode=verify-ca
 
 # psql
-psql "postgresql://{{ _user.name }}:{{ _user.password | urlencode }}@{{ patroni_vip_address | default(node_ips[0]) }}:{{ haproxy_primary_port }}/{{ _db.name }}?sslmode=verify-ca"
+psql "postgresql://{{ _user.name }}:{{ _user.password | urlencode }}@{{ patroni_vip_address | default(node_ips[0]) }}:{{ patroni_haproxy_primary_port }}/{{ _db.name }}?sslmode=verify-ca"

@@ -15,7 +15,7 @@
 # The live Patroni cluster is NOT touched. Engine-agnostic: works on both
 # podman and docker (resolved from patroni_container_engine).
 #
-# Requires S3/WAL-G to be configured (s3_bucket set in inventory).
+# Requires S3/WAL-G to be configured (patroni_s3_bucket set in inventory).
 #
 # Usage:
 #   # Full restore — replay ALL available WAL (latest point):
@@ -47,16 +47,16 @@
   tasks:
     # target_time is OPTIONAL: omit it for a full restore (recover to the
     # end of available WAL), supply it for point-in-time recovery.
-    - name: Require s3_bucket for WAL-G restore
+    - name: Require patroni_s3_bucket for WAL-G restore
       ansible.builtin.assert:
         that:
-          - (s3_bucket | default('')) | length > 0
+          - (patroni_s3_bucket | default('')) | length > 0
         fail_msg: >
-          Patroni restore requires WAL-G (set s3_bucket + s3_* in inventory).
+          Patroni restore requires WAL-G (set patroni_s3_bucket + s3_* in inventory).
           For PITR also pass -e target_time='2026-04-22 14:30:00+00';
           omit target_time for a full restore to the latest point.
         success_msg: >-
-          Restore inputs OK (s3_bucket={{ s3_bucket }},
+          Restore inputs OK (patroni_s3_bucket={{ patroni_s3_bucket }},
           mode={{ 'PITR @ ' ~ target_time if (target_time | default('')) | length > 0 else 'FULL (latest)' }}).
 
 - name: Restore to scratch Postgres
@@ -69,15 +69,15 @@
     # Common container args shared by the fetch + recovery containers.
     _pitr_engine: "{{ patroni_container_engine }}"
     _pitr_env_args: >-
-      -e WALG_S3_PREFIX=s3://{{ s3_bucket }}
-      -e AWS_ENDPOINT={{ s3_endpoint }}
-      -e AWS_ACCESS_KEY_ID={{ s3_access_key }}
-      -e AWS_SECRET_ACCESS_KEY={{ s3_secret_key }}
-      -e AWS_REGION={{ s3_region | default('us-east-1') }}
-      -e AWS_S3_FORCE_PATH_STYLE={{ s3_force_path_style | default('true') | string }}
+      -e WALG_S3_PREFIX=s3://{{ patroni_s3_bucket }}
+      -e AWS_ENDPOINT={{ patroni_s3_endpoint }}
+      -e AWS_ACCESS_KEY_ID={{ patroni_s3_access_key }}
+      -e AWS_SECRET_ACCESS_KEY={{ patroni_s3_secret_key }}
+      -e AWS_REGION={{ patroni_s3_region | default('us-east-1') }}
+      -e AWS_S3_FORCE_PATH_STYLE={{ patroni_s3_force_path_style | default('true') | string }}
     _pitr_vol_args: >-
       -v {{ _pitr_restore_dir }}:/var/lib/postgresql/pitr-restore
-      -v {{ walg_dir }}:/opt/walg:ro
+      -v {{ patroni_walg_dir }}:/opt/walg:ro
   pre_tasks:
     - name: Inherit localhost vars
       ansible.builtin.include_role:

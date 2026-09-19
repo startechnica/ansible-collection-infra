@@ -7,6 +7,59 @@ documents the migration steps for breaking changes.
 
 ## 1.0.3 (unreleased)
 
+### Breaking — every `patroni` role variable is now `patroni_`-prefixed
+
+The companion to the mongodb rename below. **111 variables** are renamed, with
+**no aliases** — an inventory using an old name is silently ignored and the
+role's default applies.
+
+The transformation is mechanical: **prepend `patroni_`**. Whole families move at
+once, so you can migrate by prefix rather than variable by variable:
+
+| Old prefix | New prefix | Count |
+| --- | --- | --- |
+| `postgresql_*` | `patroni_postgresql_*` | 9 |
+| `pg_*` | `patroni_pg_*` | 4 |
+| `etcd_*` | `patroni_etcd_*` | 12 |
+| `haproxy_*` | `patroni_haproxy_*` | 20 |
+| `pgbouncer_*` | `patroni_pgbouncer_*` | 18 |
+| `walg_*` | `patroni_walg_*` | 19 |
+| `postgres_exporter_*` | `patroni_postgres_exporter_*` | 6 |
+| `s3_*` | `patroni_s3_*` | 6 |
+| `tls_*` | `patroni_tls_*` | 5 |
+| `vip_manager_*` | `patroni_vip_manager_*` | 5 |
+| `keepalived_*` | `patroni_keepalived_*` | 2 |
+| `wal_archive_dir` | `patroni_wal_archive_dir` | 1 |
+
+Two entries are **not** a plain prefix:
+
+- **`certs_dir` → `patroni_tls_dir`.** A plain prefix would have collided with
+  the existing `patroni_certs_dir`, which is patroni's *own* leaf-cert directory,
+  not the root of the TLS tree. The new name matches `mongodb_tls_dir`.
+- **`debug` and `dry_run` → `patroni_debug` / `patroni_dry_run`**, each
+  defaulting to the collection-wide value (`{{ debug | default(false) }}`). The
+  role now *reads* those without declaring the bare name, so `-e debug=true`
+  still works and nothing else in the play gets its `debug` overwritten by
+  whichever role's defaults loaded last. Set `patroni_debug` to enable it for
+  patroni alone. (`dry_run` is a reserved switch nothing in the role reads yet.)
+
+Migrate an inventory with:
+
+```bash
+sed -i -E 's/\b(postgresql|pg|etcd|haproxy|pgbouncer|walg|postgres_exporter|s3|tls|vip_manager|keepalived)_/patroni_\1_/g; s/\bwal_archive_dir\b/patroni_wal_archive_dir/; s/\bcerts_dir\b/patroni_tls_dir/' inventories/<inv>.yml
+```
+
+Review the result before committing — that pattern is deliberately broad and
+will also rewrite `mongodb_s3_*` into `mongodb_patroni_s3_*` if the inventory
+sets those, and it does not know which `pg_*`/`tls_*` keys belong to patroni
+versus something else you may have. Check with
+`git diff inventories/<inv>.yml`.
+
+**Ordering note if you are doing both renames:** apply the mongodb migration
+first. `s3_*` belongs to patroni after this change, so an inventory that still
+needs `mongodb_s3_*` derived from the old shared `s3_*` values should get those
+copied out before `s3_*` is renamed away.
+
 ### Breaking — every `mongodb` role variable is now `mongodb_`-prefixed
 
 `roles/mongodb/defaults/main.yml` is split into `defaults/main/*.yml` (one file

@@ -30,7 +30,7 @@
       StandardOutput=append:/var/log/etcd-snapshot.log
       StandardError=append:/var/log/etcd-snapshot.log
   notify: reload systemd
-  when: etcd_snapshot_schedule | length > 0
+  when: patroni_etcd_snapshot_schedule | length > 0
 
 - name: Install etcd-snapshot.timer unit
   ansible.builtin.copy:
@@ -42,14 +42,14 @@
       Documentation=man:systemd.timer(5)
 
       [Timer]
-      OnCalendar={{ etcd_snapshot_schedule }}
+      OnCalendar={{ patroni_etcd_snapshot_schedule }}
       Persistent=true
       Unit=etcd-snapshot.service
 
       [Install]
       WantedBy=timers.target
   notify: reload systemd
-  when: etcd_snapshot_schedule | length > 0
+  when: patroni_etcd_snapshot_schedule | length > 0
 
 - name: Enable and start etcd-snapshot.timer
   ansible.builtin.systemd:
@@ -57,7 +57,7 @@
     enabled: true
     state: started
     daemon_reload: true
-  when: etcd_snapshot_schedule | length > 0
+  when: patroni_etcd_snapshot_schedule | length > 0
 
 - name: Disable etcd-snapshot.timer if scheduling is empty
   ansible.builtin.systemd:
@@ -65,4 +65,4 @@
     enabled: false
     state: stopped
   failed_when: false # idempotent — unit may not exist on first run
-  when: etcd_snapshot_schedule | length == 0
+  when: patroni_etcd_snapshot_schedule | length == 0

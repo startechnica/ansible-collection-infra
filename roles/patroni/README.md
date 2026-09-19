@@ -11,11 +11,11 @@ surface.
 - **Patroni-managed PostgreSQL** with automatic failover and leader election via etcd.
 - **3-layer client routing** — vip-manager (floating IP) → HAProxy (health-aware primary/replica split) → PgBouncer (per-node connection pool) → PostgreSQL.
 - **TLS everywhere** — etcd peers, etcd clients, Patroni REST API, PostgreSQL clients, replication. ECDSA by default (P-384), sha384 digest.
-- **Client-facing TLS terminated at PgBouncer** — HAProxy is `mode tcp` and relays the handshake through, so client TLS is negotiated with PgBouncer. `pgbouncer_client_tls_sslmode` defaults to `prefer` (TLS when the client asks, plaintext otherwise); set `require` to force it.
+- **Client-facing TLS terminated at PgBouncer** — HAProxy is `mode tcp` and relays the handshake through, so client TLS is negotiated with PgBouncer. `patroni_pgbouncer_client_tls_sslmode` defaults to `prefer` (TLS when the client asks, plaintext otherwise); set `require` to force it.
 - **Auto-generated postgres password** when empty, persisted to controller's artifacts dir.
 - **Extensions** — `pg_stat_statements` loaded by default; add others (pgaudit, postgis, timescaledb, ...) via `patroni_extensions` **only when the `patroni_image` actually bundles the corresponding shared library**.
 - **Application DB/user provisioning** via `patroni_databases` (uses `community.postgresql` modules through HAProxy to the current primary).
-- **Backups** — pg_basebackup (local) or WAL-G (continuous + archive to S3 or native Google Cloud Storage, selected by `walg_storage_type`).
+- **Backups** — pg_basebackup (local) or WAL-G (continuous + archive to S3 or native Google Cloud Storage, selected by `patroni_walg_storage_type`).
 - **Day-2 playbooks** — backup, verify-backup, PITR, rolling restart, switchover, renew-certs, rotate-passwords, add/remove node.
 
 ## Requirements
@@ -64,7 +64,7 @@ VMs tagged `patroni` (NetBox or inventory `instance_tags`) get routed to this ro
       vars:
         patroni_scope: myproject-pg
         patroni_vip_address: "10.0.0.100"
-        postgresql_postgres_password: "{{ vault_postgres_password }}"
+        patroni_postgresql_postgres_password: "{{ vault_postgres_password }}"
 ```
 
 ## Inventory shape
@@ -82,8 +82,8 @@ patroni_vip_address: "10.0.0.100"
 # patroni_vip_engine: vip-manager          # default; set to "none" to disable the VIP layer
 
 # --- Passwords (auto-generated when empty) ---
-# postgresql_postgres_password: ""
-# postgresql_replication_password: ""         # empty = TLS cert auth for replication
+# patroni_postgresql_postgres_password: ""
+# patroni_postgresql_replication_password: ""         # empty = TLS cert auth for replication
 
 # --- (optional) application DBs ---
 patroni_databases:
@@ -102,15 +102,15 @@ patroni_databases:
 
 # --- (optional) WAL-G — enables continuous archiving + PITR ---
 # S3 backend (default): AWS S3, MinIO, Ceph, any S3-compatible gateway.
-s3_bucket: "backups"
-s3_endpoint: "https://s3.example.com"
-s3_access_key: "{{ vault_s3_access_key }}"
-s3_secret_key: "{{ vault_s3_secret_key }}"
+patroni_s3_bucket: "backups"
+patroni_s3_endpoint: "https://s3.example.com"
+patroni_s3_access_key: "{{ vault_s3_access_key }}"
+patroni_s3_secret_key: "{{ vault_s3_secret_key }}"
 
 # Native Google Cloud Storage instead — swap the block above for:
-#   walg_storage_type: gcs
-#   walg_gcs_bucket: "pg-backups"
-#   walg_gcs_service_account_json: "{{ vault_walg_gcs_service_account_json }}"
+#   patroni_walg_storage_type: gcs
+#   patroni_walg_gcs_bucket: "pg-backups"
+#   patroni_walg_gcs_service_account_json: "{{ vault_walg_gcs_service_account_json }}"
 # The credentials value is the service-account JSON key GCP hands you at
 # "Create key → JSON" (raw string or parsed mapping — both work). Note that
 # etcd snapshots always upload to S3, so keep the s3_* vars if you want those
@@ -291,7 +291,7 @@ GitLab CI schedule, Ansible Tower/AWX, or any job scheduler. Reference:
 
 ### TLS layout
 
-Each node gets its certs distributed to `{{ certs_dir }}` (`/opt/patroni/tls/` by default):
+Each node gets its certs distributed to `{{ patroni_tls_dir }}` (`/opt/patroni/tls/` by default):
 
 | Directory | Contents |
 |---|---|
@@ -334,7 +334,7 @@ After install, per-database credential artifacts land in the controller's
 There are two interactive prompts during uninstall, both expecting you to type `prune`:
 
 1. *First prompt* (always): confirms removal of containers, configs, systemd units, and host-level cleanup.
-2. *Second prompt* (only when `patroni_destroy_prune: true`): confirms deletion of the data directories (`postgresql_root_dir`, `etcd_data_dir`, etc.). Typing anything else here keeps the data on disk even though the flag was set — last-chance escape hatch before an irreversible wipe.
+2. *Second prompt* (only when `patroni_destroy_prune: true`): confirms deletion of the data directories (`patroni_postgresql_root_dir`, `patroni_etcd_data_dir`, etc.). Typing anything else here keeps the data on disk even though the flag was set — last-chance escape hatch before an irreversible wipe.
 
 Use `patroni_skip_confirm: true` to bypass BOTH prompts in CI/automation. Without `patroni_destroy_prune: true`, only the first prompt fires and data is preserved.
 
@@ -354,7 +354,7 @@ Minimum standby inventory:
 patroni_scope: myproject-pg-dr          # MUST differ from the primary's scope
 patroni_standby_enabled: true
 patroni_standby_primary_host: 10.0.0.10 # primary's leader IP or VIP
-patroni_standby_primary_port: 55432     # primary's postgresql_port
+patroni_standby_primary_port: 55432     # primary's patroni_postgresql_port
 patroni_standby_primary_slot: dr_slot   # optional: hold WAL on the primary
 # TLS: pick ONE of the two trust models below
 ```
@@ -366,20 +366,20 @@ patroni_standby_primary_slot: dr_slot   # optional: hold WAL on the primary
     `ca.key` + `ca.crt`) on **both** clusters so they chain to one CA; keep
     `patroni_standby_primary_sslmode: verify-ca`.
   - **No shared CA:** set `patroni_standby_primary_sslmode: require` (encrypted, but the
-    primary's cert is not CA-verified) and set `postgresql_replication_password` on both.
+    primary's cert is not CA-verified) and set `patroni_postgresql_replication_password` on both.
 - **Replication credentials** — the standby must use the **same**
-  `postgresql_replication_password` (or replicator cert) as the primary.
+  `patroni_postgresql_replication_password` (or replicator cert) as the primary.
 - **Primary-side pg_hba** — add the standby node IPs to `patroni_replication_cidrs` on the
   **primary** so it admits their `replication` connections.
 - **Primary-side firewall** — add the standby IPs to the primary's
   `firewall_service_source_map` for `postgresql-direct` (port 55432).
-- **WAL-G fallback** — the standby must share the primary's `walg_storage_type` **and**
-  bucket (`s3_bucket`, or `walg_gcs_bucket` on the GCS backend); set
+- **WAL-G fallback** — the standby must share the primary's `patroni_walg_storage_type` **and**
+  bucket (`patroni_s3_bucket`, or `patroni_walg_gcs_bucket` on the GCS backend); set
   `patroni_standby_primary_walg_prefix` to the primary's `patroni_walg_s3_prefix` /
-  `walg_gcs_prefix` (default `patroni-walg-<primary_scope>`) so wal-fetch reaches the
+  `patroni_walg_gcs_prefix` (default `patroni-walg-<primary_scope>`) so wal-fetch reaches the
   primary's archive.
   Each cluster's own WAL-G and etcd-snapshot paths are already scope-namespaced by default
-  (`patroni_walg_s3_prefix` / `walg_gcs_prefix` / `patroni_etcd_s3_prefix` =
+  (`patroni_walg_s3_prefix` / `patroni_walg_gcs_prefix` / `patroni_etcd_s3_prefix` =
   `patroni-walg-<scope>` / `patroni-etcd-<scope>`), so clusters sharing a bucket don't collide.
 
 **Promotion (DR activation):** run
@@ -391,12 +391,12 @@ You now have two independent primaries — fence the old one to avoid split-brai
 ## Per-database pool modes
 
 PgBouncer resolves an **exact** database name before falling back to its `*` entry, so one
-pooler can serve databases that need different pool modes. `pgbouncer_database_overrides`
+pooler can serve databases that need different pool modes. `patroni_pgbouncer_database_overrides`
 renders those explicit `[databases]` lines:
 
 ```yaml
-pgbouncer_pool_mode: session          # global default — leave it here
-pgbouncer_database_overrides:
+patroni_pgbouncer_pool_mode: session          # global default — leave it here
+patroni_pgbouncer_database_overrides:
   - { name: gitlabhq_production,    pool_mode: transaction }
   - { name: gitlabhq_production_ci, pool_mode: transaction }
 ```
@@ -406,7 +406,7 @@ Session mode is always correct, merely less efficient. Transaction mode silently
 LISTEN/NOTIFY, session-level `SET`, advisory locks held across transactions, `WITH HOLD`
 cursors, and temp tables. With session as the fallback, a database you forget to list costs
 connections — visible. With transaction as the fallback, it corrupts behavior — not visible.
-The role emits a warning if `pgbouncer_pool_mode` is `transaction` globally.
+The role emits a warning if `patroni_pgbouncer_pool_mode` is `transaction` globally.
 
 ### GitLab + Praefect
 
@@ -434,28 +434,41 @@ configuration` — its absence is the only signal that LISTEN isn't working.
 
 ## Variables reference
 
-Inputs are validated by [meta/argument_specs.yml](meta/argument_specs.yml). Highlights:
+Inputs are validated by [meta/argument_specs.yml](meta/argument_specs.yml), and
+defined in [defaults/main/](defaults/main/) — one file per component, so another
+role can import just the slice it needs with `defaults_from`. See
+[tasks/export_vars.yml](tasks/export_vars.yml).
+
+**Every variable is `patroni_`-prefixed**, with no exceptions — enforced by a
+test, so importing this role's variables can never silently redefine another
+role's. Where the role needs a collection-wide value it *reads* it rather than
+declaring it: `patroni_debug` and `patroni_dry_run` default to
+`{{ debug | default(false) }}` / `{{ dry_run | default(false) }}`, so
+`-e debug=true` still reaches them while the bare names stay unowned. Same shape
+as `patroni_container_engine` falling back to `container_engine`.
+
+Highlights:
 
 | Category | Key variables |
 |---|---|
-| Identity | `patroni_scope`, `postgresql_version` |
+| Identity | `patroni_scope`, `patroni_postgresql_version` |
 | VIP | `patroni_vip_engine`, `patroni_vip_address`, `patroni_vip_mask`, `patroni_vip_iface` |
-| Passwords | `postgresql_postgres_password` (auto-gen), `postgresql_replication_password` (empty = cert auth) |
-| Ports | `postgresql_port` (55432), `haproxy_primary_port` (5432), `haproxy_direct_port` (5434, bypasses PgBouncer), `pgbouncer_port` (6543), `patroni_api_port` (8008), `etcd_client_port` (2379) |
-| TLS | `tls_key_type`, `tls_key_curve`, `tls_signature_digest`, `tls_cert_days` |
-| Client TLS | `pgbouncer_client_tls_sslmode` (`prefer`; `require` forces TLS), `pgbouncer_client_tls_protocols`, `pgbouncer_client_tls_ciphers` |
-| Pooling | `pgbouncer_pool_mode` (`session`), `pgbouncer_database_overrides` (per-database pool modes) |
+| Passwords | `patroni_postgresql_postgres_password` (auto-gen), `patroni_postgresql_replication_password` (empty = cert auth) |
+| Ports | `patroni_postgresql_port` (55432), `patroni_haproxy_primary_port` (5432), `patroni_haproxy_direct_port` (5434, bypasses PgBouncer), `patroni_pgbouncer_port` (6543), `patroni_api_port` (8008), `patroni_etcd_client_port` (2379) |
+| TLS | `patroni_tls_key_type`, `patroni_tls_key_curve`, `patroni_tls_signature_digest`, `patroni_tls_cert_days` |
+| Client TLS | `patroni_pgbouncer_client_tls_sslmode` (`prefer`; `require` forces TLS), `patroni_pgbouncer_client_tls_protocols`, `patroni_pgbouncer_client_tls_ciphers` |
+| Pooling | `patroni_pgbouncer_pool_mode` (`session`), `patroni_pgbouncer_database_overrides` (per-database pool modes) |
 | Connection budget | `patroni_pg_max_connections` (200 — bootstrap-only on its own, reconciled into DCS by `reconcile_pg_parameters.yml`), `patroni_pgbouncer_default_pool_size` (50) + `patroni_pgbouncer_reserve_pool_size` (10) — **per (user, database) pair**, so demand is a product — `patroni_pgbouncer_min_pool_size` (10), `patroni_pgbouncer_max_client_conn` (1000, pooled clients not backends), `patroni_pg_conn_overhead` (20), `patroni_pg_conn_strict` (false). preflight adds them up every run: `(pool + reserve) x pairs + bypass + overhead` vs `max_connections`, with the pair count derived from `patroni_databases` |
 | HAProxy caps | `patroni_haproxy_{primary,replicas,direct}_maxconn` (frontend), `patroni_haproxy_{primary,replicas,direct}_server_maxconn` (per-server), `patroni_haproxy_global_maxconn`. Keep each frontend above its server cap, and note `pg-direct` is deliberately ~50x smaller than the pooled listeners: it bypasses PgBouncer, so every connection is a real PostgreSQL backend against `patroni_pg_max_connections` — preflight's connection budget counts it as such |
-| HAProxy timeouts | `haproxy_tunnel_timeout` (24h — governs established sessions), `haproxy_client_timeout` / `haproxy_server_timeout` (300s — backstop; superseded by `tunnel` on the pg listeners), `haproxy_connect_timeout` (bounds backend connection setup), `haproxy_client_fin_timeout` / `haproxy_server_fin_timeout` (override `tunnel` for half-closed connections) |
+| HAProxy timeouts | `patroni_haproxy_tunnel_timeout` (24h — governs established sessions), `patroni_haproxy_client_timeout` / `patroni_haproxy_server_timeout` (300s — backstop; superseded by `tunnel` on the pg listeners), `patroni_haproxy_connect_timeout` (bounds backend connection setup), `patroni_haproxy_client_fin_timeout` / `patroni_haproxy_server_fin_timeout` (override `tunnel` for half-closed connections) |
 | Extensions | `patroni_extensions` |
 | App DBs | `patroni_databases` (list of {name, owner, users[{name, password, roles, grants}]}) |
-| Backup | `patroni_backup_dir`, `wal_archive_dir`, `walg_retention`, `walg_storage_type` (`s3`\|`gcs`) |
-| S3 | `s3_bucket`, `s3_endpoint`, `s3_access_key`, `s3_secret_key`, `patroni_walg_s3_prefix` |
-| GCS | `walg_gcs_bucket`, `walg_gcs_service_account_json` (vault the service-account key), `walg_gcs_prefix` |
-| Memory (auto) | `pg_shared_buffers`, `pg_effective_cache`, `pg_work_mem`, `pg_maint_mem` — all derived from **total host RAM** as if PostgreSQL were the only consumer; set them explicitly on a node shared with another memory-hungry stack |
-| Memory budget | `patroni_mem_reserved_mb` (what another stack on the same node commits; also arms the warning that fires when a `pg_*` setting is still auto-sized on such a host), `patroni_stack_overhead_mb` (640 — everything besides `shared_buffers`: etcd, patroni, haproxy, pgbouncer, VIP manager, exporter), `postgres_exporter_mem_limit_mb`. The computed total is exported as `patroni_mem_request_mb` — other roles read it with `tasks_from: export_vars`, `defaults_from: main/postgresql.yml`, `vars_from: main/memory.yml` |
-| OOM victim order | `etcd_oom_score_adj` (-900), `patroni_oom_score_adj` (-500), `keepalived_oom_score_adj` / `vip_manager_oom_score_adj` (-500), `haproxy_oom_score_adj` / `pgbouncer_oom_score_adj` (-300), `postgres_exporter_oom_score_adj` (1000), plus `patroni_pg_backend_oom_adjust_enabled` / `patroni_pg_backend_oom_score_adj` so the postmaster survives and a backend is killed instead |
+| Backup | `patroni_backup_dir`, `patroni_wal_archive_dir`, `patroni_walg_retention`, `patroni_walg_storage_type` (`s3`\|`gcs`) |
+| S3 | `patroni_s3_bucket`, `patroni_s3_endpoint`, `patroni_s3_access_key`, `patroni_s3_secret_key`, `patroni_walg_s3_prefix` |
+| GCS | `patroni_walg_gcs_bucket`, `patroni_walg_gcs_service_account_json` (vault the service-account key), `patroni_walg_gcs_prefix` |
+| Memory (auto) | `patroni_pg_shared_buffers`, `patroni_pg_effective_cache`, `patroni_pg_work_mem`, `patroni_pg_maint_mem` — all derived from **total host RAM** as if PostgreSQL were the only consumer; set them explicitly on a node shared with another memory-hungry stack |
+| Memory budget | `patroni_mem_reserved_mb` (what another stack on the same node commits; also arms the warning that fires when a `pg_*` setting is still auto-sized on such a host), `patroni_stack_overhead_mb` (640 — everything besides `shared_buffers`: etcd, patroni, haproxy, pgbouncer, VIP manager, exporter), `patroni_postgres_exporter_mem_limit_mb`. The computed total is exported as `patroni_mem_request_mb` — other roles read it with `tasks_from: export_vars`, `defaults_from: main/postgresql.yml`, `vars_from: main/memory.yml` |
+| OOM victim order | `patroni_etcd_oom_score_adj` (-900), `patroni_oom_score_adj` (-500), `patroni_keepalived_oom_score_adj` / `patroni_vip_manager_oom_score_adj` (-500), `patroni_haproxy_oom_score_adj` / `patroni_pgbouncer_oom_score_adj` (-300), `patroni_postgres_exporter_oom_score_adj` (1000), plus `patroni_pg_backend_oom_adjust_enabled` / `patroni_pg_backend_oom_score_adj` so the postmaster survives and a backend is killed instead |
 
 ## Artifacts (controller-side)
 
@@ -469,20 +482,20 @@ Written to `playbooks/artifacts/<inventory-stem>/patroni/`:
 
 - **`'patroni_vip_address' is undefined`** — set `patroni_vip_address` in the inventory, or set `patroni_vip_engine: none` to skip the floating-IP layer.
 - **etcd quorum lost after node removal** — refuses to remove if fewer than 3 nodes would remain. Add a node before shrinking below 3.
-- **WAL-G backup fails** — check the credentials for the active backend: `s3_*` on `walg_storage_type: s3`, `walg_gcs_service_account_json` on `gcs`. Backup falls back to `pg_basebackup` when no bucket is set.
-- **WAL-G on GCS fails with a credentials error** — the service-account key is mounted read-only at `/etc/walg/credentials.json` inside the patroni container. Verify with `podman exec patroni cat /etc/walg/credentials.json` (empty/missing means the host file at `/opt/walg/gcs/credentials.json` isn't patroni-readable), and confirm the service account has `roles/storage.objectAdmin` on `walg_gcs_bucket` — wal-g needs list, read, write, **and** delete (retention prunes old backups).
-- **`server does not support SSL` / `SSL is not enabled on the server`** — the client's TLS request reached PgBouncer while `pgbouncer_client_tls_sslmode` was `disable`. Every published connection string uses `sslmode=verify-ca`, and HAProxy (`mode tcp`) relays the handshake straight through to PgBouncer, so client TLS lives or dies on that setting. Default is `prefer`; check the rendered `/opt/pgbouncer/pgbouncer.ini`.
+- **WAL-G backup fails** — check the credentials for the active backend: `patroni_s3_*` on `patroni_walg_storage_type: s3`, `patroni_walg_gcs_service_account_json` on `gcs`. Backup falls back to `pg_basebackup` when no bucket is set.
+- **WAL-G on GCS fails with a credentials error** — the service-account key is mounted read-only at `/etc/walg/credentials.json` inside the patroni container. Verify with `podman exec patroni cat /etc/walg/credentials.json` (empty/missing means the host file at `/opt/walg/gcs/credentials.json` isn't patroni-readable), and confirm the service account has `roles/storage.objectAdmin` on `patroni_walg_gcs_bucket` — wal-g needs list, read, write, **and** delete (retention prunes old backups).
+- **`server does not support SSL` / `SSL is not enabled on the server`** — the client's TLS request reached PgBouncer while `patroni_pgbouncer_client_tls_sslmode` was `disable`. Every published connection string uses `sslmode=verify-ca`, and HAProxy (`mode tcp`) relays the handshake straight through to PgBouncer, so client TLS lives or dies on that setting. Default is `prefer`; check the rendered `/opt/pgbouncer/pgbouncer.ini`.
 - **Client TLS fails with `verify-full`** — the pgbouncer leaf's SANs cover node IPs, hostnames, and localhost but **not** `patroni_vip_address`, so a client connecting through the VIP can't match a hostname. Use `sslmode=verify-ca` (validates the CA chain, no hostname check) — what the credential artifacts already publish — or add the VIP to the SAN list in `tls_certificates.yml` and reissue.
-- **LISTEN/NOTIFY clients silently miss notifications** — check `haproxy_tunnel_timeout`. HAProxy's `timeout client`/`timeout server` are *inactivity* timers and an idle listener trips them; `timeout tunnel` is what keeps established sessions alive. TCP keepalives do **not** reset those timers, so `option clitcpka` being present proves nothing here. Note also that LISTEN/NOTIFY only works with `pgbouncer_pool_mode: session` (the default) — under `transaction` the server connection returns to the pool between transactions and notifications land on whichever client holds it next.
-- **Long queries die at exactly 5 minutes** — same cause: a statement that sends no bytes while running (`CREATE INDEX`, big analytical query, `pg_dump` through the proxy) trips `haproxy_client_timeout`/`haproxy_server_timeout` if `timeout tunnel` isn't in effect. PgBouncer won't be the culprit — `query_timeout` is `0` by design.
+- **LISTEN/NOTIFY clients silently miss notifications** — check `patroni_haproxy_tunnel_timeout`. HAProxy's `timeout client`/`timeout server` are *inactivity* timers and an idle listener trips them; `timeout tunnel` is what keeps established sessions alive. TCP keepalives do **not** reset those timers, so `option clitcpka` being present proves nothing here. Note also that LISTEN/NOTIFY only works with `patroni_pgbouncer_pool_mode: session` (the default) — under `transaction` the server connection returns to the pool between transactions and notifications land on whichever client holds it next.
+- **Long queries die at exactly 5 minutes** — same cause: a statement that sends no bytes while running (`CREATE INDEX`, big analytical query, `pg_dump` through the proxy) trips `patroni_haproxy_client_timeout`/`patroni_haproxy_server_timeout` if `timeout tunnel` isn't in effect. PgBouncer won't be the culprit — `query_timeout` is `0` by design.
 - **`patronictl remove` hangs** — it's interactive; our `remove-node.yml` sets `failed_when: false` so the play continues. If etcd has stale registration, run `patronictl -c /etc/patroni/patroni.yml remove <scope>` manually on a survivor.
 - **`pkg_resources` deprecation warning** — harmless; some transitive dep (WAL-G?) imports it via setuptools. Noise, not a failure.
-- **Standby cluster not catching up** — check, in order: (1) TLS trust — with `sslmode: verify-ca` the standby needs the primary's CA (set `patroni_shared_ca_dir` on both, or relax to `patroni_standby_primary_sslmode: require`); (2) the primary admits the standby IPs — `patroni_replication_cidrs` on the primary + its firewall for port 55432; (3) matching `postgresql_replication_password`; (4) `patronictl list` on the standby should show a `Standby Leader` — if leader election fails outright, the scope likely collides with the primary's.
+- **Standby cluster not catching up** — check, in order: (1) TLS trust — with `sslmode: verify-ca` the standby needs the primary's CA (set `patroni_shared_ca_dir` on both, or relax to `patroni_standby_primary_sslmode: require`); (2) the primary admits the standby IPs — `patroni_replication_cidrs` on the primary + its firewall for port 55432; (3) matching `patroni_postgresql_replication_password`; (4) `patronictl list` on the standby should show a `Standby Leader` — if leader election fails outright, the scope likely collides with the primary's.
 
 ## Gotchas
 
 - **`patroni_scope` must be unique** per etcd cluster. If you run multiple Patroni clusters that share an etcd DCS, same scope = same cluster — they'll fight over leader election. A **standby cluster** especially must set a `patroni_scope` distinct from its primary — the role asserts this (rejects the default placeholder) when `patroni_standby_enabled: true`.
-- **Major-version PostgreSQL upgrade is not automated** — `postgresql_version` change alone doesn't trigger `pg_upgrade`. Stop Patroni, run `pg_upgrade` manually, then restart. Minor-version upgrades (same `postgresql_version`) are fine.
+- **Major-version PostgreSQL upgrade is not automated** — `patroni_postgresql_version` change alone doesn't trigger `pg_upgrade`. Stop Patroni, run `pg_upgrade` manually, then restart. Minor-version upgrades (same `patroni_postgresql_version`) are fine.
 - **pg_hba.conf is managed by Patroni** — if you change auth rules, do it via Patroni config and `patronictl reload`. Don't edit `pg_hba.conf` directly; Patroni overwrites it.
 - **PgBouncer pool sizes are per (user, database) pair, so the budget is a product.** `patroni_pgbouncer_default_pool_size` (50) + `patroni_pgbouncer_reserve_pool_size` (10) is 60 *real PostgreSQL backends per pair* — adding one application database or one extra user to `patroni_databases` adds 60 to the demand on `patroni_pg_max_connections` (200). At the shipped defaults the budget runs out at the **third** pair: `3 x 60 + 20 bypass + 20 overhead = 220`. One database with two users is already three pairs once PgBouncer's own `auth_query` pool is counted. Such a cluster works — pools fill on demand and are rarely all saturated — but a burst produces `FATAL: sorry, too many clients already` in the *application*, not in PostgreSQL's startup. preflight prints the arithmetic on every run; set `patroni_pg_conn_strict: true` to make it a hard failure.
 - **`patroni_pg_max_connections` changes need a rolling restart, and override manual tuning.** `bootstrap.dcs` only seeds the cluster at first init, so `reconcile_pg_parameters.yml` pushes changes to DCS with `patronictl edit-config`. `max_connections` is a postmaster parameter: the members go to `pending_restart` and keep running the *old* value until you restart them (replicas first; leader first when **lowering**, since a replica below the primary's value refuses to start). The corollary is that the inventory value wins — if you hand-tuned `max_connections` with `patronictl edit-config`, set `patroni_pg_max_connections` to match before the next provision run or it gets pushed back down.

@@ -23,10 +23,10 @@
     patroni_smoke_check_haproxy: false
     patroni_smoke_check_tls: false
     patroni_smoke_check_users_and_dbs: false
-    walg_enabled: false
-    postgres_exporter_enabled: false
+    patroni_walg_enabled: false
+    patroni_postgres_exporter_enabled: false
     pgbouncer_enabled: false
-    postgresql_postgres_password: ""
+    patroni_postgresql_postgres_password: ""
     patroni_databases: []
   tasks:
     - name: "Set healthy collector results"

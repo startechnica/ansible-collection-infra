@@ -27,9 +27,9 @@
     source: pull
   loop:
     - "{{ patroni_image }}"
-    - "{{ etcd_image }}"
-    - "{{ haproxy_image }}"
-    - "{{ pgbouncer_image }}"
+    - "{{ patroni_etcd_image }}"
+    - "{{ patroni_haproxy_image }}"
+    - "{{ patroni_pgbouncer_image }}"
   loop_control:
     label: "{{ item }}"
   register: _image_pull
@@ -39,10 +39,10 @@
 
 - name: Pull postgres-exporter image (when enabled)
   community.docker.docker_image:
-    name: "{{ postgres_exporter_image }}"
+    name: "{{ patroni_postgres_exporter_image }}"
     source: pull
   register: _image_pull
   retries: 10
   delay: 20
   until: _image_pull is succeeded
-  when: postgres_exporter_enabled | bool
+  when: patroni_postgres_exporter_enabled | bool

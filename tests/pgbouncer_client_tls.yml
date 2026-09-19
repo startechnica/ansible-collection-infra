@@ -27,8 +27,8 @@
         that:
           # prefer accepts TLS *and* plaintext — enabling client TLS must not
           # lock out existing plaintext clients on an upgrade.
-          - pgbouncer_client_tls_sslmode == 'prefer'
-          - pgbouncer_client_tls_protocols == 'secure'
+          - patroni_pgbouncer_client_tls_sslmode == 'prefer'
+          - patroni_pgbouncer_client_tls_protocols == 'secure'
 
     - name: Recreate PgBouncer render directory
       ansible.builtin.file:
@@ -43,7 +43,7 @@
         dest: "{{ _pgb_render_dir }}/{{ item }}.ini"
         mode: "0640"
       vars:
-        pgbouncer_client_tls_sslmode: "{{ item }}"
+        patroni_pgbouncer_client_tls_sslmode: "{{ item }}"
       loop:
         - prefer
         - require

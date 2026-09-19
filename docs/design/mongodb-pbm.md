@@ -99,7 +99,7 @@ PBM config is stored *in the cluster* and applied once with
 PBM's native MinIO Go client for MinIO, Ceph, custom S3 gateways, and endpoints
 behind proxies that can rewrite headers signed by the AWS SDK. This is unrelated
 to the role's `minio/mc` backup path: PBM still talks directly to object storage
-using the shared `s3_*` credentials. Set `mongodb_backup_storage_type: s3` for
+using the `mongodb_s3_*` credentials. Set `mongodb_backup_storage_type: s3` for
 Amazon S3 or endpoints that require PBM's AWS SDK backend. Set it to `gcs` for
 PBM's native Google Cloud Storage JSON API client and provide
 `mongodb_backup_gcs_bucket` plus `mongodb_backup_gcs_service_account` (the
@@ -186,7 +186,7 @@ post-backup `pbm cleanup` prunes base backups + their oplog chunks older than
 `mongodb_backup_retain_days`. One schedule, one retention window, for both the
 mongodump path and PBM.
 
-S3 target is the existing `s3_*` set — no duplication.
+S3 target is the role's own `mongodb_s3_*` set.
 
 ## Tasks & action dispatch
 

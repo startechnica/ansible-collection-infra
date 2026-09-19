@@ -58,9 +58,9 @@
     - name: "Create new cert :: generate private key"
       community.crypto.openssl_privatekey:
         path: "{{ patroni_local_certs_dir }}/_smoke_new_cert/{{ inventory_hostname }}/leaf.key"
-        type: "{{ tls_key_type | default('ECC') }}"
-        curve: "{{ tls_key_curve | default('secp256r1') if (tls_key_type | default('ECC')) == 'ECC' else omit }}"
-        size: "{{ tls_key_size | default(4096) if (tls_key_type | default('ECC')) != 'ECC' else omit }}"
+        type: "{{ patroni_tls_key_type | default('ECC') }}"
+        curve: "{{ patroni_tls_key_curve | default('secp256r1') if (patroni_tls_key_type | default('ECC')) == 'ECC' else omit }}"
+        size: "{{ patroni_tls_key_size | default(4096) if (patroni_tls_key_type | default('ECC')) != 'ECC' else omit }}"
 
     - name: "Create new cert :: generate CSR with node SAN"
       community.crypto.openssl_csr:
@@ -85,8 +85,8 @@
         csr_path: "{{ patroni_local_certs_dir }}/_smoke_new_cert/{{ inventory_hostname }}/leaf.csr"
         ownca_path: "{{ patroni_local_certs_dir }}/ca/ca.crt"
         ownca_privatekey_path: "{{ patroni_local_certs_dir }}/ca/ca.key"
-        ownca_not_after: "+{{ tls_cert_days | default(365) }}d"
-        ownca_digest: "{{ tls_signature_digest | default('sha256') }}"
+        ownca_not_after: "+{{ patroni_tls_cert_days | default(365) }}d"
+        ownca_digest: "{{ patroni_tls_signature_digest | default('sha256') }}"
         provider: ownca
 
     - name: "Create new cert :: verify chain against the deployed CA"

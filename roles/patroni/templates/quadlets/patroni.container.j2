@@ -6,7 +6,7 @@
 Description=Patroni-managed PostgreSQL
 Wants=network-online.target etcd.service
 After=network-online.target etcd.service
-{% if walg_enabled %}
+{% if patroni_walg_enabled %}
 Requires=walg-init.service
 After=walg-init.service
 {% endif %}
@@ -34,24 +34,24 @@ Environment=PATRONI_POSTGRESQL_CONFIG_DIR=/var/lib/postgresql/pg_data
 Environment=PG_OOM_ADJUST_FILE=/proc/self/oom_score_adj
 Environment=PG_OOM_ADJUST_VALUE={{ patroni_pg_backend_oom_score_adj }}
 {% endif %}
-{% if walg_enabled %}
-EnvironmentFile={{ walg_dir }}/walg.env
+{% if patroni_walg_enabled %}
+EnvironmentFile={{ patroni_walg_dir }}/walg.env
 {% endif %}
 
-Volume={{ postgresql_root_dir }}:/var/lib/postgresql:Z
-Volume={{ postgresql_log_dir }}:/var/log/postgresql:Z
+Volume={{ patroni_postgresql_root_dir }}:/var/lib/postgresql:Z
+Volume={{ patroni_postgresql_log_dir }}:/var/log/postgresql:Z
 Volume={{ patroni_certs_dir }}:/etc/certs:ro,Z
 Volume={{ patroni_dir }}/patroni.yml:/etc/patroni/patroni.yml:ro,Z
-Volume={{ wal_archive_dir }}:/wal_archive:Z
+Volume={{ patroni_wal_archive_dir }}:/wal_archive:Z
 Volume={{ patroni_backup_dir }}:/var/lib/postgresql/backups:Z
-{% if walg_enabled %}
-Volume={{ walg_dir }}/bin:/opt/walg:ro,z
-{% if walg_storage_type == 'gcs' %}
+{% if patroni_walg_enabled %}
+Volume={{ patroni_walg_dir }}/bin:/opt/walg:ro,z
+{% if patroni_walg_storage_type == 'gcs' %}
 # GCS service-account key for wal-g (GOOGLE_APPLICATION_CREDENTIALS in
 # walg.env points here). The DIRECTORY is mounted, not the bare file: a
 # re-rendered key replaces the inode, which a file bind-mount would not
 # follow.
-Volume={{ walg_gcs_service_account_dir }}:{{ walg_gcs_service_account_mount }}:ro,Z
+Volume={{ patroni_walg_gcs_service_account_dir }}:{{ patroni_walg_gcs_service_account_mount }}:ro,Z
 {% endif %}
 {% endif %}
 

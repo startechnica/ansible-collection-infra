@@ -33,11 +33,11 @@ net.ipv4.ip_local_port_range = 1024 65535
 # mongos) can grab one of our service ports and block the matching
 # daemon from binding on restart.
 net.ipv4.ip_local_reserved_ports = {{
-  ([haproxy_primary_port, haproxy_replicas_port,
-    haproxy_direct_port | default(5434),
-    haproxy_stats_port | default(7000),
-    pgbouncer_port | default(6543),
-    patroni_api_port, postgresql_port,
-    etcd_client_port | default(2379),
-    etcd_peer_port | default(2380)]
+  ([patroni_haproxy_primary_port, patroni_haproxy_replicas_port,
+    patroni_haproxy_direct_port | default(5434),
+    patroni_haproxy_stats_port | default(7000),
+    patroni_pgbouncer_port | default(6543),
+    patroni_api_port, patroni_postgresql_port,
+    patroni_etcd_client_port | default(2379),
+    patroni_etcd_peer_port | default(2380)]
    | map('string') | list) | join(',') }}

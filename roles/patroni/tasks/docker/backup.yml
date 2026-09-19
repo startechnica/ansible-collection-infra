@@ -9,7 +9,7 @@
   failed_when: not (patroni_container.exists | default(false) and patroni_container.container.State.Running | default(false))
 
 - name: Run WAL-G backup (object storage)
-  when: walg_enabled
+  when: patroni_walg_enabled
   block:
     - name: Execute wal-g backup-push
       community.docker.docker_container_exec:
@@ -20,7 +20,7 @@
     - name: Enforce retention policy
       community.docker.docker_container_exec:
         container: patroni
-        command: /opt/walg/wal-g delete retain FULL {{ walg_retention }} --confirm
+        command: /opt/walg/wal-g delete retain FULL {{ patroni_walg_retention }} --confirm
 
     - name: List backups
       community.docker.docker_container_exec:
@@ -31,10 +31,10 @@
     - name: Display backup list
       ansible.builtin.debug:
         msg: "{{ backup_list.stdout_lines }}"
-      when: debug
+      when: patroni_debug | bool
 
 - name: Run pg_basebackup (local)
-  when: not walg_enabled
+  when: not patroni_walg_enabled
   block:
     - name: Set backup label
       ansible.builtin.set_fact:
@@ -53,7 +53,7 @@
         container: patroni
         command: >
           pg_basebackup
-          -h 127.0.0.1 -p {{ postgresql_port }} -U replicator
+          -h 127.0.0.1 -p {{ patroni_postgresql_port }} -U replicator
           -D "/var/lib/postgresql/backups/{{ backup_label }}"
           --checkpoint=fast --progress --wal-method=stream -X stream
       register: basebackup_result

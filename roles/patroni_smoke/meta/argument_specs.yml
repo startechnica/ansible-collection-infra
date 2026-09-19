@@ -42,7 +42,7 @@ argument_specs:
         default: [pgbouncer, postgres-exporter, walg-init]
         description: |
           Containers that are checked only when their respective enabled flag is true
-          (pgbouncer_enabled, postgres_exporter_enabled, walg_enabled).
+          (pgbouncer_enabled, patroni_postgres_exporter_enabled, patroni_walg_enabled).
       patroni_smoke_check_containers:
         type: bool
         default: true

@@ -39,7 +39,7 @@ provisioner:
     group_vars:
       patroni_nodes:
         patroni_scope: molecule-pg
-        postgresql_postgres_password: moleculetest
+        patroni_postgresql_postgres_password: moleculetest
         patroni_vip_address: ""               # disable VIP since single-host molecule
         patroni_vip_engine: "none"
 ```

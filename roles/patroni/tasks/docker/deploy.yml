@@ -26,27 +26,27 @@
 - name: Build wal-g image (no upstream container published)
   ansible.builtin.include_tasks: walg.yml
   when:
-    - walg_enabled
-    - walg_build_local
+    - patroni_walg_enabled
+    - patroni_walg_build_local
 
 - name: Pull prebuilt wal-g image
   community.docker.docker_image:
-    name: "{{ walg_image }}"
+    name: "{{ patroni_walg_image }}"
     source: pull
   register: _image_pull
   retries: 10
   delay: 20
   until: _image_pull is succeeded
   when:
-    - walg_enabled
-    - not walg_build_local
+    - patroni_walg_enabled
+    - not patroni_walg_build_local
 
 - name: Start the stack (docker compose up)
   community.docker.docker_compose_v2:
     project_src: "{{ patroni_dir }}"
     state: present
     # Tear down services that were dropped from the rendered compose
-    # (e.g. walg-init/walg-cron when flipping walg_enabled true → false).
+    # (e.g. walg-init/walg-cron when flipping patroni_walg_enabled true → false).
     remove_orphans: true
 
 - name: Restore SELinux contexts (no-op on non-SELinux hosts)

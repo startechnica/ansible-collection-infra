@@ -4,12 +4,12 @@
 # The role loads every file in defaults/main/ (see tasks/export_vars.yml).
 #
 # These were bare `s3_*` and shared with the patroni role — one set of
-# credentials served both stacks on a co-located node. They are now
-# mongodb_-prefixed, so a node running both stacks sets each role's credentials
-# separately. The gain is that mongodb and patroni no longer share ANY variable
-# name, so neither role can silently reconfigure the other; the cost is
-# duplication in inventory when both point at the same bucket. Leaving
-# mongodb_s3_bucket empty disables S3 upload for mongodb.
+# credentials served both stacks on a co-located node. Both roles are now
+# namespaced (patroni's are patroni_s3_*), so a node running both stacks sets
+# each role's credentials separately. The gain is that mongodb and patroni no
+# longer share ANY variable name, so neither role can silently reconfigure the
+# other; the cost is duplication in inventory when both point at the same
+# bucket. Leaving mongodb_s3_bucket empty disables S3 upload for mongodb.
 
 mongodb_s3_endpoint: ""
 mongodb_s3_bucket: ""

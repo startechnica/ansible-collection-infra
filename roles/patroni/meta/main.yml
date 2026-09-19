@@ -16,6 +16,7 @@ galaxy_info:
         - "41"
         - "42"
         - "43"
+        - "44"
   galaxy_tags:
     - patroni
     - postgresql

@@ -5,11 +5,12 @@
 #
 # Everything here is mongodb_-prefixed, including the key settings. They used to
 # be bare "tls_key_type" / "tls_key_curve" / "tls_key_size", which COLLIDED with
-# patroni's identically-named defaults — and the curve differed (secp256r1 here,
-# secp384r1 there). A role that imported patroni's defaults wholesale silently
-# changed the curve of every certificate this role then generated, which is why
-# the cross-role memory-budget import had to be kept narrow. With the prefix the
-# two roles share no name at all.
+# patroni's then-identically-named defaults — and the curve differed (secp256r1
+# here, secp384r1 there). A role that imported patroni's defaults wholesale
+# silently changed the curve of every certificate this role then generated, which
+# is why the cross-role memory-budget import had to be kept narrow. Both roles
+# are now fully namespaced (patroni's is patroni_tls_key_curve) and share no
+# variable name at all.
 
 # ── Certificate validity (days) ──
 # Formerly "ssl_days" / "ssl_ca_days". Renamed to tls_ so the whole block reads

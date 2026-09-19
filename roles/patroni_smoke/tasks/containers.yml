@@ -36,5 +36,5 @@
   when:
     - patroni_smoke_check_containers | bool
     - item in ['pgbouncer'] and pgbouncer_enabled | default(false) | bool
-    - item in ['postgres-exporter'] and postgres_exporter_enabled | default(false) | bool
-    - item in ['walg-init'] and walg_enabled | default(false) | bool
+    - item in ['postgres-exporter'] and patroni_postgres_exporter_enabled | default(false) | bool
+    - item in ['walg-init'] and patroni_walg_enabled | default(false) | bool

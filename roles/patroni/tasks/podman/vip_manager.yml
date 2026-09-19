@@ -5,8 +5,8 @@
 - name: Build vip-manager image (etcd-aware VIP, podman)
   containers.podman.podman_image:
     name: "localhost/vip-manager"
-    tag: "v{{ vip_manager_version }}"
-    path: "{{ vip_manager_dir }}"
+    tag: "v{{ patroni_vip_manager_version }}"
+    path: "{{ patroni_vip_manager_dir }}"
     build:
       format: oci
       force_rm: true
