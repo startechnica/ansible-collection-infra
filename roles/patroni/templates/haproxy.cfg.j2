@@ -128,8 +128,8 @@ listen pg-primary
     http-check expect status 200
     default-server inter {{ haproxy_check_inter }} fall {{ haproxy_check_fall }} rise {{ haproxy_check_rise }} on-marked-down shutdown-sessions
 
-{% for ip in node_ips %}
-    server {{ ip }} {{ ip }}:{{ pgbouncer_port }} maxconn 1000 check port {{ patroni_api_port }} check-ssl ca-file /etc/certs/ca.crt crt /etc/certs/haproxy-client.pem verify required
+{% for node in patroni_nodes %}
+    server {{ node.name }} {{ node.ipv4 }}:{{ pgbouncer_port }} maxconn 1000 check port {{ patroni_api_port }} check-ssl ca-file /etc/certs/ca.crt crt /etc/certs/haproxy-client.pem verify required
 {% endfor %}
 
 listen pg-replicas
@@ -140,31 +140,31 @@ listen pg-replicas
     # one that matters. Each replica passing the /replica check adds 100 on the
     # server side (200 for a three-node cluster); 250 sits just above that.
     # Raise both together if replica reads are ever enabled.
-    maxconn 250
+    maxconn 1100
 
     balance roundrobin
     option httpchk GET /replica
     http-check expect status 200
     default-server inter {{ haproxy_check_inter }} fall {{ haproxy_check_fall }} rise {{ haproxy_check_rise }} on-marked-down shutdown-sessions
 
-{% for ip in node_ips %}
-    server {{ ip }} {{ ip }}:{{ pgbouncer_port }} maxconn 100 check port {{ patroni_api_port }} check-ssl ca-file /etc/certs/ca.crt crt /etc/certs/haproxy-client.pem verify required
+{% for node in patroni_nodes %}
+    server {{ node.name }} {{ node.ipv4 }}:{{ pgbouncer_port }} maxconn 1000 check port {{ patroni_api_port }} check-ssl ca-file /etc/certs/ca.crt crt /etc/certs/haproxy-client.pem verify required
 {% endfor %}
 
 # POOLER BYPASS, direct to the Patroni leader.
 listen pg-direct
     bind *:{{ haproxy_direct_port }}
 
-    # Frontend cap: accepts up to 100, above the server-side limit of 20 below,
+    # Frontend cap: accepts up to 1100, above the server-side limit of 1000 below,
     # so excess connections queue inside HAProxy (`timeout queue`) rather than
     # being refused at accept — same pattern as pg-primary.
-    maxconn 100
+    maxconn 1100
 
     option httpchk GET /primary
     http-check expect status 200
     default-server inter 3s fall 5 rise 2 on-marked-down shutdown-sessions
 
-    # Server-side `maxconn 20`: unpooled clients (schema migrations, admin
+    # Server-side `maxconn 1000`: unpooled clients (schema migrations, admin
     # tooling) are low-concurrency. Deliberately small so a runaway job cannot
     # consume the leader's max_connections through the unpooled path.
     #
@@ -172,6 +172,6 @@ listen pg-direct
     # defaults is what a long ALTER TABLE needs, since it sends nothing on the
     # socket for its duration. If timeout tunnel is ever removed from defaults,
     # set it explicitly HERE first.
-{% for ip in node_ips %}
-    server {{ ip }} {{ ip }}:{{ postgresql_port }} maxconn 20 check port {{ patroni_api_port }} check-ssl ca-file /etc/certs/ca.crt crt /etc/certs/haproxy-client.pem verify required
+{% for node in patroni_nodes %}
+    server {{ node.name }} {{ node.ipv4 }}:{{ postgresql_port }} maxconn 1000 check port {{ patroni_api_port }} check-ssl ca-file /etc/certs/ca.crt crt /etc/certs/haproxy-client.pem verify required
 {% endfor %}

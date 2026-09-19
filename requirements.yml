@@ -9,7 +9,7 @@ collections:
   - name: community.general
     version: ">=12.6.0"
   - name: community.mongodb
-    version: ">=1.7.12"
+    version: ">=1.8.0"
   - name: community.postgresql
     version: ">=3.14.3"
   - name: community.vmware
@@ -17,7 +17,7 @@ collections:
   - name: vmware.vmware
     version: ">=2.8.0"
   - name: netbox.netbox
-    version: ">=3.22.0"
+    version: ">=3.23.0"
 
 roles:
   # ansible-galaxy role install only accepts exact version strings (no >= ranges).

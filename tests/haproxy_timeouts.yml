@@ -16,7 +16,10 @@
   connection: local
   vars:
     _hap_render_dir: /tmp/haproxy-timeouts-test
-    node_ips: ["10.0.0.11", "10.0.0.12", "10.0.0.13"]
+    patroni_nodes:
+      - { name: pg-1, ipv4: 10.0.0.11 }
+      - { name: pg-2, ipv4: 10.0.0.12 }
+      - { name: pg-3, ipv4: 10.0.0.13 }
 
   tasks:
     # Loads every file in patroni's defaults/main/ and vars/main/, the same
@@ -114,3 +117,14 @@
           - "'option srvtcpka' in _cfg"
       vars:
         _cfg: "{{ _hap_rendered.results[0].content | b64decode }}"
+
+    # Server names show up in the stats page and the Prometheus `server`
+    # label, so they carry the node hostname; the address stays the IP.
+    - name: Verify servers are named by hostname in every listener
+      ansible.builtin.assert:
+        that:
+          # pg-primary, pg-replicas and pg-direct each list all three nodes.
+          - _servers | length == 9
+          - _servers | map('join', ' ') | unique | list == ['pg-1 10.0.0.11', 'pg-2 10.0.0.12', 'pg-3 10.0.0.13']
+      vars:
+        _servers: "{{ _hap_rendered.results[0].content | b64decode | regex_findall('(?m)^ +server ([^ ]+) ([0-9.]+):') }}"
