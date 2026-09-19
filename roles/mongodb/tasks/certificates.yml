@@ -16,9 +16,9 @@
 - name: Generate CA private key
   community.crypto.openssl_privatekey:
     path: "{{ mongodb_local_certs_dir }}/ca.key"
-    type: "{{ tls_key_type }}"
-    curve: "{{ tls_key_curve if tls_key_type == 'ECC' else omit }}"
-    size: "{{ tls_key_size if tls_key_type == 'RSA' else omit }}"
+    type: "{{ mongodb_tls_key_type }}"
+    curve: "{{ mongodb_tls_key_curve if mongodb_tls_key_type == 'ECC' else omit }}"
+    size: "{{ mongodb_tls_key_size if mongodb_tls_key_type == 'RSA' else omit }}"
   delegate_to: localhost
   run_once: true
   become: false
@@ -48,7 +48,7 @@
     privatekey_path: "{{ mongodb_local_certs_dir }}/ca.key"
     csr_path: "{{ mongodb_local_certs_dir }}/ca.csr"
     provider: selfsigned
-    selfsigned_not_after: "+{{ ssl_ca_days }}d"
+    selfsigned_not_after: "+{{ mongodb_tls_ca_days }}d"
   delegate_to: localhost
   run_once: true
   become: false

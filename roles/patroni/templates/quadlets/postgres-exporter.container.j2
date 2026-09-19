@@ -9,16 +9,16 @@ Requires=patroni.service
 
 [Container]
 ContainerName=postgres-exporter
-Image={{ postgres_exporter_image }}
+Image={{ patroni_postgres_exporter_image }}
 Network=host
 
 # `$$external` is the literal-`$` escape if anyone needs it later — we
 # don't here, but mirroring mongodb's pattern for consistency.
-Environment=DATA_SOURCE_NAME=postgresql://postgres:{{ postgresql_postgres_password }}@127.0.0.1:{{ postgresql_port }}/postgres?sslmode=disable
+Environment=DATA_SOURCE_NAME=postgresql://postgres:{{ patroni_postgresql_postgres_password }}@127.0.0.1:{{ patroni_postgresql_port }}/postgres?sslmode=disable
 
-Memory={{ postgres_exporter_mem_limit_mb }}m
+Memory={{ patroni_postgres_exporter_mem_limit_mb }}m
 # First in line for the OOM killer — telemetry, nothing depends on it.
-PodmanArgs=--oom-score-adj={{ postgres_exporter_oom_score_adj }}
+PodmanArgs=--oom-score-adj={{ patroni_postgres_exporter_oom_score_adj }}
 LogDriver=journald
 
 [Service]

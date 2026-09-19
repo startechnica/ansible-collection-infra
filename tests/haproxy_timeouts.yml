@@ -35,15 +35,15 @@
           # Unchanged from the pre-tunnel hardcoded values. On the pg
           # listeners `tunnel` supersedes these; they still govern the
           # mode-http stats listener, so they stay conservative.
-          - haproxy_client_timeout == '300s'
-          - haproxy_server_timeout == '300s'
-          - haproxy_connect_timeout == '10s'
+          - patroni_haproxy_client_timeout == '300s'
+          - patroni_haproxy_server_timeout == '300s'
+          - patroni_haproxy_connect_timeout == '10s'
           # Long by design; see defaults/main/haproxy.yml for why this is safe.
-          - haproxy_tunnel_timeout == '24h'
+          - patroni_haproxy_tunnel_timeout == '24h'
           # Must stay well under the tunnel timeout so half-closed
           # connections don't pin FDs for hours.
-          - haproxy_client_fin_timeout == '30s'
-          - haproxy_server_fin_timeout == '30s'
+          - patroni_haproxy_client_fin_timeout == '30s'
+          - patroni_haproxy_server_fin_timeout == '30s'
 
     - name: Recreate HAProxy render directory
       ansible.builtin.file:
@@ -64,8 +64,8 @@
         dest: "{{ _hap_render_dir }}/haproxy-override.cfg"
         mode: "0644"
       vars:
-        haproxy_tunnel_timeout: "2h"
-        haproxy_client_timeout: "45s"
+        patroni_haproxy_tunnel_timeout: "2h"
+        patroni_haproxy_client_timeout: "45s"
 
     - name: Read rendered configs
       ansible.builtin.slurp:
@@ -85,13 +85,13 @@
     - name: Verify every timeout renders from its variable
       ansible.builtin.assert:
         that:
-          - _hap_default.client == haproxy_client_timeout
-          - _hap_default.server == haproxy_server_timeout
-          - _hap_default.connect == haproxy_connect_timeout
-          - _hap_default.check == haproxy_check_timeout
-          - _hap_default.tunnel == haproxy_tunnel_timeout
-          - _hap_default['client-fin'] == haproxy_client_fin_timeout
-          - _hap_default['server-fin'] == haproxy_server_fin_timeout
+          - _hap_default.client == patroni_haproxy_client_timeout
+          - _hap_default.server == patroni_haproxy_server_timeout
+          - _hap_default.connect == patroni_haproxy_connect_timeout
+          - _hap_default.check == patroni_haproxy_check_timeout
+          - _hap_default.tunnel == patroni_haproxy_tunnel_timeout
+          - _hap_default['client-fin'] == patroni_haproxy_client_fin_timeout
+          - _hap_default['server-fin'] == patroni_haproxy_server_fin_timeout
 
     - name: Verify tunnel timeout is present (the whole point of this block)
       ansible.builtin.assert:
@@ -100,7 +100,7 @@
         fail_msg: >-
           `timeout tunnel` is missing from the rendered haproxy.cfg. Without
           it, timeout client/server govern established connections and every
-          idle LISTEN/NOTIFY session is dropped after haproxy_client_timeout.
+          idle LISTEN/NOTIFY session is dropped after patroni_haproxy_client_timeout.
 
     - name: Verify overrides reach the rendered config
       ansible.builtin.assert:
@@ -108,7 +108,7 @@
           - _hap_override.tunnel == '2h'
           - _hap_override.client == '45s'
           # Untouched vars keep their defaults.
-          - _hap_override.server == haproxy_server_timeout
+          - _hap_override.server == patroni_haproxy_server_timeout
 
     - name: Verify keepalive options survive alongside the timeouts
       ansible.builtin.assert:
@@ -140,17 +140,40 @@
         that:
           - patroni_haproxy_direct_server_maxconn | int < patroni_haproxy_primary_server_maxconn | int
           - patroni_haproxy_direct_server_maxconn | int < patroni_haproxy_replicas_server_maxconn | int
-          # Real headroom check: PgBouncer's pools plus the bypass path have to
-          # fit inside PostgreSQL's max_connections with room for Patroni, the
-          # exporter and WAL-G. 60 is default_pool_size + reserve_pool_size.
-          - (patroni_haproxy_direct_server_maxconn | int) + 60 < 200
+          # Real headroom check: the bypass path plus ONE PgBouncer pair's
+          # worst case has to still leave room under max_connections. Read from
+          # the variables rather than written as literals — when these were
+          # hardcoded 60 and 200 here, the 200 was itself a literal in
+          # patroni.yml.j2 and the 60 came from values the template ignored.
+          - (patroni_haproxy_direct_server_maxconn | int) + (_pair_worst_case | int)
+            < (patroni_pg_max_connections | int)
         fail_msg: >-
           pg-direct's per-server maxconn
           ({{ patroni_haproxy_direct_server_maxconn }}) is no longer small
           relative to the pooled listeners. Every connection on that path is a
-          real PostgreSQL backend competing for max_connections (200) with
-          PgBouncer's pools — see patroni_haproxy_direct_server_maxconn in
-          defaults/main/haproxy.yml.
+          real PostgreSQL backend competing for max_connections
+          ({{ patroni_pg_max_connections }}) with PgBouncer's pools
+          ({{ _pair_worst_case }} per user/database pair) — see
+          patroni_haproxy_direct_server_maxconn in defaults/main/haproxy.yml.
+      vars:
+        _pair_worst_case: >-
+          {{ (patroni_pgbouncer_default_pool_size | int)
+             + (patroni_pgbouncer_reserve_pool_size | int) }}
+
+    # The pooled listeners exist to feed PgBouncer, so HAProxy must not be able
+    # to offer it more clients than it will accept — excess would be accepted by
+    # HAProxy and then dropped by PgBouncer, which looks like a network fault
+    # rather than a capacity limit.
+    - name: Verify the pooled listeners cannot overrun PgBouncer's client cap
+      ansible.builtin.assert:
+        that:
+          - patroni_haproxy_primary_server_maxconn | int <= patroni_pgbouncer_max_client_conn | int
+          - patroni_haproxy_replicas_server_maxconn | int <= patroni_pgbouncer_max_client_conn | int
+        fail_msg: >-
+          A pooled listener's per-server cap exceeds
+          patroni_pgbouncer_max_client_conn
+          ({{ patroni_pgbouncer_max_client_conn }}), so HAProxy would accept
+          clients PgBouncer then refuses.
 
     # Each frontend must sit above its own server cap (so excess queues inside
     # HAProxy instead of being refused at accept), and their sum must sit below

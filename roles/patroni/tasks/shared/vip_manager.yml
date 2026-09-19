@@ -6,13 +6,13 @@
 - name: Deploy vip-manager.yml
   ansible.builtin.template:
     src: vip-manager.yml.j2
-    dest: "{{ vip_manager_dir }}/vip-manager.yml"
+    dest: "{{ patroni_vip_manager_dir }}/vip-manager.yml"
     mode: "0644"
   notify: restart vip-manager
 
 - name: Deploy vip-manager Dockerfile
   ansible.builtin.template:
     src: dockerfiles/vip-manager.Dockerfile.j2
-    dest: "{{ vip_manager_dir }}/Dockerfile"
+    dest: "{{ patroni_vip_manager_dir }}/Dockerfile"
     mode: "0644"
   notify: restart vip-manager

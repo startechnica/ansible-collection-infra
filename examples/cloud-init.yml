@@ -138,7 +138,7 @@ all:
 
         # ── Patroni-specific (when 'patroni' is in instance_tags) ──────────
         # patroni_scope: myproject-pg                  # unique per cluster
-        # postgresql_postgres_password: ""             # empty = auto-generate
+        # patroni_postgresql_postgres_password: ""             # empty = auto-generate
         # patroni_databases:
         #   - name: app_main
         #     owner: app_main
@@ -151,8 +151,15 @@ all:
         # mongodb_cluster_type: sharded                # or 'replicaset'
         # mongodb_admin_password: "{{ vault_mongodb_admin_password }}"
 
-        # ── S3 backups (shared by mongodb backup + patroni WAL-G) ────────
-        # s3_bucket: myproject-backups
-        # s3_endpoint: https://s3.example.com
-        # s3_access_key: "{{ vault_s3_access_key }}"
-        # s3_secret_key: "{{ vault_s3_secret_key }}"
+        # ── S3 backups ───────────────────────────────────────────────────
+        # Per-role credential sets: patroni_s3_* drives patroni's WAL-G and etcd
+        # snapshots, mongodb_s3_* drives mongodb's backups and PBM. Set both
+        # on a node running both stacks, even for one bucket.
+        # patroni_s3_bucket: myproject-backups
+        # patroni_s3_endpoint: https://s3.example.com
+        # patroni_s3_access_key: "{{ vault_s3_access_key }}"
+        # patroni_s3_secret_key: "{{ vault_s3_secret_key }}"
+        # mongodb_s3_bucket: myproject-backups
+        # mongodb_s3_endpoint: https://s3.example.com
+        # mongodb_s3_access_key: "{{ vault_s3_access_key }}"
+        # mongodb_s3_secret_key: "{{ vault_s3_secret_key }}"

@@ -10,11 +10,11 @@
     state: absent
   loop:
     - "{{ patroni_dir }}"
-    - "{{ haproxy_dir }}"
-    - "{{ pgbouncer_dir }}"
-    - "{{ keepalived_dir }}"
-    - "{{ vip_manager_dir }}"
-    - "{{ walg_dir }}"
+    - "{{ patroni_haproxy_dir }}"
+    - "{{ patroni_pgbouncer_dir }}"
+    - "{{ patroni_keepalived_dir }}"
+    - "{{ patroni_vip_manager_dir }}"
+    - "{{ patroni_walg_dir }}"
 
 # Second-stage interactive prune confirm. Same dual-gate pattern as
 # instance/destroy.yml: the uninstall_confirm at the top of the play
@@ -25,7 +25,7 @@
   ansible.builtin.pause:
     prompt: >-
       Services and configs removed. Type 'prune' to DELETE the data
-      directories ({{ postgresql_root_dir }}, {{ etcd_data_dir }}, etc.) — IRREVERSIBLE,
+      directories ({{ patroni_postgresql_root_dir }}, {{ patroni_etcd_data_dir }}, etc.) — IRREVERSIBLE,
       anything else to leave data on disk
   register: _prune_confirm
   run_once: true
@@ -38,11 +38,11 @@
     path: "{{ item }}"
     state: absent
   loop:
-    - "{{ postgresql_root_dir }}"
-    - "{{ postgresql_log_dir }}"
-    - "{{ etcd_data_dir }}"
-    - "{{ postgresql_dir }}"
-    - "{{ etcd_dir }}"
+    - "{{ patroni_postgresql_root_dir }}"
+    - "{{ patroni_postgresql_log_dir }}"
+    - "{{ patroni_etcd_data_dir }}"
+    - "{{ patroni_postgresql_dir }}"
+    - "{{ patroni_etcd_dir }}"
   when:
     - patroni_destroy_prune | bool
     - (patroni_skip_confirm | bool) or ((_prune_confirm | default({})).user_input | default('') == 'prune')
@@ -51,7 +51,7 @@
   ansible.builtin.debug:
     msg: >-
       Prune aborted by user — data directories left intact at
-      {{ postgresql_root_dir }} and {{ etcd_data_dir }}. Re-run with
+      {{ patroni_postgresql_root_dir }} and {{ patroni_etcd_data_dir }}. Re-run with
       -e patroni_skip_confirm=true to bypass both confirms in automated flows.
   when:
     - patroni_destroy_prune | bool
@@ -160,4 +160,4 @@
       {{ 'Full uninstall complete — all data removed.'
          if _data_was_pruned
          else 'Soft uninstall complete — data preserved at '
-              ~ postgresql_root_dir ~ ', ' ~ etcd_data_dir }}
+              ~ patroni_postgresql_root_dir ~ ', ' ~ patroni_etcd_data_dir }}

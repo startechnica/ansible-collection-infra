@@ -5,10 +5,16 @@
   hosts: localhost
   gather_facts: false
   connection: local
-  vars_files:
-    - ../roles/mongodb/defaults/main.yml
 
   tasks:
+    # Loads every file in mongodb's defaults/main/ and vars/main/, the same
+    # variables the role sees. Runs no tasks. (Was a vars_files pointing at
+    # defaults/main.yml, which is a directory since the split.)
+    - name: Import mongodb role variables
+      ansible.builtin.import_role:
+        name: mongodb
+        tasks_from: export_vars
+
     - name: Verify backup type defaults to mongodump when PBM is disabled
       ansible.builtin.assert:
         that:

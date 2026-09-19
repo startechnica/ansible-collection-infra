@@ -22,12 +22,12 @@
     mongodb_backup_pitr_enabled: true
     mongodb_backup_storage_type: s3
     mongodb_backup_s3_prefix: mongodb-test/pbm-root
-    s3_bucket: test-backup-bucket
-    s3_access_key: test-access-key
-    s3_secret_key: test-secret-key
-    s3_endpoint: https://s3.example.test
-    s3_region: us-east-1
-    s3_force_path_style: true
+    mongodb_s3_bucket: test-backup-bucket
+    mongodb_s3_access_key: test-access-key
+    mongodb_s3_secret_key: test-secret-key
+    mongodb_s3_endpoint: https://s3.example.test
+    mongodb_s3_region: us-east-1
+    mongodb_s3_force_path_style: true
     _pbm_status:
       rc: 1
       stdout: ""

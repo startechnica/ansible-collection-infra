@@ -27,9 +27,9 @@
           - patroni_vip_address == ''
           - patroni_vip_mask | int == 32
           - patroni_vip_iface == 'ens192'
-          - vip_manager_version is not defined
+          - patroni_vip_manager_version is not defined
           - _vip_manager_arch is not defined
-          - postgresql_port is not defined
+          - patroni_postgresql_port is not defined
           - patroni_services is not defined
 
 - name: VIP set with patroni's default engine and mask — check passes
@@ -110,17 +110,17 @@
       ansible.builtin.assert:
         that:
           - patroni_scope is defined                  # patroni.yml
-          - postgresql_port | int == 55432            # postgresql.yml
-          - etcd_image is defined                     # etcd.yml
-          - haproxy_primary_port is defined           # haproxy.yml
-          - pgbouncer_port is defined                 # pgbouncer.yml
-          - walg_enabled is defined                   # walg.yml
-          - s3_bucket is defined                      # s3.yml
+          - patroni_postgresql_port | int == 55432            # postgresql.yml
+          - patroni_etcd_image is defined                     # etcd.yml
+          - patroni_haproxy_primary_port is defined           # haproxy.yml
+          - patroni_pgbouncer_port is defined                 # pgbouncer.yml
+          - patroni_walg_enabled is defined                   # walg.yml
+          - patroni_s3_bucket is defined                      # s3.yml
           - patroni_vip_engine == 'vip-manager'       # vip.yml
-          - vip_manager_version is defined            # vip_manager.yml
-          - keepalived_dir is defined                 # keepalived.yml
-          - postgres_exporter_port is defined         # postgres_exporter.yml
-          - tls_cert_days is defined                  # tls.yml
+          - patroni_vip_manager_version is defined            # vip_manager.yml
+          - patroni_keepalived_dir is defined                 # keepalived.yml
+          - patroni_postgres_exporter_port is defined         # postgres_exporter.yml
+          - patroni_tls_cert_days is defined                  # tls.yml
           - patroni_standby_enabled is defined        # standby.yml
           - query('ansible.builtin.varnames', '^patroni_credentials_file$') | length == 1  # artifacts.yml
           - patroni_services is defined               # vars/main/services.yml

@@ -1,6 +1,6 @@
 ---
 # Guardrails for standby-cluster mode (patroni_standby_enabled). Runs at
-# provision, after _computed_vars, so walg_enabled is already resolved.
+# provision, after _computed_vars, so patroni_walg_enabled is already resolved.
 # No-op (all asserts skipped) when patroni_standby_enabled is false.
 # See docs/design/patroni-standby-cluster.md.
 
@@ -59,11 +59,11 @@
 - name: "Standby: warn when WAL-G fallback is unavailable"
   ansible.builtin.debug:
     msg: >-
-      WARNING: standby has walg_enabled=false — its only data source is the
+      WARNING: standby has patroni_walg_enabled=false — its only data source is the
       live stream from {{ patroni_standby_primary_host }}. If that primary is
       unreachable at bootstrap the basebackup clone will fail with no fallback.
       Configure WAL-G against the primary's object storage (same
-      walg_storage_type and bucket) for a wal-fetch fallback.
+      patroni_walg_storage_type and bucket) for a wal-fetch fallback.
   when:
     - patroni_standby_enabled | default(false) | bool
-    - not (walg_enabled | default(false) | bool)
+    - not (patroni_walg_enabled | default(false) | bool)

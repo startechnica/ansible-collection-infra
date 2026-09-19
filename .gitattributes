@@ -1,0 +1,30 @@
+# Normalize line endings. Every file Git detects as text is stored with LF in
+# the repo and checked out with LF on every platform, so CRLF never creeps in
+# from a Windows checkout.
+* text=auto eol=lf
+
+# Known-binary types: never normalize, never diff as text (belt-and-suspenders
+# in case content auto-detection guesses wrong).
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.webp  binary
+*.svgz  binary
+*.pdf   binary
+*.zip   binary
+*.gz    binary
+*.tgz   binary
+*.bz2   binary
+*.xz    binary
+*.7z    binary
+*.woff  binary
+*.woff2 binary
+*.ttf   binary
+*.otf   binary
+*.eot   binary
+
+# Files that MUST keep CRLF (Windows-only scripts), if any are ever added:
+# *.bat  text eol=crlf
+# *.cmd  text eol=crlf

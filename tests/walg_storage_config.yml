@@ -25,20 +25,20 @@
     - name: Set WAL-G storage test inputs
       ansible.builtin.set_fact:
         patroni_scope: test-pg
-        postgresql_port: 5432
-        walg_auth_password: test-walg-password
-        s3_endpoint: https://s3.example.test:9443
-        s3_bucket: test-backup-bucket
-        s3_access_key: test-access-key
-        s3_secret_key: test-secret-key
-        walg_gcs_bucket: test-gcs-bucket
-        walg_gcs_service_account_json: '{"type":"service_account","client_email":"walg@test.iam.gserviceaccount.com"}'
+        patroni_postgresql_port: 5432
+        patroni_walg_auth_password: test-walg-password
+        patroni_s3_endpoint: https://s3.example.test:9443
+        patroni_s3_bucket: test-backup-bucket
+        patroni_s3_access_key: test-access-key
+        patroni_s3_secret_key: test-secret-key
+        patroni_walg_gcs_bucket: test-gcs-bucket
+        patroni_walg_gcs_service_account_json: '{"type":"service_account","client_email":"walg@test.iam.gserviceaccount.com"}'
 
     - name: Verify S3 is the default WAL-G storage backend
       ansible.builtin.assert:
         that:
-          - walg_storage_type == 's3'
-          - walg_gcs_prefix == 'patroni-walg-test-pg'
+          - patroni_walg_storage_type == 's3'
+          - patroni_walg_gcs_prefix == 'patroni-walg-test-pg'
           - patroni_walg_s3_prefix == 'patroni-walg-test-pg'
 
     - name: Recreate WAL-G render directory
@@ -54,7 +54,7 @@
         dest: "{{ _walg_render_dir }}/{{ item }}.env"
         mode: "0600"
       vars:
-        walg_storage_type: "{{ item }}"
+        patroni_walg_storage_type: "{{ item }}"
       loop:
         - s3
         - gcs
@@ -67,7 +67,7 @@
         dest: "{{ _walg_render_dir }}/{{ item }}-standby.env"
         mode: "0600"
       vars:
-        walg_storage_type: "{{ item }}"
+        patroni_walg_storage_type: "{{ item }}"
         patroni_standby_enabled: true
         patroni_standby_primary_walg_prefix: patroni-walg-primary-pg/
       loop:
@@ -97,11 +97,11 @@
       ansible.builtin.assert:
         that:
           - _env_s3.WALG_S3_PREFIX == 's3://test-backup-bucket/patroni-walg-test-pg'
-          - _env_s3.AWS_ACCESS_KEY_ID == s3_access_key
-          - _env_s3.AWS_SECRET_ACCESS_KEY == s3_secret_key
-          - _env_s3.AWS_ENDPOINT == s3_endpoint
-          - _env_s3.AWS_REGION == s3_region
-          - _env_s3.AWS_S3_FORCE_PATH_STYLE == s3_force_path_style
+          - _env_s3.AWS_ACCESS_KEY_ID == patroni_s3_access_key
+          - _env_s3.AWS_SECRET_ACCESS_KEY == patroni_s3_secret_key
+          - _env_s3.AWS_ENDPOINT == patroni_s3_endpoint
+          - _env_s3.AWS_REGION == patroni_s3_region
+          - _env_s3.AWS_S3_FORCE_PATH_STYLE == patroni_s3_force_path_style
           - _env_s3.WALG_GS_PREFIX is not defined
           - _env_s3.GOOGLE_APPLICATION_CREDENTIALS is not defined
 
@@ -109,7 +109,7 @@
       ansible.builtin.assert:
         that:
           - _env_gcs.WALG_GS_PREFIX == 'gs://test-gcs-bucket/patroni-walg-test-pg'
-          - _env_gcs.GOOGLE_APPLICATION_CREDENTIALS == walg_gcs_service_account_path
+          - _env_gcs.GOOGLE_APPLICATION_CREDENTIALS == patroni_walg_gcs_service_account_path
           # The private key must never land in the env file — it is mounted as
           # a 0600 file instead, so it stays out of `podman inspect` output.
           - _env_gcs.WALG_S3_PREFIX is not defined
@@ -121,10 +121,10 @@
         that:
           - _env_s3.PGDATABASE == 'postgres'
           - _env_gcs.PGDATABASE == 'postgres'
-          - _env_s3.PGUSER == walg_auth_user
-          - _env_gcs.PGUSER == walg_auth_user
-          - _env_s3.WALG_COMPRESSION_METHOD == walg_compression
-          - _env_gcs.WALG_COMPRESSION_METHOD == walg_compression
+          - _env_s3.PGUSER == patroni_walg_auth_user
+          - _env_gcs.PGUSER == patroni_walg_auth_user
+          - _env_s3.WALG_COMPRESSION_METHOD == patroni_walg_compression
+          - _env_gcs.WALG_COMPRESSION_METHOD == patroni_walg_compression
 
     - name: Verify standby wal-fetch fallback overrides the prefix on both backends
       ansible.builtin.assert:
@@ -141,9 +141,9 @@
       vars:
         _root_s3: >-
           {{ dict(lookup('template', '../roles/patroni/templates/walg.env.j2',
-          template_vars={'walg_storage_type': 's3', 'patroni_walg_s3_prefix': ''})
+          template_vars={'patroni_walg_storage_type': 's3', 'patroni_walg_s3_prefix': ''})
           | regex_findall('(?m)^([A-Z_][A-Z0-9_]*)=(.*)$')) }}
         _root_gcs: >-
           {{ dict(lookup('template', '../roles/patroni/templates/walg.env.j2',
-          template_vars={'walg_storage_type': 'gcs', 'walg_gcs_prefix': ''})
+          template_vars={'patroni_walg_storage_type': 'gcs', 'patroni_walg_gcs_prefix': ''})
           | regex_findall('(?m)^([A-Z_][A-Z0-9_]*)=(.*)$')) }}

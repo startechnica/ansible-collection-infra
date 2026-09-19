@@ -42,7 +42,7 @@
     # because a mis-parse silently changes the budget by orders of magnitude —
     # reading "2GB" as 2MB would make any host look fine.
     #
-    # Overriding pg_shared_buffers with task-level vars works precisely because
+    # Overriding patroni_pg_shared_buffers with task-level vars works precisely because
     # patroni_mem_request_mb is a LAZY expression in vars/main/memory.yml rather
     # than a set_fact: the whole chain re-evaluates per iteration. A fact would
     # have frozen on the first value and needed a separate file per case.
@@ -51,13 +51,13 @@
         that:
           - patroni_mem_request_mb | int == _case.want
         fail_msg: >-
-          pg_shared_buffers={{ _case.sb | default('(auto)', true) }} should give
+          patroni_pg_shared_buffers={{ _case.sb | default('(auto)', true) }} should give
           {{ _case.want }}MB (shared_buffers + {{ patroni_stack_overhead_mb }}MB
           overhead), got {{ patroni_mem_request_mb }}MB.
         success_msg: >-
           {{ _case.sb | default('(auto)', true) }} -> {{ patroni_mem_request_mb }}MB
       vars:
-        pg_shared_buffers: "{{ _case.sb }}"
+        patroni_pg_shared_buffers: "{{ _case.sb }}"
       loop:
         - {sb: "2GB", want: 2688}
         - {sb: "2048MB", want: 2688}
@@ -78,13 +78,13 @@
         that:
           - patroni_mem_request_mb | int == 3048
       vars:
-        pg_shared_buffers: "2GB"
+        patroni_pg_shared_buffers: "2GB"
         patroni_stack_overhead_mb: 1000
 
-    - name: "Patroni :: an unpinned host reports every pg_* var as auto-sized"
+    - name: "Patroni :: an unpinned host reports every patroni_pg_* var as auto-sized"
       ansible.builtin.assert:
         that:
-          - patroni_pg_autosized == ['pg_shared_buffers', 'pg_work_mem', 'pg_maint_mem']
+          - patroni_pg_autosized == ['patroni_pg_shared_buffers', 'patroni_pg_work_mem', 'patroni_pg_maint_mem']
 
     - name: "Patroni :: a fully pinned host reports nothing as auto-sized"
       ansible.builtin.assert:
@@ -92,19 +92,109 @@
           - patroni_pg_autosized == []
           - patroni_mem_request_mb | int == 2688
         fail_msg: >-
-          Pinning all three pg_* settings must clear patroni_pg_autosized —
+          Pinning all three patroni_pg_* settings must clear patroni_pg_autosized —
           otherwise the co-located-stack warning cries wolf on a host already
           fixed. The 2688MB is also what ziarahub's node budget assumes.
       vars:
-        pg_shared_buffers: "2GB"
-        pg_work_mem: "64MB"
-        pg_maint_mem: "512MB"
+        patroni_pg_shared_buffers: "2GB"
+        patroni_pg_work_mem: "64MB"
+        patroni_pg_maint_mem: "512MB"
 
 # The design decision that makes cross-role discovery safe, tested directly.
-# mongodb reads patroni's budget by importing ONE defaults file. Importing all
-# of patroni's defaults instead would also load tls_key_curve — which patroni
-# defaults to secp384r1 and mongodb to secp256r1 — silently changing the curve
-# of every certificate mongodb then generates.
+# mongodb reads patroni's budget by importing ONE defaults file rather than all
+# of them.
+#
+# This used to be guarded by asserting one specific collision: both roles
+# defined a bare `tls_key_curve` with DIFFERENT values (secp256r1 for mongodb,
+# secp384r1 for patroni), so a wholesale defaults import silently changed the
+# curve of every certificate mongodb then generated. That collision is gone —
+# both roles' variables are fully namespaced now (mongodb_tls_key_curve and
+# patroni_tls_key_curve) — so the first play below asserts the stronger
+# invariant the old test was really protecting: the two roles share no variable
+# name at all.
+#
+# It reads the files on disk rather than the loaded play vars, because once both
+# roles are imported into one play there is no way to tell which role a variable
+# came from — which is precisely the problem.
+- name: "Budget :: cross-role namespace isolation"
+  hosts: localhost
+  gather_facts: false
+  connection: local
+
+  tasks:
+    - name: "Namespace :: load each role's defaults as a dict"
+      ansible.builtin.include_vars:
+        dir: "{{ playbook_dir }}/../roles/{{ _role.name }}/defaults/main"
+        name: "{{ _role.into }}"
+      loop:
+        - {name: mongodb, into: _mongodb_defaults}
+        - {name: patroni, into: _patroni_defaults}
+      loop_control:
+        loop_var: _role
+        label: "{{ _role.name }}"
+
+    - name: "Namespace :: the two roles share no variable name at all"
+      ansible.builtin.assert:
+        that:
+          - _collisions == []
+        fail_msg: >-
+          mongodb and patroni now share these variable names: {{ _collisions }}.
+          Each role loads all of its own defaults, so a play that runs or imports
+          both gets whichever definition landed last — silently, with no warning.
+          The previous instance was a bare `tls_key_curve` declared by both roles
+          with different values (secp256r1 vs secp384r1), where the loser's
+          certificates were generated on the wrong curve. Prefix the new name. If
+          you need the value of a collection-wide variable, READ it with a
+          fallback default rather than declaring it — see mongodb_debug and
+          patroni_debug, both `{{ '{{' }} debug | default(false) {{ '}}' }}`,
+          precisely so the roles consume `debug` without owning it.
+        success_msg: >-
+          No collisions at all: {{ _mongodb_defaults | length }} mongodb defaults
+          vs {{ _patroni_defaults | length }} patroni defaults, zero shared names.
+      vars:
+        _collisions: >-
+          {{ _mongodb_defaults.keys() | list
+             | intersect(_patroni_defaults.keys() | list) | sort }}
+
+    # The collision check above only catches a name mongodb shares with patroni
+    # TODAY. This one is the invariant that keeps it true against roles that
+    # don't exist yet: every mongodb default carries the role's own namespace,
+    # so it cannot collide with anything.
+    # Asserted for BOTH roles: a one-sided rule would let the next unprefixed
+    # name in through whichever side wasn't checked.
+    - name: "Namespace :: every default is prefixed with its own role name"
+      ansible.builtin.assert:
+        that:
+          - _unprefixed == []
+        fail_msg: >-
+          These {{ _ns }} defaults are not {{ _ns }}_-prefixed: {{ _unprefixed }}.
+          An unprefixed name is a collision waiting for the next role that picks
+          it — which is how a bare `tls_key_curve` ended up silently deciding the
+          curve of another role's certificates. Prefix it, and add an UPGRADING
+          entry: there are no aliases, so an inventory on the old name goes
+          silently back to the default. There are deliberately NO exceptions,
+          including collection-wide names like `debug` and `dry_run` — to consume
+          one of those, declare a prefixed variable that defaults to it, as
+          {{ _ns }}_debug does.
+        success_msg: >-
+          All {{ _keys | length }} {{ _ns }} defaults are namespaced, with no
+          exceptions.
+      loop: [mongodb, patroni]
+      loop_control:
+        loop_var: _ns
+      vars:
+        # Only ever touches .keys(). Passing the dicts themselves through `loop`
+        # would make Ansible render every VALUE, and mongodb_artifacts_dir
+        # resolves hostvars['localhost'].artifacts_dir — a play-level var these
+        # test plays have no reason to set. Selecting the dict inline inside the
+        # .keys() call keeps the values lazy and untouched.
+        _keys: >-
+          {{ (_mongodb_defaults if _ns == 'mongodb' else _patroni_defaults).keys()
+             | list }}
+        _unprefixed: >-
+          {{ _keys | reject('match', '^' ~ _ns ~ '_')
+             | reject('match', '^_') | list | sort }}
+
 - name: "Budget :: narrow cross-role import"
   hosts: localhost
   gather_facts: false
@@ -119,15 +209,6 @@
         name: mongodb
         tasks_from: export_vars
 
-    - name: "Import :: confirm the two roles really do disagree on the curve"
-      ansible.builtin.assert:
-        that:
-          - tls_key_curve == 'secp256r1'
-        fail_msg: >-
-          mongodb no longer defaults tls_key_curve to secp256r1. If the two roles
-          now agree, the narrow-import constraint below may be relaxable — but
-          check every other shared name before widening it.
-
     - name: "Import :: pull in only patroni's memory budget"
       ansible.builtin.import_role:
         name: patroni
@@ -135,20 +216,30 @@
         defaults_from: main/postgresql.yml
         vars_from: main/memory.yml
 
-    - name: "Import :: the budget arrived and nothing else moved"
+    - name: "Import :: the budget arrived and nothing else followed it"
       ansible.builtin.assert:
         that:
           # What we came for.
           - patroni_mem_request_mb is defined
           - patroni_mem_request_mb | int > 0
-          # What must NOT have followed it in.
-          - tls_key_curve == 'secp256r1'
-          - s3_bucket == ''
+          # What must NOT have followed it in. These are patroni topics the
+          # narrow import deliberately leaves behind; they are undefined here
+          # because nothing else in this play defines them.
+          - patroni_haproxy_global_maxconn is not defined
+          - patroni_pgbouncer_pool_mode is not defined
+          - patroni_etcd_client_port is not defined
+          # And mongodb's own settings are untouched, which is the point the
+          # patroni_tls_key_curve assertion used to make — now expressed against names
+          # that can no longer be reached by a patroni import at all.
+          - mongodb_tls_key_curve == 'secp256r1'
+          - mongodb_s3_bucket == ''
         fail_msg: >-
           The narrow import leaked. patroni's defaults must not reach a mongodb
-          run beyond main/postgresql.yml — tls_key_curve is now
-          {{ tls_key_curve }}, which changes the curve of every certificate the
-          mongodb role generates.
+          run beyond main/postgresql.yml — `defaults_from` takes a single file,
+          so if a patroni topic outside main/postgresql.yml is defined here,
+          either the import widened or patroni_mem_request_mb grew a dependency
+          on another defaults file (see roles/patroni/vars/main/memory.yml,
+          which is written to depend on exactly one).
 
 - name: "Budget :: preflight thresholds"
   hosts: localhost

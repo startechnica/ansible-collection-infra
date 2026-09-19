@@ -65,7 +65,7 @@ SERVICES=(
 {% if patroni_vip_engine == 'keepalived' %}
   keepalived.service
 {% endif %}
-{% if postgres_exporter_enabled | bool %}
+{% if patroni_postgres_exporter_enabled | bool %}
   postgres-exporter.service
 {% endif %}
 )
@@ -114,7 +114,7 @@ cmd_status() {
   hdr "etcd endpoint health"
   if container_running etcd; then
     cmd_exec etcd etcdctl \
-      --endpoints="https://127.0.0.1:{{ etcd_client_port }}" \
+      --endpoints="https://127.0.0.1:{{ patroni_etcd_client_port }}" \
       --cacert=/etc/certs/ca.crt \
       --cert=/etc/certs/etcd-healthcheck.crt \
       --key=/etc/certs/etcd-healthcheck.key \

@@ -4,14 +4,14 @@
 # The role loads every file in defaults/main/ (see tasks/export_vars.yml).
 
 # TLS certificate validity (days)
-tls_cert_days: 3650
+patroni_tls_cert_days: 3650
 
 # Key algorithm: ECC (ECDSA) by default — sha384 digest pairs with secp384r1.
-# Set tls_key_type: RSA with tls_key_size: 4096 to fall back to RSA.
-tls_key_type: ECC
-tls_key_curve: secp384r1
-tls_key_size: 4096
-tls_signature_digest: sha384
+# Set patroni_tls_key_type: RSA with patroni_tls_key_size: 4096 to fall back to RSA.
+patroni_tls_key_type: ECC
+patroni_tls_key_curve: secp384r1
+patroni_tls_key_size: 4096
+patroni_tls_signature_digest: sha384
 
 # Renew_certs subset selector — list of cert names to inspect/regenerate
 # (e.g. ['patroni', 'haproxy', 'pgbouncer']). Empty (default) skips the
@@ -19,13 +19,13 @@ tls_signature_digest: sha384
 patroni_certs_to_inspect: []
 
 # Certificate directories on the hosts
-certs_dir: "{{ patroni_dir }}/tls"
-patroni_ca_dir: "{{ certs_dir }}/ca"
-etcd_certs_dir: "{{ certs_dir }}/etcd"
-patroni_certs_dir: "{{ certs_dir }}/patroni"
-haproxy_certs_dir: "{{ certs_dir }}/haproxy"
-pgbouncer_certs_dir: "{{ certs_dir }}/pgbouncer"
-vip_manager_certs_dir: "{{ certs_dir }}/vip-manager"
+patroni_tls_dir: "{{ patroni_dir }}/tls"
+patroni_ca_dir: "{{ patroni_tls_dir }}/ca"
+patroni_etcd_certs_dir: "{{ patroni_tls_dir }}/etcd"
+patroni_certs_dir: "{{ patroni_tls_dir }}/patroni"
+patroni_haproxy_certs_dir: "{{ patroni_tls_dir }}/haproxy"
+patroni_pgbouncer_certs_dir: "{{ patroni_tls_dir }}/pgbouncer"
+patroni_vip_manager_certs_dir: "{{ patroni_tls_dir }}/vip-manager"
 
 # Shared CA for cross-cluster TLS trust. Empty (default) = each cluster mints its
 # own self-signed "{{ patroni_scope }}-ca". Set to a controller-local dir holding

@@ -3,11 +3,18 @@
 # and the container engine.
 # The role loads every file in defaults/main/ (see tasks/export_vars.yml).
 
-debug: false
-dry_run: false
+# Verbose / introspection output, and the no-op switch. Both are collection-wide
+# conventions that several roles declare, so these READ the shared value with a
+# fallback rather than declaring the bare name themselves: `-e debug=true` still
+# reaches them, and a role that declared `debug` in its own defaults would also
+# overwrite it for everything else in the play, decided by load order. Same
+# per-role-selector-with-global-fallback shape as patroni_container_engine.
+patroni_debug: "{{ debug | default(false) }}"
+patroni_dry_run: "{{ dry_run | default(false) }}"
 
-# Debug mode (rebuild images on deploy)
-debug_mode: false
+# Rebuild images on deploy. Unlike the two above this is patroni's own knob, not
+# a shared convention — and nothing reads it yet.
+patroni_debug_mode: false
 
 patroni_enabled: false
 
@@ -18,7 +25,7 @@ patroni_action: provision
 
 # ── Uninstall safety ──
 # patroni_destroy_prune  — when true, also delete PGDATA/etcd data dirs
-#                          (everything under postgresql_root_dir, etcd_data_dir).
+#                          (everything under patroni_postgresql_root_dir, patroni_etcd_data_dir).
 #                          When false (default), keep data; only configs go.
 # patroni_skip_confirm   — when true, skip the interactive 'prune' prompt.
 #                          Mostly for unattended teardowns in CI.

@@ -25,21 +25,21 @@
 # existing `host all all 127.0.0.1/32 scram-sha-256` line in
 # patroni.yml.j2 already covers this user — no hba change needed.
 #
-# Caller (main.yml) already gates this include on walg_enabled.
+# Caller (main.yml) already gates this include on patroni_walg_enabled.
 
 - name: Discover Patroni leader
   ansible.builtin.include_tasks: "../{{ patroni_container_engine }}/_detect_leader.yml"
 
 - name: Create dedicated WAL-G PG role (LOGIN + REPLICATION)
   community.postgresql.postgresql_user:
-    name: "{{ walg_auth_user }}"
-    password: "{{ walg_auth_password }}"
+    name: "{{ patroni_walg_auth_user }}"
+    password: "{{ patroni_walg_auth_password }}"
     role_attr_flags: "LOGIN,REPLICATION"
     state: present
     login_host: 127.0.0.1
-    login_port: "{{ postgresql_port }}"
+    login_port: "{{ patroni_postgresql_port }}"
     login_user: postgres
-    login_password: "{{ postgresql_postgres_password }}"
+    login_password: "{{ patroni_postgresql_postgres_password }}"
     login_db: postgres
     ssl_mode: disable
   delegate_to: "{{ _patroni_leader_host }}"
@@ -49,12 +49,12 @@
 - name: Grant pg_monitor to the WAL-G role (read data_directory + stats)
   community.postgresql.postgresql_membership:
     group: pg_monitor
-    target_roles: "{{ walg_auth_user }}"
+    target_roles: "{{ patroni_walg_auth_user }}"
     state: present
     login_host: 127.0.0.1
-    login_port: "{{ postgresql_port }}"
+    login_port: "{{ patroni_postgresql_port }}"
     login_user: postgres
-    login_password: "{{ postgresql_postgres_password }}"
+    login_password: "{{ patroni_postgresql_postgres_password }}"
     login_db: postgres
     ssl_mode: disable
   delegate_to: "{{ _patroni_leader_host }}"
@@ -67,11 +67,11 @@
       GRANT EXECUTE ON FUNCTION
         pg_backup_start(text, boolean),
         pg_backup_stop(boolean)
-      TO {{ walg_auth_user }}
+      TO {{ patroni_walg_auth_user }}
     login_host: 127.0.0.1
-    login_port: "{{ postgresql_port }}"
+    login_port: "{{ patroni_postgresql_port }}"
     login_user: postgres
-    login_password: "{{ postgresql_postgres_password }}"
+    login_password: "{{ patroni_postgresql_postgres_password }}"
     login_db: postgres
     ssl_mode: disable
   delegate_to: "{{ _patroni_leader_host }}"

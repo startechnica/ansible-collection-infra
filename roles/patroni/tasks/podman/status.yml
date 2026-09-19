@@ -8,8 +8,8 @@
   failed_when: false
   loop: >-
     {{ ['etcd', 'patroni', 'haproxy', 'pgbouncer', 'vip-manager', 'keepalived']
-       + (['postgres-exporter'] if postgres_exporter_enabled | bool else [])
-       + (['walg-init'] if walg_enabled else []) }}
+       + (['postgres-exporter'] if patroni_postgres_exporter_enabled | bool else [])
+       + (['walg-init'] if patroni_walg_enabled else []) }}
 
 - name: Display container status
   ansible.builtin.debug:
@@ -59,13 +59,13 @@
   changed_when: false
   failed_when: false
   run_once: true
-  when: walg_enabled
+  when: patroni_walg_enabled
 
 - name: Display WAL-G archive status
   ansible.builtin.debug:
     msg: "{{ walg_wal_show.stdout_lines | default(['(no WAL archived yet — wal-show empty)'], true) }}"
   run_once: true
-  when: walg_enabled
+  when: patroni_walg_enabled
 
 # ── Structured health fact (for monitoring / scripting consumers) ────────────
 

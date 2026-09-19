@@ -3,42 +3,88 @@
 # client TLS).
 # The role loads every file in defaults/main/ (see tasks/export_vars.yml).
 
-pgbouncer_image: "docker.io/edoburu/pgbouncer:v1.25.1-p0"
-pgbouncer_port: 6543
-pgbouncer_dir: /opt/pgbouncer
+patroni_pgbouncer_image: "docker.io/edoburu/pgbouncer:v1.25.1-p0"
+patroni_pgbouncer_port: 6543
+patroni_pgbouncer_dir: /opt/pgbouncer
 
 # PgBouncer container UID/GID — edoburu/pgbouncer (Alpine) uses postgres:70.
 # Override if you switch to a different image (e.g. bitnami uses 1001).
-pgbouncer_uid: 70
-pgbouncer_gid: 70
+patroni_pgbouncer_uid: 70
+patroni_pgbouncer_gid: 70
 
 # Dedicated PostgreSQL role used by PgBouncer for auth_query lookups.
 # A LOGIN-only role; no other privileges. Auto-generated if empty and
 # persisted to artifacts/<inv>/patroni/pgbouncer.password on the controller.
-pgbouncer_auth_password: ""
+patroni_pgbouncer_auth_password: ""
 
 # Password for the read-only PgBouncer admin console user (`pgbouncer_stats`,
-# see pgbouncer_stats_users below). PgBouncer-internal only — no PG role,
+# see patroni_pgbouncer_stats_users below). PgBouncer-internal only — no PG role,
 # no userlist auth_query path; lives only in userlist.txt. Auto-generated
 # if empty and persisted to artifacts/<inv>/patroni/pgbouncer_stats.password.
-pgbouncer_stats_password: ""
+patroni_pgbouncer_stats_password: ""
 
-pgbouncer_pool_mode: "session"
+patroni_pgbouncer_pool_mode: "session"
 # Comma-separated list of database users allowed to run all commands on the
 # pgbouncer admin console. Must be present in userlist.txt (admin console
 # does NOT use auth_query). Default: the dedicated `pgbouncer` auth_user.
-pgbouncer_admin_users: "pgbouncer"
+patroni_pgbouncer_admin_users: "pgbouncer"
 # Comma-separated list of users allowed to run read-only SHOW commands on
 # the pgbouncer admin console. Same constraint as admin_users — must be in
 # userlist.txt. Default: the dedicated `pgbouncer_stats` user, separate
 # from the auth_user so monitoring credentials can rotate independently
 # and a SHOW-only credential leak doesn't expose pg_shadow access.
-pgbouncer_stats_users: "pgbouncer_stats"
-pgbouncer_default_pool_size: 20
+patroni_pgbouncer_stats_users: "pgbouncer_stats"
+
+# ── PgBouncer pool sizing ──────────────────────────────────────────────
+# These four were hardcoded in templates/pgbouncer.ini.j2 until now; the
+# defaults below are the values that template already rendered, so wiring them
+# up changes nothing on an existing deployment. (`pgbouncer_default_pool_size`
+# did exist as a variable, set to 20, but the template never read it — the
+# effective pool size has always been 50. It is renamed here rather than
+# quietly switched on, because turning the old name on would have dropped every
+# pool from 50 to 20 for anyone who had set it.)
+#
+# What each one bounds, and against which resource:
+#
+#   max_client_conn   — CLIENT connections PgBouncer will accept in total.
+#                       Cheap: an idle pooled client is a socket and a small
+#                       buffer, not a PostgreSQL backend. Sized to match
+#                       patroni_haproxy_primary_server_maxconn so HAProxy can
+#                       never offer more than PgBouncer will take.
+#
+#   default_pool_size — SERVER connections per user/database pair. This is the
+#                       expensive one: every connection here is a real
+#                       PostgreSQL backend drawn from patroni_pg_max_connections.
+#   reserve_pool_size — extra server connections per pair for bursts, on top of
+#                       default_pool_size. So each pair's worst case is
+#                       (default + reserve) = 60 backends by default.
+#
+#   min_pool_size     — server connections kept warm per pair even when idle,
+#                       so the first request after a quiet period doesn't pay
+#                       connection setup. Must not exceed default_pool_size.
+#
+# The multiplication is what catches people out: the ceiling is per PAIR, not
+# per pooler. At 60 per pair against a max_connections of 200, these defaults
+# run out at the THIRD pair — 3 x 60 = 180 for the pools, plus 20 for the
+# pooler-bypass listener and 20 for everything else holding a backend, is 220.
+# And a pair is a (user, database) combination, not a database: one database
+# with a read-write and a read-only user is two, plus PgBouncer's own auth_query
+# pool makes three. So a single-database cluster can already be over.
+#
+# Such a cluster still works, because PgBouncer fills pools on demand and they
+# are rarely all saturated at once — which is why this needed preflight's
+# pg_connections check rather than an incident to surface it. The symptom when
+# it does bite is "FATAL: sorry, too many clients already" in the APPLICATION,
+# not in PostgreSQL's startup. See patroni_pg_max_connections and
+# patroni_pg_conn_overhead in defaults/main/postgresql.yml for the whole budget.
+patroni_pgbouncer_max_client_conn: 1000
+patroni_pgbouncer_default_pool_size: 50
+patroni_pgbouncer_reserve_pool_size: 10
+patroni_pgbouncer_min_pool_size: 10
 
 # Per-database overrides for the [databases] section. PgBouncer resolves an
 # exact database name before falling back to the `*` entry, so each item here
-# carves one database out of the global pgbouncer_pool_mode above.
+# carves one database out of the global patroni_pgbouncer_pool_mode above.
 #
 # Keep `session` as the global default and opt individual databases INTO
 # transaction pooling, not the other way round. Session mode is always
@@ -56,7 +102,7 @@ pgbouncer_default_pool_size: 20
 #                         key above is an alias.
 #   pool_mode           — session | transaction | statement
 #   pool_size           — server connections for this database (else
-#                         default_pool_size)
+#                         patroni_pgbouncer_default_pool_size)
 #   min_pool_size, reserve_pool, max_db_connections — optional passthrough
 #
 # GitLab is the motivating case: Rails requires transaction pooling, while
@@ -65,16 +111,16 @@ pgbouncer_default_pool_size: 20
 # databases here. Praefect then needs no entry (it inherits session from `*`)
 # and no separate `database.session_pooled` connection.
 #
-#   pgbouncer_database_overrides:
+#   patroni_pgbouncer_database_overrides:
 #     - { name: gitlabhq_production, pool_mode: transaction }
 #     - { name: gitlabhq_production_ci, pool_mode: transaction }
-pgbouncer_database_overrides: []
+patroni_pgbouncer_database_overrides: []
 
 # ── PgBouncer client-facing TLS (clients → PgBouncer) ──────────────────
 # Counterpart to the server_tls_* block (PgBouncer → PostgreSQL) already in
 # pgbouncer.ini.j2. PgBouncer terminates client TLS for the WHOLE stack:
 # HAProxy runs `mode tcp` with no TLS on its bind, so a client connecting to
-# haproxy_primary_port / haproxy_replicas_port passes straight through and
+# patroni_haproxy_primary_port / patroni_haproxy_replicas_port passes straight through and
 # completes its TLS handshake against PgBouncer, not PostgreSQL.
 #
 #   disable       plain TCP only; a client's TLS request is ignored
@@ -92,18 +138,18 @@ pgbouncer_database_overrides: []
 # connection — that means issuing a per-application cert from this cluster's
 # CA and generally switching `auth_type` to `cert`. Don't flip to those
 # without that groundwork or every app locks itself out.
-pgbouncer_client_tls_sslmode: "prefer"
+patroni_pgbouncer_client_tls_sslmode: "prefer"
 
 # TLS versions accepted from clients. `secure` = tlsv1.2 + tlsv1.3. This is
 # already PgBouncer's own default; pinned explicitly so an upstream default
 # change can't silently re-admit TLS 1.0/1.1. `all` allows tlsv1.0/tlsv1.1.
-pgbouncer_client_tls_protocols: "secure"
+patroni_pgbouncer_client_tls_protocols: "secure"
 
 # Cipher list for TLS 1.2 and below (TLS 1.3 suites are negotiated
 # separately and unaffected). Shortcuts: default / secure / fast / normal,
 # or any OpenSSL cipher string.
-pgbouncer_client_tls_ciphers: "default"
+patroni_pgbouncer_client_tls_ciphers: "default"
 
-# Host-level OOM victim bias — same reasoning as haproxy_oom_score_adj: on the
+# Host-level OOM victim bias — same reasoning as patroni_haproxy_oom_score_adj: on the
 # client path, cheap to restart. See patroni_oom_score_adj for the ranking.
-pgbouncer_oom_score_adj: -300
+patroni_pgbouncer_oom_score_adj: -300

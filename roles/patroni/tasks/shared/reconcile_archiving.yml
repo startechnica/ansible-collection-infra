@@ -1,15 +1,15 @@
 ---
 # Reconcile archive_command / restore_command in Patroni's DCS to match
-# the current walg_enabled value.
+# the current patroni_walg_enabled value.
 #
 # Why this exists: bootstrap.dcs.postgresql.parameters in patroni.yml is
 # only consumed at first cluster init. After that, runtime values live
 # in DCS (etcd) and re-rendering patroni.yml has no effect on them.
-# This task is the bridge that makes flipping walg_enabled idempotent
+# This task is the bridge that makes flipping patroni_walg_enabled idempotent
 # *after* bootstrap — it works in both directions:
 #
-#   walg_enabled false → true  :  switch archiving to WAL-G/object storage
-#   walg_enabled true  → false :  roll back to local file archiving
+#   patroni_walg_enabled false → true  :  switch archiving to WAL-G/object storage
+#   patroni_walg_enabled true  → false :  roll back to local file archiving
 #
 # Idempotent: reads current DCS config first, only pushes edit-config
 # when values actually differ. Cheap on no-op runs (one show-config exec).
@@ -20,10 +20,10 @@
 - name: Compute desired archive_command / restore_command
   ansible.builtin.set_fact:
     _walg_archive_cmd: >-
-      {{ '/opt/walg/wal-g wal-push %p' if walg_enabled
+      {{ '/opt/walg/wal-g wal-push %p' if patroni_walg_enabled
          else 'test -f /wal_archive/%f || cp %p /wal_archive/%f' }}
     _walg_restore_cmd: >-
-      {{ '/opt/walg/wal-g wal-fetch %f %p' if walg_enabled
+      {{ '/opt/walg/wal-g wal-fetch %f %p' if patroni_walg_enabled
          else 'cp /wal_archive/%f %p' }}
 
 - name: Read current Patroni dynamic config from DCS

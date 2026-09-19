@@ -41,3 +41,51 @@
         tasks_from: memory
       vars:
         container_mem_request_mb: "{{ ansible_facts['memtotal_mb'] | int * 2 }}"
+
+    # The connection budget gets the same treatment, and for the same reason:
+    # tests/pg_connection_budget.yml is developer-run, this scenario is what CI
+    # executes. The numbers are the shipped defaults with one pair too many —
+    # 4 x (50 + 10) + 20 + 20 = 260 against 200.
+    - name: "Connection budget :: an over-committed pool count fails under strict"
+      block:
+        - name: "Connection budget :: four user/database pairs, strict on"
+          ansible.builtin.include_role:
+            name: preflight
+            tasks_from: pg_connections
+          vars:
+            pg_conn_max: 200
+            pg_conn_pool_size: 50
+            pg_conn_reserve_size: 10
+            pg_conn_pairs: 4
+            pg_conn_bypass: 20
+            pg_conn_overhead: 20
+            pg_conn_strict: true
+
+        - name: "Connection budget :: strict mode should not have reached here"
+          ansible.builtin.fail:
+            msg: >-
+              pg_conn_strict=true must fail when the budget exceeds
+              max_connections, but the check passed.
+      rescue:
+        - name: "Connection budget :: strict mode correctly aborted"
+          ansible.builtin.debug:
+            msg: "strict mode failed as expected at 260 against max_connections 200"
+
+    - name: "Connection budget :: the same demand is advisory by default"
+      ansible.builtin.include_role:
+        name: preflight
+        tasks_from: pg_connections
+      vars:
+        pg_conn_max: 200
+        pg_conn_pool_size: 50
+        pg_conn_reserve_size: 10
+        pg_conn_pairs: 4
+        pg_conn_bypass: 20
+        pg_conn_overhead: 20
+
+    # A non-PostgreSQL caller (the mongodb role) must never trigger this, which
+    # is what passing no pg_conn_max has to mean.
+    - name: "Connection budget :: no ceiling means no check"
+      ansible.builtin.include_role:
+        name: preflight
+        tasks_from: pg_connections

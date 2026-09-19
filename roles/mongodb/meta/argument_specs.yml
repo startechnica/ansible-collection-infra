@@ -7,10 +7,15 @@ argument_specs:
         add/remove node).
       - Dispatches on the `mongodb_action` variable; default is full provisioning.
     options:
-      debug:
+      mongodb_debug:
         type: bool
-        default: false
-        description: Verbose / introspection output. Defensive `| bool` filter still used in tasks because CLI `-e debug=true` arrives as a string.
+        description: >-
+          Verbose / introspection output for this role. Defaults to the
+          collection-wide `debug` when that is set, so `-e debug=true` still
+          reaches it; set mongodb_debug directly to turn it on for mongodb
+          alone. No literal default is declared here because the real one is
+          that fallback. Use a defensive `| bool` filter when reading it — CLI
+          `-e debug=true` arrives as a string.
       mongodb_enabled:
         type: bool
         default: true
@@ -109,13 +114,13 @@ argument_specs:
         default: 27019
 
       # ── Resources (MB) ──
-      mongod_mem_limit_mb:
+      mongodb_mongod_mem_limit_mb:
         type: int
         default: 2048
-      configsvr_mem_limit_mb:
+      mongodb_configsvr_mem_limit_mb:
         type: int
         default: 512
-      mongos_mem_limit_mb:
+      mongodb_mongos_mem_limit_mb:
         type: int
         default: 1024
         description: >-
@@ -126,15 +131,15 @@ argument_specs:
 
       # ── OOM victim selection (oom_score_adj, -1000..1000) ──
       # Higher = killed first when the HOST (not the cgroup) runs out of memory.
-      mongod_oom_score_adj:
+      mongodb_mongod_oom_score_adj:
         type: int
         default: 0
         description: Data-bearing; left at the kernel default.
-      configsvr_oom_score_adj:
+      mongodb_configsvr_oom_score_adj:
         type: int
         default: 0
         description: Data-bearing; left at the kernel default.
-      mongos_oom_score_adj:
+      mongodb_mongos_oom_score_adj:
         type: int
         default: 500
         description: >-
@@ -164,28 +169,28 @@ argument_specs:
           plain mongodb+patroni node leaves this at 0.
 
       # ── TLS / PKI ──
-      ssl_days:
+      mongodb_tls_days:
         type: int
         default: 365
         description: Leaf certificate validity in days.
-      ssl_ca_days:
+      mongodb_tls_ca_days:
         type: int
         default: 3650
         description: CA certificate validity in days.
-      tls_key_type:
+      mongodb_tls_key_type:
         type: str
         default: ECC
         choices: [ECC, RSA]
-      tls_key_curve:
+      mongodb_tls_key_curve:
         type: str
         default: secp256r1
         description: |
-          ECC curve. Only used when `tls_key_type: ECC`.
-      tls_key_size:
+          ECC curve. Only used when `mongodb_tls_key_type: ECC`.
+      mongodb_tls_key_size:
         type: int
         default: 4096
         description: |
-          RSA key size in bits. Only used when `tls_key_type: RSA`.
+          RSA key size in bits. Only used when `mongodb_tls_key_type: RSA`.
 
       mongodb_pki_o:
         type: str
@@ -206,15 +211,15 @@ argument_specs:
         type: str
         default: mongodb-exporter
 
-      mongod_tls_mode:
+      mongodb_mongod_tls_mode:
         type: str
         default: requireTLS
         choices: [requireTLS, preferTLS, allowTLS, disabled]
-      configsvr_tls_mode:
+      mongodb_configsvr_tls_mode:
         type: str
         default: requireTLS
         choices: [requireTLS, preferTLS, allowTLS, disabled]
-      mongos_tls_mode:
+      mongodb_mongos_tls_mode:
         type: str
         default: preferTLS
         choices: [requireTLS, preferTLS, allowTLS, disabled]
@@ -370,7 +375,7 @@ argument_specs:
           `mongodb_backup_retain_days`; `s3` tar-gzips and uploads it via
           containerised mc, then removes the local copy (pure-S3 — the bucket
           is the only copy). The dump is always written locally first.
-          Defaults to `s3` when `s3_bucket` is set, else `local`.
+          Defaults to `s3` when `mongodb_s3_bucket` is set, else `local`.
       mongodb_backup_enabled:
         type: bool
         default: true
@@ -386,24 +391,24 @@ argument_specs:
           timer (mongodb-backup.timer). Empty string disables the timer;
           on-demand `mongodb_action: backup` still works.
 
-      # ── S3 (shared with patroni) ──
-      s3_endpoint:
+      # ── S3 (mongodb-only; patroni has its own patroni_s3_* set) ──
+      mongodb_s3_endpoint:
         type: str
         default: ""
-      s3_bucket:
+      mongodb_s3_bucket:
         type: str
         default: ""
         description: Set to enable S3 upload of backups. Empty disables.
-      s3_access_key:
+      mongodb_s3_access_key:
         type: str
         default: ""
-      s3_secret_key:
+      mongodb_s3_secret_key:
         type: str
         default: ""
-      s3_region:
+      mongodb_s3_region:
         type: str
         default: us-east-1
-      s3_force_path_style:
+      mongodb_s3_force_path_style:
         type: str
         default: "true"
         description: >-
@@ -412,11 +417,11 @@ argument_specs:
       mongodb_backup_s3_prefix:
         type: str
         description: >-
-          S3 key prefix (under s3_bucket) for MongoDB backups — mongodump at this
+          S3 key prefix (under mongodb_s3_bucket) for MongoDB backups — mongodump at this
           root, PBM under "<prefix>/pbm". Defaults to a cluster-namespaced,
           slugified path (mongodb-<mongodb_cluster_name>) so distinct clusters
           sharing one bucket don't collide.
-      s3_client_image:
+      mongodb_s3_client_image:
         type: str
         default: "minio/mc:latest"
 

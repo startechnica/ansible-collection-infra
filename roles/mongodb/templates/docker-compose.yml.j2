@@ -18,10 +18,10 @@ services:
       # — mongod also needs memory for connections, working set, TLS, etc.
       # Setting cache == limit guarantees OOM-kill cycles. 50% is the
       # MongoDB-recommended split between WT cache and everything else.
-      - "--wiredTigerCacheSizeGB={{ (mongod_mem_limit_mb * 0.5 / 1024) | float | round(2) }}"
+      - "--wiredTigerCacheSizeGB={{ (mongodb_mongod_mem_limit_mb * 0.5 / 1024) | float | round(2) }}"
       - --bind_ip_all
       - --quiet
-      - "--tlsMode={{ mongod_tls_mode }}"
+      - "--tlsMode={{ mongodb_mongod_tls_mode }}"
       - "--tlsCertificateKeyFile=/etc/mongo/ssl/mongodb-mongod.pem"
       - "--tlsCAFile=/etc/mongo/ssl/ca.pem"
       - "--tlsClusterFile=/etc/mongo/ssl/mongodb-mongod.pem"
@@ -60,9 +60,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: {{ mongod_mem_limit_mb }}m
-    # Host-level OOM victim bias — see mongod_oom_score_adj in defaults.
-    oom_score_adj: {{ mongod_oom_score_adj }}
+          memory: {{ mongodb_mongod_mem_limit_mb }}m
+    # Host-level OOM victim bias — see mongodb_mongod_oom_score_adj in defaults.
+    oom_score_adj: {{ mongodb_mongod_oom_score_adj }}
 
 {% if mongodb_cluster_type == 'sharded' %}
   configsvr:
@@ -78,10 +78,10 @@ services:
       - "--replSet={{ mongodb_config_replset }}"
       # See mongod's wiredTigerCacheSizeGB note above. Same 50% rule
       # applied to the configsvr's own memory limit.
-      - "--wiredTigerCacheSizeGB={{ (configsvr_mem_limit_mb * 0.5 / 1024) | float | round(2) }}"
+      - "--wiredTigerCacheSizeGB={{ (mongodb_configsvr_mem_limit_mb * 0.5 / 1024) | float | round(2) }}"
       - --bind_ip_all
       - --quiet
-      - "--tlsMode={{ configsvr_tls_mode }}"
+      - "--tlsMode={{ mongodb_configsvr_tls_mode }}"
       - "--tlsCertificateKeyFile=/etc/mongo/ssl/mongodb-configsvr.pem"
       - "--tlsCAFile=/etc/mongo/ssl/ca.pem"
       - "--tlsClusterFile=/etc/mongo/ssl/mongodb-configsvr.pem"
@@ -117,8 +117,8 @@ services:
     deploy:
       resources:
         limits:
-          memory: {{ configsvr_mem_limit_mb }}m
-    oom_score_adj: {{ configsvr_oom_score_adj }}
+          memory: {{ mongodb_configsvr_mem_limit_mb }}m
+    oom_score_adj: {{ mongodb_configsvr_oom_score_adj }}
 
   mongos:
     image: {{ mongodb_image_registry }}/{{ mongodb_image_repository }}:{{ mongodb_image_tag }}
@@ -134,7 +134,7 @@ services:
       - "{{ mongodb_config_replset }}/{{ mongodb_nodes | map(attribute='ipv4') | map('regex_replace', '^(.*)$', '\\1:' ~ mongodb_configsvr_node_port) | join(',') }}"
       - "--port=27017"
       - --bind_ip_all
-      - "--tlsMode={{ mongos_tls_mode }}"
+      - "--tlsMode={{ mongodb_mongos_tls_mode }}"
       - "--tlsCertificateKeyFile=/etc/mongo/ssl/mongodb-mongos.pem"
       - "--tlsCAFile=/etc/mongo/ssl/ca.pem"
       - "--tlsClusterFile=/etc/mongo/ssl/mongodb-mongos.pem"
@@ -172,9 +172,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: {{ mongos_mem_limit_mb }}m
+          memory: {{ mongodb_mongos_mem_limit_mb }}m
     # Preferred victim: stateless router, cheapest thing here to lose.
-    oom_score_adj: {{ mongos_oom_score_adj }}
+    oom_score_adj: {{ mongodb_mongos_oom_score_adj }}
 {% endif %}
 
 {% if mongodb_exporter_enabled | bool %}

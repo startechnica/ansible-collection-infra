@@ -1,7 +1,7 @@
 ---
 # Provision databases, users, grants, and extensions on the Patroni primary.
 #
-# Connects DIRECTLY to PostgreSQL on `postgresql_port` on the current leader,
+# Connects DIRECTLY to PostgreSQL on `patroni_postgresql_port` on the current leader,
 # bypassing HAProxy → PgBouncer. This avoids any auth_query indirection
 # during writes and keeps the dependency chain pointing only at PG itself
 # (chicken-and-egg-free even if PgBouncer is unhealthy).
@@ -24,9 +24,9 @@
     login_db: postgres
     state: present
     login_host: 127.0.0.1
-    login_port: "{{ postgresql_port }}"
+    login_port: "{{ patroni_postgresql_port }}"
     login_user: postgres
-    login_password: "{{ postgresql_postgres_password }}"
+    login_password: "{{ patroni_postgresql_postgres_password }}"
     ssl_mode: disable
   loop: "{{ patroni_databases | subelements('users', skip_missing=True) }}"
   loop_control:
@@ -46,9 +46,9 @@
     login_db: postgres
     state: present
     login_host: 127.0.0.1
-    login_port: "{{ postgresql_port }}"
+    login_port: "{{ patroni_postgresql_port }}"
     login_user: postgres
-    login_password: "{{ postgresql_postgres_password }}"
+    login_password: "{{ patroni_postgresql_postgres_password }}"
     ssl_mode: disable
   loop: "{{ patroni_databases }}"
   loop_control:
@@ -67,9 +67,9 @@
     template: "{{ item.template | default('template1') }}"
     state: present
     login_host: 127.0.0.1
-    login_port: "{{ postgresql_port }}"
+    login_port: "{{ patroni_postgresql_port }}"
     login_user: postgres
-    login_password: "{{ postgresql_postgres_password }}"
+    login_password: "{{ patroni_postgresql_postgres_password }}"
     # postgresql_db uses `maintenance_db` (NOT `login_db` — that's
     # postgresql_query/postgresql_privs). The connection lands here while
     # CREATE DATABASE / DROP DATABASE for the target runs.
@@ -104,9 +104,9 @@
     schema: "{{ _grant.schema | default('public') if _grant.on != 'database' else omit }}"
     state: present
     login_host: 127.0.0.1
-    login_port: "{{ postgresql_port }}"
+    login_port: "{{ patroni_postgresql_port }}"
     login_user: postgres
-    login_password: "{{ postgresql_postgres_password }}"
+    login_password: "{{ patroni_postgresql_postgres_password }}"
     ssl_mode: disable
   vars:
     _db: "{{ item.0 }}"
@@ -139,9 +139,9 @@
     login_db: "{{ item.0.name }}"
     state: present
     login_host: 127.0.0.1
-    login_port: "{{ postgresql_port }}"
+    login_port: "{{ patroni_postgresql_port }}"
     login_user: postgres
-    login_password: "{{ postgresql_postgres_password }}"
+    login_password: "{{ patroni_postgresql_postgres_password }}"
     ssl_mode: disable
   loop: "{{ patroni_databases | product(patroni_extensions) | list }}"
   loop_control:

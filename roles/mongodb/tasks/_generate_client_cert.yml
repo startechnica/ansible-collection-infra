@@ -13,9 +13,9 @@
 - name: "Generate client private key — {{ 'client=' ~ client_name ~ ', host=' ~ inventory_hostname }}"
   community.crypto.openssl_privatekey:
     path: "{{ mongodb_local_certs_dir }}/{{ inventory_hostname }}/{{ client_name }}.key"
-    type: "{{ tls_key_type }}"
-    curve: "{{ tls_key_curve if tls_key_type == 'ECC' else omit }}"
-    size: "{{ tls_key_size if tls_key_type == 'RSA' else omit }}"
+    type: "{{ mongodb_tls_key_type }}"
+    curve: "{{ mongodb_tls_key_curve if mongodb_tls_key_type == 'ECC' else omit }}"
+    size: "{{ mongodb_tls_key_size if mongodb_tls_key_type == 'RSA' else omit }}"
   delegate_to: localhost
   become: false
 
@@ -41,7 +41,7 @@
     csr_path: "{{ mongodb_local_certs_dir }}/{{ inventory_hostname }}/{{ client_name }}.csr"
     ownca_path: "{{ mongodb_local_certs_dir }}/ca.pem"
     ownca_privatekey_path: "{{ mongodb_local_certs_dir }}/ca.key"
-    ownca_not_after: "+{{ ssl_days }}d"
+    ownca_not_after: "+{{ mongodb_tls_days }}d"
     provider: ownca
   delegate_to: localhost
   become: false

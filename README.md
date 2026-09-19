@@ -270,13 +270,19 @@ mongodb_admin_password: "..."  # or "{{ vault_mongodb_admin_password }}"
 # Patroni (required when instance_tags contains 'patroni')
 patroni_scope: <unique-scope>   # e.g. projectname-pg
 patroni_vip_address: "<unused-ip-on-subnet>"    # floating IP for leader
-# postgresql_postgres_password: ""         # leave empty to auto-generate
+# patroni_postgresql_postgres_password: ""         # leave empty to auto-generate
 
-# S3 backups (optional; shared by mongodb + patroni)
-s3_endpoint: "https://s3.example.com"
-s3_bucket: "backups"
-s3_access_key: "..."
-s3_secret_key: "..."
+# S3 backups (optional). Per-role credential sets: patroni_s3_* drives patroni's
+# WAL-G + etcd snapshots, mongodb_s3_* drives mongodb's backups + PBM.
+# Set both on a node running both stacks, even for one bucket.
+patroni_s3_endpoint: "https://s3.example.com"
+patroni_s3_bucket: "backups"
+patroni_s3_access_key: "..."
+patroni_s3_secret_key: "..."
+mongodb_s3_endpoint: "https://s3.example.com"
+mongodb_s3_bucket: "backups"
+mongodb_s3_access_key: "..."
+mongodb_s3_secret_key: "..."
 ```
 
 NetBox connection + vCenter credentials are best kept in
@@ -325,7 +331,7 @@ NetBox connection + vCenter credentials are best kept in
   needs, on both ends: TLS trust (shared `patroni_shared_ca_dir` for `verify-ca`, or
   `patroni_standby_primary_sslmode: require`), the primary admitting the standby IPs
   (`patroni_replication_cidrs` + firewall port 55432), matching
-  `postgresql_replication_password`, and a `patroni_scope` distinct from the primary's.
+  `patroni_postgresql_replication_password`, and a `patroni_scope` distinct from the primary's.
   See the [patroni role README](roles/patroni/README.md#standby-cluster-dr--off-site-replica).
 - **MongoDB preflight fails on kernel 6.19–7.0.13** — MongoDB 8 crashes on
   startup on a *bounded range* of Linux kernels, **6.19 through 7.0.13**, from a

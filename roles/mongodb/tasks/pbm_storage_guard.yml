@@ -36,6 +36,6 @@
         {{
           ('gs://' ~ mongodb_backup_gcs_bucket ~ '/' ~ mongodb_backup_gcs_prefix ~ '/pbm/')
           if mongodb_backup_storage_type == 'gcs'
-          else ('s3://' ~ s3_bucket ~ '/' ~ mongodb_backup_s3_prefix ~ '/pbm/')
+          else ('s3://' ~ mongodb_s3_bucket ~ '/' ~ mongodb_backup_s3_prefix ~ '/pbm/')
         }}
   when: not (_pbm_storage_available | bool)

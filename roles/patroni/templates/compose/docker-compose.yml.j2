@@ -3,40 +3,40 @@
 services:
   # ── etcd ──────────────────────────────────────────────────────────
   etcd:
-    image: {{ etcd_image }}
+    image: {{ patroni_etcd_image }}
     container_name: etcd
     restart: unless-stopped
     network_mode: host
-    user: "{{ etcd_uid }}:{{ etcd_gid }}"
+    user: "{{ patroni_etcd_uid }}:{{ patroni_etcd_gid }}"
     command:
       - etcd
       - --name=etcd-{{ node_ip }}
       - --data-dir=/etcd-data
       # Client TLS
-      - --listen-client-urls=https://0.0.0.0:{{ etcd_client_port }}
-      - --advertise-client-urls=https://{{ node_ip }}:{{ etcd_client_port }}
+      - --listen-client-urls=https://0.0.0.0:{{ patroni_etcd_client_port }}
+      - --advertise-client-urls=https://{{ node_ip }}:{{ patroni_etcd_client_port }}
       - --cert-file=/etc/certs/etcd-server.crt
       - --key-file=/etc/certs/etcd-server.key
       - --trusted-ca-file=/etc/certs/ca.crt
       - --client-cert-auth=true
       # Peer TLS
-      - --listen-peer-urls=https://0.0.0.0:{{ etcd_peer_port }}
-      - --initial-advertise-peer-urls=https://{{ node_ip }}:{{ etcd_peer_port }}
+      - --listen-peer-urls=https://0.0.0.0:{{ patroni_etcd_peer_port }}
+      - --initial-advertise-peer-urls=https://{{ node_ip }}:{{ patroni_etcd_peer_port }}
       - --peer-cert-file=/etc/certs/etcd-peer.crt
       - --peer-key-file=/etc/certs/etcd-peer.key
       - --peer-trusted-ca-file=/etc/certs/ca.crt
       - --peer-client-cert-auth=true
       # Cluster
-      - --initial-cluster={% for ip in node_ips %}etcd-{{ ip }}=https://{{ ip }}:{{ etcd_peer_port }}{% if not loop.last %},{% endif %}{% endfor %}
+      - --initial-cluster={% for ip in node_ips %}etcd-{{ ip }}=https://{{ ip }}:{{ patroni_etcd_peer_port }}{% if not loop.last %},{% endif %}{% endfor %}
 
       - --initial-cluster-state={{ etcd_cluster_state }}
       - --initial-cluster-token={{ patroni_scope }}
     volumes:
-      - {{ etcd_data_dir }}:/etcd-data:Z
-      - {{ etcd_certs_dir }}:/etc/certs:ro,Z
+      - {{ patroni_etcd_data_dir }}:/etcd-data:Z
+      - {{ patroni_etcd_certs_dir }}:/etc/certs:ro,Z
     # Host-level OOM victim bias — most strongly protected container in the
-    # stack; see etcd_oom_score_adj in defaults.
-    oom_score_adj: {{ etcd_oom_score_adj }}
+    # stack; see patroni_etcd_oom_score_adj in defaults.
+    oom_score_adj: {{ patroni_etcd_oom_score_adj }}
     logging:
       driver: json-file
       options:
@@ -44,10 +44,10 @@ services:
         max-file: "3"
         tag: "etcd"
 
-{% if walg_enabled %}
+{% if patroni_walg_enabled %}
   # ── WAL-G init (copies wal-g binary to shared volume) ────────────
   walg-init:
-    image: {{ walg_image }}
+    image: {{ patroni_walg_image }}
     container_name: walg-init
     restart: "no"
     network_mode: host
@@ -56,7 +56,7 @@ services:
       - -c
       - "cp /usr/local/bin/wal-g /opt/walg/wal-g && chmod 755 /opt/walg/wal-g"
     volumes:
-      - {{ walg_dir }}/bin:/opt/walg:z
+      - {{ patroni_walg_dir }}/bin:/opt/walg:z
 
 {% endif %}
   # ── Patroni (PostgreSQL + Patroni) ───────────────────────────────
@@ -78,25 +78,25 @@ services:
       PG_OOM_ADJUST_FILE: /proc/self/oom_score_adj
       PG_OOM_ADJUST_VALUE: "{{ patroni_pg_backend_oom_score_adj }}"
 {% endif %}
-{% if walg_enabled %}
+{% if patroni_walg_enabled %}
     env_file:
-      - {{ walg_dir }}/walg.env
+      - {{ patroni_walg_dir }}/walg.env
 {% endif %}
     volumes:
-      - {{ postgresql_root_dir }}:/var/lib/postgresql:Z
-      - {{ postgresql_log_dir }}:/var/log/postgresql:Z
+      - {{ patroni_postgresql_root_dir }}:/var/lib/postgresql:Z
+      - {{ patroni_postgresql_log_dir }}:/var/log/postgresql:Z
       - {{ patroni_certs_dir }}:/etc/certs:ro,Z
       - {{ patroni_dir }}/patroni.yml:/etc/patroni/patroni.yml:ro,Z
-      - {{ wal_archive_dir }}:/wal_archive:Z
+      - {{ patroni_wal_archive_dir }}:/wal_archive:Z
       - {{ patroni_backup_dir }}:/var/lib/postgresql/backups:Z
-{% if walg_enabled %}
-      - {{ walg_dir }}/bin:/opt/walg:ro,z
-{% if walg_storage_type == 'gcs' %}
+{% if patroni_walg_enabled %}
+      - {{ patroni_walg_dir }}/bin:/opt/walg:ro,z
+{% if patroni_walg_storage_type == 'gcs' %}
       # GCS service-account key for wal-g (GOOGLE_APPLICATION_CREDENTIALS in
       # walg.env points here). The DIRECTORY is mounted, not the bare file: a
       # re-rendered key replaces the inode, which a file bind-mount would not
       # follow.
-      - {{ walg_gcs_service_account_dir }}:{{ walg_gcs_service_account_mount }}:ro,Z
+      - {{ patroni_walg_gcs_service_account_dir }}:{{ patroni_walg_gcs_service_account_mount }}:ro,Z
 {% endif %}
 {% endif %}
     ulimits:
@@ -114,7 +114,7 @@ services:
       # and a block mapping at the same level).
       etcd:
         condition: service_started
-{% if walg_enabled %}
+{% if patroni_walg_enabled %}
       walg-init:
         condition: service_completed_successfully
 {% endif %}
@@ -137,24 +137,24 @@ services:
 
   # ── HAProxy ───────────────────────────────────────────────────────
   haproxy:
-    image: {{ haproxy_image }}
+    image: {{ patroni_haproxy_image }}
     container_name: haproxy
     restart: unless-stopped
     network_mode: host
     user: "99:99"
     volumes:
-      - {{ haproxy_dir }}/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro,Z
-      - {{ haproxy_certs_dir }}:/etc/certs:ro,z
+      - {{ patroni_haproxy_dir }}/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro,Z
+      - {{ patroni_haproxy_certs_dir }}:/etc/certs:ro,z
     ulimits:
       nofile:
         soft: 65536
         hard: 65536
-    oom_score_adj: {{ haproxy_oom_score_adj }}
+    oom_score_adj: {{ patroni_haproxy_oom_score_adj }}
     healthcheck:
       # Stats endpoint always returns 200 once haproxy has parsed its config
       # and is accepting connections — proves both the process is up and
       # the config didn't reject at parse time.
-      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:{{ haproxy_stats_port }}/ || exit 1"]
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:{{ patroni_haproxy_stats_port }}/ || exit 1"]
       interval: 10s
       timeout: 3s
       retries: 3
@@ -168,20 +168,20 @@ services:
 
   # ── PgBouncer ─────────────────────────────────────────────────────
   pgbouncer:
-    image: {{ pgbouncer_image }}
+    image: {{ patroni_pgbouncer_image }}
     container_name: pgbouncer
     restart: unless-stopped
     network_mode: host
-    user: "{{ pgbouncer_uid }}:{{ pgbouncer_gid }}"
+    user: "{{ patroni_pgbouncer_uid }}:{{ patroni_pgbouncer_gid }}"
     volumes:
-      - {{ pgbouncer_dir }}/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro,Z
-      - {{ pgbouncer_dir }}/userlist.txt:/etc/pgbouncer/userlist.txt:ro,Z
-      - {{ pgbouncer_certs_dir }}:/etc/certs:ro,Z
+      - {{ patroni_pgbouncer_dir }}/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro,Z
+      - {{ patroni_pgbouncer_dir }}/userlist.txt:/etc/pgbouncer/userlist.txt:ro,Z
+      - {{ patroni_pgbouncer_certs_dir }}:/etc/certs:ro,Z
     ulimits:
       nofile:
         soft: 65536
         hard: 65536
-    oom_score_adj: {{ pgbouncer_oom_score_adj }}
+    oom_score_adj: {{ patroni_pgbouncer_oom_score_adj }}
     depends_on:
       - patroni
     logging:
@@ -196,8 +196,8 @@ services:
   # ── vip-manager (Patroni-aware VIP via etcd) ─────────────────────
   vip-manager:
     build:
-      context: {{ vip_manager_dir }}
-    image: vip-manager:v{{ vip_manager_version }}
+      context: {{ patroni_vip_manager_dir }}
+    image: vip-manager:v{{ patroni_vip_manager_version }}
     container_name: vip-manager
     restart: unless-stopped
     network_mode: host
@@ -205,10 +205,10 @@ services:
       - NET_ADMIN
       - NET_RAW
     volumes:
-      - {{ vip_manager_dir }}/vip-manager.yml:/etc/default/vip-manager.yml:ro,Z
-      - {{ vip_manager_certs_dir }}:/etc/certs:ro,Z
-    # Holds the VIP — a kill moves client traffic. See vip_manager_oom_score_adj.
-    oom_score_adj: {{ vip_manager_oom_score_adj }}
+      - {{ patroni_vip_manager_dir }}/vip-manager.yml:/etc/default/vip-manager.yml:ro,Z
+      - {{ patroni_vip_manager_certs_dir }}:/etc/certs:ro,Z
+    # Holds the VIP — a kill moves client traffic. See patroni_vip_manager_oom_score_adj.
+    oom_score_adj: {{ patroni_vip_manager_oom_score_adj }}
     depends_on:
       - etcd
     healthcheck:
@@ -216,7 +216,7 @@ services:
       # liveness is "can it still talk to etcd?" — without etcd it can't
       # decide who holds the leader key, so the VIP can't move correctly.
       # Uses vip-manager's own client cert (already mounted).
-      test: ["CMD-SHELL", "curl -sf --cert /etc/certs/vip-manager.crt --key /etc/certs/vip-manager.key --cacert /etc/certs/ca.crt https://127.0.0.1:{{ etcd_client_port }}/health -o /dev/null || exit 1"]
+      test: ["CMD-SHELL", "curl -sf --cert /etc/certs/vip-manager.crt --key /etc/certs/vip-manager.key --cacert /etc/certs/ca.crt https://127.0.0.1:{{ patroni_etcd_client_port }}/health -o /dev/null || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -231,7 +231,7 @@ services:
   # ── Keepalived (VRRP-based VIP) ──────────────────────────────────
   keepalived:
     build:
-      context: {{ keepalived_dir }}
+      context: {{ patroni_keepalived_dir }}
     image: keepalived:latest
     container_name: keepalived
     restart: unless-stopped
@@ -241,10 +241,10 @@ services:
       - NET_BROADCAST
       - NET_RAW
     volumes:
-      - {{ keepalived_dir }}/keepalived.conf:/etc/keepalived/keepalived.conf:ro,Z
-      - {{ haproxy_certs_dir }}:/etc/certs:ro,z
-    # Holds the VIP — a kill moves client traffic. See keepalived_oom_score_adj.
-    oom_score_adj: {{ keepalived_oom_score_adj }}
+      - {{ patroni_keepalived_dir }}/keepalived.conf:/etc/keepalived/keepalived.conf:ro,Z
+      - {{ patroni_haproxy_certs_dir }}:/etc/certs:ro,z
+    # Holds the VIP — a kill moves client traffic. See patroni_keepalived_oom_score_adj.
+    oom_score_adj: {{ patroni_keepalived_oom_score_adj }}
     depends_on:
       - haproxy
     logging:
@@ -256,15 +256,15 @@ services:
 {% endif %}
 {% endif %}
 
-{% if postgres_exporter_enabled | bool %}
+{% if patroni_postgres_exporter_enabled | bool %}
   # ── postgres_exporter (Prometheus metrics) ───────────────────────
   postgres-exporter:
-    image: {{ postgres_exporter_image }}
+    image: {{ patroni_postgres_exporter_image }}
     container_name: postgres-exporter
     restart: unless-stopped
     network_mode: host
     environment:
-      DATA_SOURCE_NAME: "postgresql://postgres:{{ postgresql_postgres_password }}@127.0.0.1:{{ postgresql_port }}/postgres?sslmode=disable"
+      DATA_SOURCE_NAME: "postgresql://postgres:{{ patroni_postgresql_postgres_password }}@127.0.0.1:{{ patroni_postgresql_port }}/postgres?sslmode=disable"
     depends_on:
       - patroni
     logging:
@@ -276,9 +276,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: {{ postgres_exporter_mem_limit_mb }}m
+          memory: {{ patroni_postgres_exporter_mem_limit_mb }}m
     # Telemetry only — first in line for the OOM killer.
-    oom_score_adj: {{ postgres_exporter_oom_score_adj }}
+    oom_score_adj: {{ patroni_postgres_exporter_oom_score_adj }}
 {% endif %}
 
 # walg-cron service removed — scheduled backups now run via host-level

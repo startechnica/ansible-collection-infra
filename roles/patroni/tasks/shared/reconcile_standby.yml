@@ -53,7 +53,7 @@
         | combine({'primary_slot_name': patroni_standby_primary_slot}
                   if (patroni_standby_primary_slot | default('') | length > 0) else {})
         | combine({'restore_command': '/opt/walg/wal-g wal-fetch %f %p'}
-                  if (walg_enabled | default(false) | bool) else {})
+                  if (patroni_walg_enabled | default(false) | bool) else {})
         if (patroni_standby_enabled | default(false) | bool) else None
       }}
   run_once: true

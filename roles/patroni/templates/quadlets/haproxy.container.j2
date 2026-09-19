@@ -7,20 +7,20 @@ After=network-online.target
 
 [Container]
 ContainerName=haproxy
-Image={{ haproxy_image }}
-User={{ haproxy_uid | default(99) }}
-Group={{ haproxy_gid | default(99) }}
+Image={{ patroni_haproxy_image }}
+User={{ patroni_haproxy_uid | default(99) }}
+Group={{ patroni_haproxy_gid | default(99) }}
 Network=host
 
-Volume={{ haproxy_dir }}/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro,Z
-Volume={{ haproxy_certs_dir }}:/etc/certs:ro,z
+Volume={{ patroni_haproxy_dir }}/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro,Z
+Volume={{ patroni_haproxy_certs_dir }}:/etc/certs:ro,z
 
-PodmanArgs=--ulimit nofile=65536:65536 --oom-score-adj={{ haproxy_oom_score_adj }}
+PodmanArgs=--ulimit nofile=65536:65536 --oom-score-adj={{ patroni_haproxy_oom_score_adj }}
 
 # Stats endpoint always returns 200 once haproxy has parsed its config
 # and is accepting connections — proves both the process is up and the
 # config didn't reject at parse time.
-HealthCmd=wget -q --spider http://127.0.0.1:{{ haproxy_stats_port }}/ || exit 1
+HealthCmd=wget -q --spider http://127.0.0.1:{{ patroni_haproxy_stats_port }}/ || exit 1
 HealthInterval=10s
 HealthTimeout=3s
 HealthRetries=3

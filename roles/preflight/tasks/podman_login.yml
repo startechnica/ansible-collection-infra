@@ -1,6 +1,6 @@
 ---
 # Podman counterpart to docker_login.yml. Authenticates to one or more
-# OCI registries so subsequent image pulls (mongodb_image, walg_image,
+# OCI registries so subsequent image pulls (mongodb_image, patroni_walg_image,
 # …) work for private repos.
 #
 # Credentials persist in /run/containers/0/auth.json (root) by default;

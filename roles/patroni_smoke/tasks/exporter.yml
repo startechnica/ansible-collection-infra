@@ -11,4 +11,4 @@
   failed_when: false
   when:
     - patroni_smoke_check_exporter | bool
-    - postgres_exporter_enabled | default(false) | bool
+    - patroni_postgres_exporter_enabled | default(false) | bool

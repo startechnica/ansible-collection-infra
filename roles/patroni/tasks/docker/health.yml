@@ -43,11 +43,11 @@
     name: postgres-exporter
   register: pg_exporter_check
   failed_when: false
-  when: postgres_exporter_enabled | bool
+  when: patroni_postgres_exporter_enabled | bool
 
 - name: Check HAProxy stats endpoint
   ansible.builtin.uri:
-    url: "http://127.0.0.1:{{ haproxy_stats_port }}"
+    url: "http://127.0.0.1:{{ patroni_haproxy_stats_port }}"
     timeout: 3
   register: haproxy_stats
   failed_when: false
@@ -71,4 +71,4 @@
       - "  haproxy:     {{ 'running' if _haproxy_running else 'NOT RUNNING' }}{{ ' (stats OK)' if _haproxy_stats_ok else '' }}"
       - "  pgbouncer:   {{ 'running' if _pgbouncer_running else 'NOT RUNNING' }}"
       - "  vip-manager: {{ 'running' if vip_running else 'NOT RUNNING' }}"
-      - "  pg-exporter: {{ 'disabled' if not (postgres_exporter_enabled | bool) else ('running' if _pg_exporter_running else 'NOT RUNNING') }}"
+      - "  pg-exporter: {{ 'disabled' if not (patroni_postgres_exporter_enabled | bool) else ('running' if _pg_exporter_running else 'NOT RUNNING') }}"

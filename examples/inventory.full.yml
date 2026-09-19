@@ -84,7 +84,7 @@ all:
 
     # ── Patroni ─────────────────────────────────────────────────────────────
     patroni_scope: <your-project>-pg # must be unique per etcd DCS
-    postgresql_postgres_password: "{{ vault_postgres_password }}"
+    patroni_postgresql_postgres_password: "{{ vault_postgres_password }}"
     pgversion: 16
     patroni_vip_engine: vip-manager # keepalived | none | vip-manager
     patroni_vip_address: 10.147.8.60
@@ -100,14 +100,27 @@ all:
             grants:
               - { privs: ALL, on_type: database, on_target: app_primary }
 
-    # ── S3 backups (shared by MongoDB and Patroni) ──────────────────────────
-    s3_endpoint: https://s3.example.com
-    s3_bucket: <your-project>-backups
-    s3_access_key: "{{ vault_s3_access_key }}"
-    s3_secret_key: "{{ vault_s3_secret_key }}"
-    s3_region: us-east-1
-    s3_prefix: <your-project>
-    walg_retention: 14 # keep 14 full Patroni backups
+    # ── S3 backups ──────────────────────────────────────────────────────────
+    # Each role has its own credential set: patroni's WAL-G and etcd snapshots
+    # read patroni_s3_*, mongodb's backups and PBM read mongodb_s3_*. They can point at
+    # the same bucket, as here, but both must be set — neither role falls back
+    # to the other's values.
+    patroni_s3_endpoint: https://s3.example.com
+    patroni_s3_bucket: <your-project>-backups
+    patroni_s3_access_key: "{{ vault_s3_access_key }}"
+    patroni_s3_secret_key: "{{ vault_s3_secret_key }}"
+    patroni_s3_region: us-east-1
+
+    mongodb_s3_endpoint: https://s3.example.com
+    mongodb_s3_bucket: <your-project>-backups
+    mongodb_s3_access_key: "{{ vault_s3_access_key }}"
+    mongodb_s3_secret_key: "{{ vault_s3_secret_key }}"
+    mongodb_s3_region: us-east-1
+
+    # Key prefixes keep the two stacks' objects apart inside one bucket.
+    patroni_walg_s3_prefix: <your-project>/patroni
+    mongodb_backup_s3_prefix: <your-project>/mongodb
+    patroni_walg_retention: 14 # keep 14 full Patroni backups
     mongodb_backup_retain_days: 14 # keep 14 days of MongoDB dumps
 
     # ── Host firewall (UFW / firewalld) ─────────────────────────────────────

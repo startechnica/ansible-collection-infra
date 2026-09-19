@@ -108,6 +108,17 @@
     # See mongodb/tasks/main.yml for why this is a per-role var and not one
     # host-wide figure: each role needs "everything except me".
     container_mem_reserved_mb: "{{ patroni_mem_reserved_mb | default(0) }}"
+    # Connection budget. Passed as components rather than one total so
+    # preflight's failure message can name whichever term is oversized —
+    # and because the pooled term is a product, the one people miss.
+    pg_conn_max: "{{ patroni_pg_max_connections }}"
+    pg_conn_pool_size: "{{ patroni_pgbouncer_default_pool_size }}"
+    pg_conn_reserve_size: "{{ patroni_pgbouncer_reserve_pool_size }}"
+    pg_conn_pairs: "{{ patroni_pg_conn_pairs }}"
+    # The pooler-bypass listener: real backends, not pooled clients.
+    pg_conn_bypass: "{{ patroni_haproxy_direct_server_maxconn }}"
+    pg_conn_overhead: "{{ patroni_pg_conn_overhead }}"
+    pg_conn_strict: "{{ patroni_pg_conn_strict }}"
   when: >-
     patroni_action in
     ['provision', 'backup', 'manage-databases', 'rotate-passwords', 'renew-certs']
@@ -116,10 +127,10 @@
 
 - name: Auto-calculate PostgreSQL memory settings
   ansible.builtin.set_fact:
-    pg_shared_buffers: "{{ pg_shared_buffers if pg_shared_buffers else '%dMB' | format((ansible_facts['memtotal_mb'] / 4) | int) }}"
-    pg_effective_cache: "{{ pg_effective_cache if pg_effective_cache else '%dMB' | format((ansible_facts['memtotal_mb'] * 3 / 4) | int) }}"
-    pg_work_mem: "{{ pg_work_mem if pg_work_mem else '%dMB' | format([ansible_facts['memtotal_mb'] / 64, 4] | max | int) }}"
-    pg_maint_mem: "{{ pg_maint_mem if pg_maint_mem else '%dMB' | format([ansible_facts['memtotal_mb'] / 8, 2048] | min | int) }}"
+    patroni_pg_shared_buffers: "{{ patroni_pg_shared_buffers if patroni_pg_shared_buffers else '%dMB' | format((ansible_facts['memtotal_mb'] / 4) | int) }}"
+    patroni_pg_effective_cache: "{{ patroni_pg_effective_cache if patroni_pg_effective_cache else '%dMB' | format((ansible_facts['memtotal_mb'] * 3 / 4) | int) }}"
+    patroni_pg_work_mem: "{{ patroni_pg_work_mem if patroni_pg_work_mem else '%dMB' | format([ansible_facts['memtotal_mb'] / 64, 4] | max | int) }}"
+    patroni_pg_maint_mem: "{{ patroni_pg_maint_mem if patroni_pg_maint_mem else '%dMB' | format([ansible_facts['memtotal_mb'] / 8, 2048] | min | int) }}"
   when: patroni_action == 'provision'
 
 - name: Detect VIP interface
@@ -140,13 +151,13 @@
 - name: Validate PG version matches image
   ansible.builtin.assert:
     that:
-      - patroni_image is search('pg-?' ~ postgresql_version | string)
+      - patroni_image is search('pg-?' ~ patroni_postgresql_version | string)
     fail_msg: >-
-      PGVERSION={{ postgresql_version }} does not match PATRONI_IMAGE={{ patroni_image }}.
+      PGVERSION={{ patroni_postgresql_version }} does not match PATRONI_IMAGE={{ patroni_image }}.
       Continuing would risk schema-incompatible upgrades. Either pin
-      postgresql_version to the version baked into the image, or pick an
+      patroni_postgresql_version to the version baked into the image, or pick an
       image tag that matches the requested PGVERSION.
-    success_msg: "PGVERSION={{ postgresql_version }} matches image"
+    success_msg: "PGVERSION={{ patroni_postgresql_version }} matches image"
   when: patroni_action == 'provision'
 
 - name: "Run engine-specific preflight — engine={{ patroni_container_engine }}"
@@ -190,10 +201,16 @@
   ansible.builtin.include_tasks: shared/walg_pg_role.yml
   when:
     - patroni_action == 'provision'
-    - walg_enabled
+    - patroni_walg_enabled
 
 - name: Reconcile WAL archiving config in DCS (idempotent, both directions)
   ansible.builtin.include_tasks: shared/reconcile_archiving.yml
+  when: patroni_action == 'provision'
+
+# Same bridge for max_connections: bootstrap.dcs only seeds at first init, so
+# without this the variable would do nothing on an existing cluster.
+- name: Reconcile PostgreSQL parameters in DCS (max_connections)
+  ansible.builtin.include_tasks: shared/reconcile_pg_parameters.yml
   when: patroni_action == 'provision'
 
 # Keep bootstrap.dcs.standby_cluster in sync post-bootstrap (it only seeds at

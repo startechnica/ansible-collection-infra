@@ -2,7 +2,7 @@
 # etcd cluster member. The patroni stack is built around
 # Network=host on docker too (see compose/docker-compose.yml.j2), so
 # this Quadlet keeps the same model: no NAT, no publish-port, the
-# member binds directly on host:etcd_client_port and host:etcd_peer_port.
+# member binds directly on host:patroni_etcd_client_port and host:patroni_etcd_peer_port.
 [Unit]
 Description=etcd cluster member ({{ patroni_scope }})
 Wants=network-online.target
@@ -10,36 +10,36 @@ After=network-online.target
 
 [Container]
 ContainerName=etcd
-Image={{ etcd_image }}
-User={{ etcd_uid }}
-Group={{ etcd_gid }}
+Image={{ patroni_etcd_image }}
+User={{ patroni_etcd_uid }}
+Group={{ patroni_etcd_gid }}
 Network=host
 
 Exec=etcd \
   --name=etcd-{{ node_ip }} \
   --data-dir=/etcd-data \
-  --listen-client-urls=https://0.0.0.0:{{ etcd_client_port }} \
-  --advertise-client-urls=https://{{ node_ip }}:{{ etcd_client_port }} \
+  --listen-client-urls=https://0.0.0.0:{{ patroni_etcd_client_port }} \
+  --advertise-client-urls=https://{{ node_ip }}:{{ patroni_etcd_client_port }} \
   --cert-file=/etc/certs/etcd-server.crt \
   --key-file=/etc/certs/etcd-server.key \
   --trusted-ca-file=/etc/certs/ca.crt \
   --client-cert-auth=true \
-  --listen-peer-urls=https://0.0.0.0:{{ etcd_peer_port }} \
-  --initial-advertise-peer-urls=https://{{ node_ip }}:{{ etcd_peer_port }} \
+  --listen-peer-urls=https://0.0.0.0:{{ patroni_etcd_peer_port }} \
+  --initial-advertise-peer-urls=https://{{ node_ip }}:{{ patroni_etcd_peer_port }} \
   --peer-cert-file=/etc/certs/etcd-peer.crt \
   --peer-key-file=/etc/certs/etcd-peer.key \
   --peer-trusted-ca-file=/etc/certs/ca.crt \
   --peer-client-cert-auth=true \
-  --initial-cluster={% for ip in node_ips %}etcd-{{ ip }}=https://{{ ip }}:{{ etcd_peer_port }}{% if not loop.last %},{% endif %}{% endfor %} \
+  --initial-cluster={% for ip in node_ips %}etcd-{{ ip }}=https://{{ ip }}:{{ patroni_etcd_peer_port }}{% if not loop.last %},{% endif %}{% endfor %} \
   --initial-cluster-state={{ etcd_cluster_state }} \
   --initial-cluster-token={{ patroni_scope }}
 
-Volume={{ etcd_data_dir }}:/etcd-data:Z
-Volume={{ etcd_certs_dir }}:/etc/certs:ro,Z
+Volume={{ patroni_etcd_data_dir }}:/etcd-data:Z
+Volume={{ patroni_etcd_certs_dir }}:/etc/certs:ro,Z
 
 # Most strongly protected container in the stack: losing the DCS makes Patroni
-# demote the primary cluster-wide. See etcd_oom_score_adj in defaults.
-PodmanArgs=--oom-score-adj={{ etcd_oom_score_adj }}
+# demote the primary cluster-wide. See patroni_etcd_oom_score_adj in defaults.
+PodmanArgs=--oom-score-adj={{ patroni_etcd_oom_score_adj }}
 
 LogDriver=journald
 

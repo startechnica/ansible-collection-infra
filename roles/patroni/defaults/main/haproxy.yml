@@ -2,18 +2,18 @@
 # Patroni role defaults: HAProxy (image, ports, health checks, timeouts).
 # The role loads every file in defaults/main/ (see tasks/export_vars.yml).
 
-haproxy_image: "docker.io/haproxy:3.3-alpine"
-haproxy_primary_port: 5432
-haproxy_replicas_port: 5433
+patroni_haproxy_image: "docker.io/haproxy:3.3-alpine"
+patroni_haproxy_primary_port: 5432
+patroni_haproxy_replicas_port: 5433
 # Pooler bypass straight to the Patroni leader's PostgreSQL (migrations, admin tooling).
-haproxy_direct_port: 5434
-haproxy_stats_port: 7000
-haproxy_dir: /opt/haproxy
+patroni_haproxy_direct_port: 5434
+patroni_haproxy_stats_port: 7000
+patroni_haproxy_dir: /opt/haproxy
 
 # HAProxy container UID/GID — official haproxy:* image uses haproxy:99.
 # Override if you switch to a different image (e.g. some forks use 1000).
-haproxy_uid: 99
-haproxy_gid: 99
+patroni_haproxy_uid: 99
+patroni_haproxy_gid: 99
 
 # HAProxy → Patroni REST API health-check tuning. These govern how quickly
 # HAProxy marks a backend down and (because of `on-marked-down
@@ -25,10 +25,10 @@ haproxy_gid: 99
 #                   (detection latency ≈ inter × fall)
 #   rise          — consecutive OK checks before a backend is back UP
 #   check_timeout — per-check timeout; a Patroni API slower than this fails
-haproxy_check_inter: "3s"
-haproxy_check_fall: 5
-haproxy_check_rise: 2
-haproxy_check_timeout: "10s"
+patroni_haproxy_check_inter: "3s"
+patroni_haproxy_check_fall: 5
+patroni_haproxy_check_rise: 2
+patroni_haproxy_check_timeout: "10s"
 
 # ── HAProxy connection caps ────────────────────────────────────────────
 # Two limits per listener. The FRONTEND cap bounds what HAProxy accepts on the
@@ -43,19 +43,21 @@ haproxy_check_timeout: "10s"
 #
 #   pg-primary / pg-replicas → PgBouncer. These are CLIENT connections to a
 #     pooler, which is what a pooler is for. The real ceiling is PgBouncer's
-#     own `max_client_conn` (1000 in templates/pgbouncer.ini.j2), so 1000 here
-#     lines up with it exactly. PgBouncer's server-side pool — not this cap —
-#     is what bounds real PostgreSQL backends.
+#     own `patroni_pgbouncer_max_client_conn`, so 1000 here lines up with it
+#     exactly. PgBouncer's server-side pool — not this cap — is what bounds
+#     real PostgreSQL backends.
 #
 #   pg-direct → PostgreSQL, bypassing the pooler. EVERY connection here is a
-#     real backend competing for max_connections (200 in patroni.yml.j2),
-#     against PgBouncer's pools at (default_pool_size + reserve_pool_size) per
-#     user/database pair plus Patroni, the exporter and WAL-G. Three app
-#     databases already put the pooler near that limit. This path is for
-#     migrations and admin tooling — low concurrency by design — and is held
-#     deliberately small so a runaway job cannot starve PgBouncer's pool and
-#     take the application down with it. Raise it only after checking what is
-#     actually free, and prefer raising max_connections with it.
+#     real backend competing for patroni_pg_max_connections, against
+#     PgBouncer's pools at (patroni_pgbouncer_default_pool_size +
+#     patroni_pgbouncer_reserve_pool_size) per user/database pair plus Patroni,
+#     the exporter and WAL-G. Three pairs already exceed that limit at the
+#     shipped defaults. This path is for migrations and admin tooling — low
+#     concurrency by design — and is held deliberately small so a runaway job
+#     cannot starve PgBouncer's pool and take the application down with it.
+#     This cap is one term in preflight's connection budget (passed as
+#     pg_conn_bypass), so raising it is checked against max_connections on the
+#     next run rather than discovered in production.
 patroni_haproxy_primary_maxconn: 1100
 patroni_haproxy_primary_server_maxconn: 1000
 patroni_haproxy_replicas_maxconn: 1100
@@ -98,19 +100,19 @@ patroni_haproxy_global_maxconn: 4000
 # leaked-but-live connections, not the primary reaper. Lower `tunnel` if you'd
 # rather bound session lifetime — raising client/server will not do it, since
 # tunnel supersedes them on the pg listeners.
-haproxy_client_timeout: "300s"
-haproxy_server_timeout: "300s"
-haproxy_connect_timeout: "10s"
-haproxy_tunnel_timeout: "24h"
+patroni_haproxy_client_timeout: "300s"
+patroni_haproxy_server_timeout: "300s"
+patroni_haproxy_connect_timeout: "10s"
+patroni_haproxy_tunnel_timeout: "24h"
 # Half-closed (FIN sent, peer hasn't closed back) connections. These override
 # `tunnel` once a connection is shut down in one direction, so they are what
 # actually bounds FIN_WAIT — without them a client that vanishes mid-session
 # (NAT drop, lossy link, hard kill) holds its slot for the full 24h. Keep them
-# well below haproxy_tunnel_timeout.
-haproxy_client_fin_timeout: "30s"
-haproxy_server_fin_timeout: "30s"
+# well below patroni_haproxy_tunnel_timeout.
+patroni_haproxy_client_fin_timeout: "30s"
+patroni_haproxy_server_fin_timeout: "30s"
 
 # Host-level OOM victim bias — on the client path, so protected, but less than
 # etcd/Patroni: a restart drops in-flight connections rather than costing
 # recovery or a failover. See patroni_oom_score_adj for the full ranking.
-haproxy_oom_score_adj: -300
+patroni_haproxy_oom_score_adj: -300

@@ -2,7 +2,7 @@
 # os_tuning.yml - Linux kernel and sysctl tuning for PostgreSQL / Patroni
 #
 # Variables used:
-#   postgresql_dir              – PostgreSQL data directory (used for I/O scheduler detection)
+#   patroni_postgresql_dir              – PostgreSQL data directory (used for I/O scheduler detection)
 #   ansible_facts['memtotal_mb'] – auto-gathered Ansible fact (total RAM in MiB)
 
 # ##############################################################################
@@ -65,12 +65,12 @@
           'net.ipv4.ip_nonlocal_bind': '1',
           'net.ipv4.ip_local_port_range': '1024 65535',
           'net.ipv4.ip_local_reserved_ports':
-            (([haproxy_primary_port, haproxy_replicas_port,
-               haproxy_direct_port, haproxy_stats_port,
-               pgbouncer_port,
-               patroni_api_port, postgresql_port,
-               etcd_client_port,
-               etcd_peer_port]
+            (([patroni_haproxy_primary_port, patroni_haproxy_replicas_port,
+               patroni_haproxy_direct_port, patroni_haproxy_stats_port,
+               patroni_pgbouncer_port,
+               patroni_api_port, patroni_postgresql_port,
+               patroni_etcd_client_port,
+               patroni_etcd_peer_port]
               | map('string') | list) | join(','))
         }
       }}
@@ -147,9 +147,9 @@
 ###############################################################################
 # 7. Auto-detect I/O scheduler (none for SSD, mq-deadline for HDD)
 ###############################################################################
-- name: Resolve block device for postgresql_dir
+- name: Resolve block device for patroni_postgresql_dir
   ansible.builtin.shell: |
-    DEV=$(df --output=source "{{ postgresql_dir }}" 2>/dev/null | tail -1)
+    DEV=$(df --output=source "{{ patroni_postgresql_dir }}" 2>/dev/null | tail -1)
     BDEV=$(lsblk -ndo PKNAME "${DEV}" 2>/dev/null || basename "${DEV}" | sed 's/[0-9]*$//')
     echo "${BDEV}"
   args:

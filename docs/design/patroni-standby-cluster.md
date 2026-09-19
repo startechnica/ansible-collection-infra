@@ -47,7 +47,7 @@ WAL-G plumbing is reusable, cert-gen machinery is present) but there are real
   diff → `patronictl edit-config --force --set` only when different. `standby_cluster`
   is DCS-only (seeds at bootstrap), so it needs the same treatment.
 - `roles/patroni/tasks/shared/_computed_vars.yml:7-40` — derives `node_ips`,
-  `walg_enabled`, etc. from `groups['patroni_nodes']`. Natural home for a resolved
+  `patroni_walg_enabled`, etc. from `groups['patroni_nodes']`. Natural home for a resolved
   `_standby_*` fact + early asserts.
 - `roles/patroni/tasks/{podman,docker}/_detect_leader.yml` — **hard-asserts exactly
   one `Role == 'Leader'`** (podman :23, :54). A standby cluster's top node is
@@ -56,7 +56,7 @@ WAL-G plumbing is reusable, cert-gen machinery is present) but there are real
   self-signed **per cluster**, generated on localhost (`patroni_local_certs_dir`) then
   pushed to nodes. Cross-cluster streaming TLS (`verify-ca`) fails because the standby
   trusts a different CA than the primary's server cert.
-- `roles/patroni/templates/walg.env.j2:9` — `WALG_S3_PREFIX=s3://{{ s3_bucket }}`
+- `roles/patroni/templates/walg.env.j2:9` — `WALG_S3_PREFIX=s3://{{ patroni_s3_bucket }}`
   (bucket root, **not** keyed by scope). A standby can wal-fetch the primary's archive
   only because there's no scope isolation — but the standby must point WAL-G at the
   **primary's** prefix, and two independent clusters sharing a bucket would collide.
@@ -82,12 +82,12 @@ Add a "Standby cluster" section (follow the `# ──` header + folded-descripti
 ```yaml
 patroni_standby_enabled: false            # master switch: this cluster is a standby
 patroni_standby_primary_host: ""          # remote primary IP/host to stream from
-patroni_standby_primary_port: 55432       # remote primary postgresql_port
+patroni_standby_primary_port: 55432       # remote primary patroni_postgresql_port
 patroni_standby_primary_slot: ""          # optional physical slot name on the primary
 patroni_standby_primary_sslmode: verify-ca  # verify-ca | require (see §6b)
 patroni_standby_create_replica_methods:   # order: try basebackup, fall back to WAL-G
   - basebackup
-patroni_standby_primary_walg_prefix: ""   # "" = same s3_bucket root as primary (§6)
+patroni_standby_primary_walg_prefix: ""   # "" = same patroni_s3_bucket root as primary (§6)
 patroni_shared_ca_dir: ""                 # "" = mint per-scope CA; set = reuse shared CA (§6a)
 patroni_replication_cidrs: []             # primary-side: extra replication pg_hba entries (§6)
 ```
@@ -112,7 +112,7 @@ Under `bootstrap.dcs` (sibling of `postgresql:`, ~line 27), add a gated block:
 {% for m in patroni_standby_create_replica_methods %}
         - {{ m }}
 {% endfor %}
-{% if walg_enabled %}
+{% if patroni_walg_enabled %}
       restore_command: "/opt/walg/wal-g wal-fetch %f %p"
 {% endif %}
 {% endif %}
@@ -125,7 +125,7 @@ Also:
   errors. Gate line 80 on `not patroni_standby_enabled`.
 - The standby's outbound stream honors `patroni_standby_primary_sslmode` (§6b).
 - Primary-side: add an optional `patroni_replication_cidrs` loop emitting
-  `hostssl replication replicator {{ cidr }} …` (mirrors `postgresql_admin_cidrs`),
+  `hostssl replication replicator {{ cidr }} …` (mirrors `patroni_postgresql_admin_cidrs`),
   so the primary's pg_hba admits remote standby IPs.
 
 ### 3. Post-bootstrap reconcile — new `roles/patroni/tasks/shared/reconcile_standby.yml`
@@ -170,11 +170,11 @@ text. Required, or reconcile/backup/status day-2 tasks break on any standby.
     same-controller.
   - **(b) scram + relaxed verify** — `patroni_standby_primary_sslmode` (`verify-ca`|`require`).
     With `require` the stream is encrypted but the primary's server cert is not CA-verified,
-    so no shared CA is needed; pair with `postgresql_replication_password` on both. Default
+    so no shared CA is needed; pair with `patroni_postgresql_replication_password` on both. Default
     the standby stream to `verify-ca`; operator relaxes to `require` when clusters can't
     share a CA.
 - **Replication credentials** — the standby must be handed the **same**
-  `postgresql_replication_password` (or replicator cert) as the primary. Document; ensure
+  `patroni_postgresql_replication_password` (or replicator cert) as the primary. Document; ensure
   the var flows into the standby_cluster stream auth.
 - **Primary-side pg_hba + firewall** — the **primary** must allow the standby's IP for
   `replication`. `patroni_replication_cidrs` covers pg_hba (§2). Document adding the
@@ -182,7 +182,7 @@ text. Required, or reconcile/backup/status day-2 tasks break on any standby.
   for `postgresql-direct` (port 55432).
 - **WAL-G prefix** — `walg.env.j2` resolves `WALG_S3_PREFIX` by precedence: the standby's
   `patroni_standby_primary_walg_prefix` (read the primary's archive) → the cluster's own
-  `patroni_walg_s3_prefix` (per-cluster write path) → `s3://{{ s3_bucket }}` (bucket root,
+  `patroni_walg_s3_prefix` (per-cluster write path) → `s3://{{ patroni_s3_bucket }}` (bucket root,
   back-compat). This closes the root-collision gap: independent clusters sharing a bucket set
   distinct `patroni_walg_s3_prefix` values; a standby reading a namespaced primary sets
   `patroni_standby_primary_walg_prefix` to match.
@@ -194,7 +194,7 @@ Add asserts (in `_computed_vars.yml` or a small `validate_standby.yml`):
 - `patroni_standby_enabled` ⇒ `patroni_standby_primary_host` non-empty.
 - `patroni_standby_enabled` ⇒ `patroni_scope` **differs** from the primary's scope (a
   standby can't self-reference; document that the operator sets a distinct scope).
-- Warn if `patroni_standby_enabled` and neither streaming reachability nor `walg_enabled`
+- Warn if `patroni_standby_enabled` and neither streaming reachability nor `patroni_walg_enabled`
   — the standby would have no data source.
 
 ### 8. Docs — `roles/patroni/README.md`, `README.md`, `CHANGELOG.md`

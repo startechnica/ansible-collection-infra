@@ -3,35 +3,35 @@
 # logging, directories, memory, extensions and databases).
 # The role loads every file in defaults/main/ (see tasks/export_vars.yml).
 
-postgresql_version: 18
-postgresql_port: 55432
+patroni_postgresql_version: 18
+patroni_postgresql_port: 55432
 
 # Passwords (auto-generated if empty)
-postgresql_postgres_password: ""
-postgresql_replication_password: "" # empty = TLS cert auth for replication
+patroni_postgresql_postgres_password: ""
+patroni_postgresql_replication_password: "" # empty = TLS cert auth for replication
 
-# Direct PostgreSQL access (port {{ postgresql_port }}) — list of CIDRs allowed
+# Direct PostgreSQL access (port {{ patroni_postgresql_port }}) — list of CIDRs allowed
 # in pg_hba.conf in addition to: localhost (PgBouncer on the same node) and
 # the cluster's own member nodes (Patroni coordination + replication).
 #
 # For day-to-day app traffic, leave this empty — clients should hit the VIP
 # via HAProxy → PgBouncer. Add CIDRs only when you need direct psql/pgcli
 # from a jump host or admin VPN. Example:
-#   postgresql_admin_cidrs:
+#   patroni_postgresql_admin_cidrs:
 #     - 10.99.0.0/24    # ops VPN
-postgresql_admin_cidrs: []
+patroni_postgresql_admin_cidrs: []
 
 # PostgreSQL logging: "file", "stdout", or "both"
-postgresql_log_destination: "stdout"
+patroni_postgresql_log_destination: "stdout"
 
 # Host directories
-postgresql_dir: /opt/postgresql
-postgresql_root_dir: "{{ postgresql_dir }}/pgroot"
-postgresql_log_dir: "{{ postgresql_dir }}/pg_log"
+patroni_postgresql_dir: /opt/postgresql
+patroni_postgresql_root_dir: "{{ patroni_postgresql_dir }}/pgroot"
+patroni_postgresql_log_dir: "{{ patroni_postgresql_dir }}/pg_log"
 
 # Backup & WAL archiving
-patroni_backup_dir: "{{ postgresql_dir }}/backups"
-wal_archive_dir: "{{ postgresql_dir }}/wal_archive"
+patroni_backup_dir: "{{ patroni_postgresql_dir }}/backups"
+patroni_wal_archive_dir: "{{ patroni_postgresql_dir }}/wal_archive"
 
 # PostgreSQL memory (auto-calculated if empty)
 # Everything this role runs on the node BESIDES PostgreSQL's shared_buffers:
@@ -43,7 +43,7 @@ wal_archive_dir: "{{ postgresql_dir }}/wal_archive"
 # (vars/main/memory.yml), never enforced.
 #
 # Deliberately flat, and deliberately not conditional on
-# postgres_exporter_enabled: it lets the whole budget depend on THIS defaults
+# patroni_postgres_exporter_enabled: it lets the whole budget depend on THIS defaults
 # file alone, which is what allows another role to import it with a single
 # `defaults_from` and none of patroni's other topics. Cost of that choice is
 # over-budgeting by ~128MB when the exporter is off — the conservative
@@ -57,10 +57,53 @@ patroni_stack_overhead_mb: 640
 # role needs "everything except me", so one shared figure would double-count.
 patroni_mem_reserved_mb: 0
 
-pg_shared_buffers: ""
-pg_effective_cache: ""
-pg_work_mem: ""
-pg_maint_mem: ""
+patroni_pg_shared_buffers: ""
+patroni_pg_effective_cache: ""
+patroni_pg_work_mem: ""
+patroni_pg_maint_mem: ""
+
+# ── PostgreSQL connection budget ───────────────────────────────────────
+# max_connections was hardcoded at 200 in templates/patroni.yml.j2; this is the
+# same number, now a variable so preflight's pg_connections check can compare
+# the demand against it instead of against a literal in a template.
+#
+# IMPORTANT — this only takes effect at BOOTSTRAP on its own.
+# max_connections lives in bootstrap.dcs.postgresql.parameters, which Patroni
+# reads once at first cluster init; after that the runtime value lives in DCS
+# (etcd) and re-rendering patroni.yml does nothing. shared/reconcile_pg_parameters.yml
+# bridges that gap the same way reconcile_archiving.yml does for
+# archive_command: it pushes this value to DCS via `patronictl edit-config`
+# when the two differ. Two consequences worth knowing:
+#   - max_connections is a postmaster parameter, so a change leaves every member
+#     in pending_restart. The reconcile task reports that; it does NOT restart
+#     anything, because a rolling restart of a PostgreSQL cluster is an
+#     operator's decision, not a side effect of a provision run.
+#   - this value now WINS over an out-of-band `patronictl edit-config`. If you
+#     have hand-tuned max_connections on a live cluster, set it here to match
+#     before the next run or it will be pushed back down.
+#
+# Raising it is not free: each connection is a backend process with its own
+# work_mem allocations, so max_connections × work_mem is part of the memory
+# budget in vars/main/memory.yml, not just a number.
+patroni_pg_max_connections: 200
+
+# Backends consumed on the primary by everything that is NOT a PgBouncer pool
+# or the pooler-bypass path. Default breakdown:
+#     3  superuser_reserved_connections (PostgreSQL's own default — carved out
+#        of max_connections, so unavailable to normal users)
+#     1  Patroni's monitoring connection to its local PostgreSQL
+#     2  postgres_exporter
+#     1  WAL-G / pg_basebackup coordination (replication streams come from
+#        max_wal_senders, not max_connections)
+#     5  this role's own postgresql_* tasks during a provision run
+#     8  headroom for psql/pgcli sessions and one-off jobs
+# Only ever used by preflight's connection budget; nothing enforces it.
+patroni_pg_conn_overhead: 20
+
+# Fail the run instead of warning when the connection budget exceeds
+# patroni_pg_max_connections. Off by default for the same reason as
+# container_mem_strict: an already over-committed cluster must stay manageable.
+patroni_pg_conn_strict: false
 
 # PostgreSQL extensions to preload + CREATE EXTENSION on each managed DB.
 #

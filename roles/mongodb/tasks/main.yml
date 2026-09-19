@@ -107,7 +107,7 @@
 #
 # Narrow on purpose: `defaults_from` loads ONLY patroni's postgresql.yml, which
 # is the single file the budget depends on. Importing all of patroni's defaults
-# would also bring tls_key_curve, which patroni defaults to secp384r1 and this
+# would also bring mongodb_tls_key_curve, which patroni defaults to secp384r1 and this
 # role to secp256r1 — silently changing the curve of every certificate this role
 # then generates. `vars_from` likewise loads only the memory vars.
 #
@@ -132,8 +132,8 @@
     # PBM renders one agent per data-bearing node: shard, plus config when
     # sharded (see tasks/pbm.yml :: _pbm_agents).
     container_mem_request_mb: >-
-      {{ (mongod_mem_limit_mb | int)
-         + ((configsvr_mem_limit_mb | int) + (mongos_mem_limit_mb | int)
+      {{ (mongodb_mongod_mem_limit_mb | int)
+         + ((mongodb_configsvr_mem_limit_mb | int) + (mongodb_mongos_mem_limit_mb | int)
             if mongodb_cluster_type == 'sharded' else 0)
          + ((mongodb_backup_pbm_mem_limit_mb | int)
             * (2 if mongodb_cluster_type == 'sharded' else 1)

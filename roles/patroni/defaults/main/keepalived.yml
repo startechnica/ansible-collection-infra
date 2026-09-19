@@ -3,8 +3,8 @@
 # (patroni_vip_engine: keepalived).
 # The role loads every file in defaults/main/ (see tasks/export_vars.yml).
 
-keepalived_dir: /opt/keepalived
+patroni_keepalived_dir: /opt/keepalived
 
 # Host-level OOM victim bias — holds the VIP, so a kill moves client traffic to
 # another node. Tiny footprint; protect it. See patroni_oom_score_adj.
-keepalived_oom_score_adj: -500
+patroni_keepalived_oom_score_adj: -500

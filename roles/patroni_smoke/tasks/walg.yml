@@ -13,7 +13,7 @@
   run_once: true
   when:
     - patroni_smoke_check_walg | bool
-    - walg_enabled | default(false) | bool
+    - patroni_walg_enabled | default(false) | bool
 
 - name: "W4. walg-cron.timer active"
   ansible.builtin.systemd:
@@ -23,4 +23,4 @@
   failed_when: false
   when:
     - patroni_smoke_check_walg | bool
-    - walg_enabled | default(false) | bool
+    - patroni_walg_enabled | default(false) | bool

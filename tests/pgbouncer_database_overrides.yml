@@ -9,7 +9,7 @@
 # failure surfaced anywhere.
 #
 # Run from collection root:
-#   ansible-playbook tests/pgbouncer_database_overrides.yml
+#   ansible-playbook tests/patroni_pgbouncer_database_overrides.yml
 
 - name: Render PgBouncer per-database overrides
   hosts: localhost
@@ -36,9 +36,9 @@
       ansible.builtin.assert:
         that:
           # Empty default keeps existing deployments byte-identical.
-          - pgbouncer_database_overrides == []
+          - patroni_pgbouncer_database_overrides == []
           # Session must stay the global fallback — see defaults/main/pgbouncer.yml.
-          - pgbouncer_pool_mode == 'session'
+          - patroni_pgbouncer_pool_mode == 'session'
 
     - name: Recreate render directory
       ansible.builtin.file:
@@ -59,7 +59,7 @@
         dest: "{{ _pgb_render_dir }}/gitlab.ini"
         mode: "0640"
       vars:
-        pgbouncer_database_overrides: "{{ _gitlab_overrides }}"
+        patroni_pgbouncer_database_overrides: "{{ _gitlab_overrides }}"
 
     - name: Read rendered configs
       ansible.builtin.slurp:
@@ -102,7 +102,7 @@
           - "'auth_user=pgbouncer' in _main"
           # auth_dbname must survive on every line or user_search() breaks.
           - "'auth_dbname=postgres' in _main"
-          - "'port=' ~ postgresql_port in _main"
+          - "'port=' ~ patroni_postgresql_port in _main"
           # No standalone dbname= when the key is already the physical
           # database. Matched per-token: auth_dbname= contains "dbname=" as a
           # substring, so a naive `not in` check passes trivially.
@@ -123,7 +123,7 @@
       ansible.builtin.assert:
         that:
           # Praefect relies on this: no pool_mode on `*` means it inherits
-          # pgbouncer_pool_mode (session), which is what LISTEN/NOTIFY needs.
+          # patroni_pgbouncer_pool_mode (session), which is what LISTEN/NOTIFY needs.
           - _wildcard.split() | select('match', '^pool_mode=') | list | length == 0
           - "'auth_dbname=postgres' in _wildcard"
       vars:

@@ -29,13 +29,13 @@
         {%- set _ = ips.append(hostvars[h].node_ip | default(hostvars[h].ansible_host)) -%}
       {%- endfor -%}
       {{ ips }}
-    s3_enabled: "{{ s3_bucket | length > 0 }}"
+    s3_enabled: "{{ patroni_s3_bucket | length > 0 }}"
     # Does the SELECTED WAL-G backend have a bucket? etcd snapshots stay on S3
     # regardless, so s3_enabled above is deliberately separate from this.
     walg_storage_configured: >-
-      {{ (walg_gcs_bucket | default('') | length > 0)
-         if (walg_storage_type | default('s3')) == 'gcs'
-         else (s3_bucket | length > 0) }}
+      {{ (patroni_walg_gcs_bucket | default('') | length > 0)
+         if (patroni_walg_storage_type | default('s3')) == 'gcs'
+         else (patroni_s3_bucket | length > 0) }}
     patroni_vip_enabled: "{{ patroni_vip_address | length > 0 }}"
     use_vip_manager: >-
       {{ (patroni_vip_address | length > 0)
@@ -43,10 +43,10 @@
 
 # Separate task: this reads walg_storage_configured, set above. set_fact does
 # not guarantee intra-task ordering, so it can't live in the same dict.
-# walg_enabled is the user-facing toggle (defaults true); it only takes effect
-# when the selected backend has a bucket. Set walg_enabled=false in inventory
+# patroni_walg_enabled is the user-facing toggle (defaults true); it only takes effect
+# when the selected backend has a bucket. Set patroni_walg_enabled=false in inventory
 # to keep S3 for etcd-snapshots only and skip WAL-G entirely.
-- name: Resolve effective walg_enabled
+- name: Resolve effective patroni_walg_enabled
   ansible.builtin.set_fact:
-    walg_enabled: >-
-      {{ (walg_storage_configured | bool) and (walg_enabled | bool) }}
+    patroni_walg_enabled: >-
+      {{ (walg_storage_configured | bool) and (patroni_walg_enabled | bool) }}

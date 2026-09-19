@@ -88,7 +88,7 @@
     state: absent
     force: true
   loop:
-    - "localhost/vip-manager:v{{ vip_manager_version }}"
+    - "localhost/vip-manager:v{{ patroni_vip_manager_version }}"
     - "localhost/keepalived:latest"
   loop_control:
     label: "{{ item }}"

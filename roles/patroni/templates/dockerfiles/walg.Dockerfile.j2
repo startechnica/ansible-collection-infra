@@ -10,7 +10,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends curl ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
     && curl -fsSL -o /tmp/wal-g.tar.gz \
-        https://github.com/wal-g/wal-g/releases/download/{{ walg_version }}/wal-g-pg-24.04-amd64.tar.gz \
+        https://github.com/wal-g/wal-g/releases/download/{{ patroni_walg_version }}/wal-g-pg-24.04-amd64.tar.gz \
     && tar -xzf /tmp/wal-g.tar.gz -C /tmp/ \
     && install -m 0755 /tmp/wal-g-pg-24.04-amd64 /usr/local/bin/wal-g
 

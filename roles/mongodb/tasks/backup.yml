@@ -19,7 +19,7 @@
         gid: "{{ mongodb_gid }}"
         retain_days: "{{ mongodb_backup_retain_days }}"
         oplog: "{{ mongodb_backup_pitr_enabled }}"
-        tls: "{{ mongos_tls_mode == 'requireTLS' }}"
+        tls: "{{ mongodb_mongos_tls_mode == 'requireTLS' }}"
         tls_host_ca_file: "{{ mongodb_tls_dir }}/ca.pem"
       register: _backup
       run_once: true
@@ -34,15 +34,15 @@
     - name: Validate S3 upload configuration
       ansible.builtin.assert:
         that:
-          - s3_bucket | length > 0
-          - s3_endpoint | length > 0
-          - s3_access_key | length > 0
-          - s3_secret_key | length > 0
+          - mongodb_s3_bucket | length > 0
+          - mongodb_s3_endpoint | length > 0
+          - mongodb_s3_access_key | length > 0
+          - mongodb_s3_secret_key | length > 0
         fail_msg: >
-          mongodb_backup_mode is 's3' but one of {s3_bucket, s3_endpoint,
-          s3_access_key, s3_secret_key} is empty. Fill all four, or set
+          mongodb_backup_mode is 's3' but one of {mongodb_s3_bucket, mongodb_s3_endpoint,
+          mongodb_s3_access_key, mongodb_s3_secret_key} is empty. Fill all four, or set
           mongodb_backup_mode: local to keep backups on the node only.
-        success_msg: "S3 upload target: {{ s3_endpoint }} bucket={{ s3_bucket }}"
+        success_msg: "S3 upload target: {{ mongodb_s3_endpoint }} bucket={{ mongodb_s3_bucket }}"
       when: mongodb_backup_mode == 's3'
       run_once: true
 

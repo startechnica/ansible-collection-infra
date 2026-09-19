@@ -2,25 +2,25 @@
 # Patroni role defaults: etcd, the DCS that holds Patroni's cluster state.
 # The role loads every file in defaults/main/ (see tasks/export_vars.yml).
 
-etcd_image: "gcr.io/etcd-development/etcd:v3.6.10"
-etcd_client_port: 2379
-etcd_peer_port: 2380
-etcd_uid: 42782
-etcd_gid: 42782
-etcd_dir: /opt/etcd
-etcd_data_dir: "{{ etcd_dir }}/data"
+patroni_etcd_image: "gcr.io/etcd-development/etcd:v3.6.10"
+patroni_etcd_client_port: 2379
+patroni_etcd_peer_port: 2380
+patroni_etcd_uid: 42782
+patroni_etcd_gid: 42782
+patroni_etcd_dir: /opt/etcd
+patroni_etcd_data_dir: "{{ patroni_etcd_dir }}/data"
 
 # etcd snapshots — driven by a systemd timer (no cron dependency; FCOS
-# doesn't ship crond). `etcd_snapshot_schedule` is a systemd OnCalendar
+# doesn't ship crond). `patroni_etcd_snapshot_schedule` is a systemd OnCalendar
 # expression; see `man systemd.time` (section "CALENDAR EVENTS"). Examples:
 #   "00,06,12,18:00:00"     every 6h on the hour (default)
 #   "*-*-* 02:00:00"        daily at 02:00
 #   "Sun *-*-* 03:00:00"    weekly Sunday 03:00
 #   "*:0/15"                every 15 minutes
 # Set to an empty string to disable scheduled snapshots entirely.
-etcd_snapshot_schedule: "00,06,12,18:00:00"
-etcd_snapshot_dir: "{{ etcd_dir }}/snapshots"
-etcd_snapshot_retain: 7
+patroni_etcd_snapshot_schedule: "00,06,12,18:00:00"
+patroni_etcd_snapshot_dir: "{{ patroni_etcd_dir }}/snapshots"
+patroni_etcd_snapshot_retain: 7
 
 # S3 key prefix for uploaded etcd snapshots. Defaults to a scope-namespaced
 # path ("patroni-etcd-<patroni_scope>") so multiple Patroni clusters can share
@@ -32,4 +32,4 @@ patroni_etcd_s3_prefix: "patroni-etcd-{{ patroni_scope }}"
 # stack: losing the DCS makes Patroni demote the primary cluster-wide, so etcd
 # must outlive everything else on the node. See patroni_oom_score_adj for the
 # full ranking.
-etcd_oom_score_adj: -900
+patroni_etcd_oom_score_adj: -900

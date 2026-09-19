@@ -18,11 +18,11 @@ AddCapability=NET_ADMIN
 AddCapability=NET_BROADCAST
 AddCapability=NET_RAW
 
-Volume={{ keepalived_dir }}/keepalived.conf:/etc/keepalived/keepalived.conf:ro,Z
-Volume={{ haproxy_certs_dir }}:/etc/certs:ro,z
+Volume={{ patroni_keepalived_dir }}/keepalived.conf:/etc/keepalived/keepalived.conf:ro,Z
+Volume={{ patroni_haproxy_certs_dir }}:/etc/certs:ro,z
 
-# Holds the VIP — a kill moves client traffic. See keepalived_oom_score_adj.
-PodmanArgs=--oom-score-adj={{ keepalived_oom_score_adj }}
+# Holds the VIP — a kill moves client traffic. See patroni_keepalived_oom_score_adj.
+PodmanArgs=--oom-score-adj={{ patroni_keepalived_oom_score_adj }}
 
 LogDriver=journald
 
