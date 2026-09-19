@@ -116,7 +116,7 @@ must switch in the same change that deletes the resolver (see Phase 5).
 | `roles/mongodb/defaults/main.yml` | 41 | `container_engine \| default('podman')` | `_resolved_container_engine` |
 | `roles/mongodb/tasks/main.yml` | top | — | import common `export_vars` |
 | `roles/mongodb/tasks/export_vars.yml` | — | task-free | import common `export_vars`, so `mongodb_smoke` (reads `mongodb_container_engine`) still resolves |
-| `roles/patroni/defaults/main.yml` | 95 | `container_engine \| default('podman')` | `_resolved_container_engine` |
+| `roles/patroni/defaults/main/patroni.yml` | 36 | `container_engine \| default('podman')` | `_resolved_container_engine` |
 | `roles/patroni/tasks/main.yml` | top | — | import common `export_vars` |
 | `roles/patroni/tasks/export_vars.yml` | — | task-free | import common `export_vars` (for `patroni_smoke`) |
 | `roles/patroni/handlers/main.yml` | 114, 121 | `container_engine \| default('docker')` | `patroni_container_engine`. Today these ignore a per-role override and fall back to `docker` |

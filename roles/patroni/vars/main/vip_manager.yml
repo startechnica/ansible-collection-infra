@@ -1,0 +1,12 @@
+---
+# Patroni role vars: vip-manager (computed; see the header of services.yml).
+# The role loads every file in vars/main/.
+
+# Auto-detected vip-manager release asset suffix.
+# vip-manager publishes binaries as `vip-manager_<v>_Linux_<arch>.tar.gz`
+# where <arch> is `x86_64` / `arm64` — Linux reports `aarch64`, vip-manager
+# names it `arm64`. All other archs pass through unchanged.
+# ref: https://github.com/cybertec-postgresql/vip-manager/releases
+_vip_manager_arch: >-
+  {{ 'arm64' if (ansible_facts['architecture'] | default('x86_64')) == 'aarch64'
+     else (ansible_facts['architecture'] | default('x86_64')) }}

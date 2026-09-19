@@ -445,13 +445,16 @@ Inputs are validated by [meta/argument_specs.yml](meta/argument_specs.yml). High
 | TLS | `tls_key_type`, `tls_key_curve`, `tls_signature_digest`, `tls_cert_days` |
 | Client TLS | `pgbouncer_client_tls_sslmode` (`prefer`; `require` forces TLS), `pgbouncer_client_tls_protocols`, `pgbouncer_client_tls_ciphers` |
 | Pooling | `pgbouncer_pool_mode` (`session`), `pgbouncer_database_overrides` (per-database pool modes) |
+| HAProxy caps | `patroni_haproxy_{primary,replicas,direct}_maxconn` (frontend), `patroni_haproxy_{primary,replicas,direct}_server_maxconn` (per-server), `patroni_haproxy_global_maxconn`. Keep each frontend above its server cap, and note `pg-direct` is deliberately ~50x smaller than the pooled listeners: it bypasses PgBouncer, so every connection is a real PostgreSQL backend against `max_connections` |
 | HAProxy timeouts | `haproxy_tunnel_timeout` (24h — governs established sessions), `haproxy_client_timeout` / `haproxy_server_timeout` (300s — backstop; superseded by `tunnel` on the pg listeners), `haproxy_connect_timeout` (bounds backend connection setup), `haproxy_client_fin_timeout` / `haproxy_server_fin_timeout` (override `tunnel` for half-closed connections) |
 | Extensions | `patroni_extensions` |
 | App DBs | `patroni_databases` (list of {name, owner, users[{name, password, roles, grants}]}) |
 | Backup | `patroni_backup_dir`, `wal_archive_dir`, `walg_retention`, `walg_storage_type` (`s3`\|`gcs`) |
 | S3 | `s3_bucket`, `s3_endpoint`, `s3_access_key`, `s3_secret_key`, `patroni_walg_s3_prefix` |
 | GCS | `walg_gcs_bucket`, `walg_gcs_service_account_json` (vault the service-account key), `walg_gcs_prefix` |
-| Memory (auto) | `pg_shared_buffers`, `pg_effective_cache`, `pg_work_mem`, `pg_maint_mem` |
+| Memory (auto) | `pg_shared_buffers`, `pg_effective_cache`, `pg_work_mem`, `pg_maint_mem` — all derived from **total host RAM** as if PostgreSQL were the only consumer; set them explicitly on a node shared with another memory-hungry stack |
+| Memory budget | `patroni_mem_reserved_mb` (what another stack on the same node commits; also arms the warning that fires when a `pg_*` setting is still auto-sized on such a host), `patroni_stack_overhead_mb` (640 — everything besides `shared_buffers`: etcd, patroni, haproxy, pgbouncer, VIP manager, exporter), `postgres_exporter_mem_limit_mb`. The computed total is exported as `patroni_mem_request_mb` — other roles read it with `tasks_from: export_vars`, `defaults_from: main/postgresql.yml`, `vars_from: main/memory.yml` |
+| OOM victim order | `etcd_oom_score_adj` (-900), `patroni_oom_score_adj` (-500), `keepalived_oom_score_adj` / `vip_manager_oom_score_adj` (-500), `haproxy_oom_score_adj` / `pgbouncer_oom_score_adj` (-300), `postgres_exporter_oom_score_adj` (1000), plus `patroni_pg_backend_oom_adjust_enabled` / `patroni_pg_backend_oom_score_adj` so the postmaster survives and a backend is killed instead |
 
 ## Artifacts (controller-side)
 

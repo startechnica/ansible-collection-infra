@@ -1,0 +1,12 @@
+---
+# Patroni role defaults: S3-compatible storage, shared by WAL-G
+# (walg_storage_type: s3) and etcd snapshot uploads.
+# The role loads every file in defaults/main/ (see tasks/export_vars.yml).
+
+# S3/MinIO storage (set s3_bucket to enable WAL-G + etcd snapshot upload)
+s3_bucket: ""
+s3_endpoint: ""
+s3_access_key: ""
+s3_secret_key: ""
+s3_region: "us-east-1"
+s3_force_path_style: "true"

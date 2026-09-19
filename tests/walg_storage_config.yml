@@ -11,12 +11,17 @@
   hosts: localhost
   gather_facts: false
   connection: local
-  vars_files:
-    - ../roles/patroni/defaults/main.yml
   vars:
     _walg_render_dir: /tmp/walg-storage-config-test
 
   tasks:
+    # Loads every file in patroni's defaults/main/ and vars/main/, the same
+    # variables the role sees. Runs no tasks.
+    - name: Import patroni role variables
+      ansible.builtin.import_role:
+        name: patroni
+        tasks_from: export_vars
+
     - name: Set WAL-G storage test inputs
       ansible.builtin.set_fact:
         patroni_scope: test-pg

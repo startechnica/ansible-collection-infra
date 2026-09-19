@@ -1,0 +1,42 @@
+---
+# Container engine binary on PATH. Looks up `container_engine` with
+# `command -v` and fails, naming the engine, when the binary isn't on PATH for
+# the user Ansible runs as. main.yml runs it before the docker / podman checks,
+# so a missing CLI gets this message rather than a less direct failure later
+# (on docker: "Docker Compose plugin not found").
+#
+# A check only; it publishes nothing. Roles that need the engine's absolute
+# path (mongodb's pbm.yml, for a systemd ExecStart=) look it up themselves, so
+# they work without preflight.
+#
+# Run it on its own with:
+#   - ansible.builtin.include_role:
+#       name: preflight
+#       tasks_from: container_engine_bin
+
+- name: Check the container engine binary is on PATH
+  vars:
+    _engine: "{{ container_engine | default('docker') }}"
+  block:
+    # `command -v` is a shell builtin (`which` isn't installed everywhere). The
+    # engine name goes in through the environment, not into the command.
+    - name: Find the container engine on PATH
+      ansible.builtin.shell: command -v "$ENGINE"
+      environment:
+        ENGINE: "{{ _engine }}"
+      register: _container_engine_lookup
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Assert the container engine binary was found
+      ansible.builtin.assert:
+        that:
+          - _container_engine_lookup.rc == 0
+          - _container_engine_lookup.stdout is match('/')
+        fail_msg: >-
+          `{{ _engine }}` is not on PATH for the user Ansible runs as on this
+          host (root under become). Install {{ _engine }}, or put it on that
+          user's PATH.
+        success_msg: "{{ _engine }}: {{ _container_engine_lookup.stdout }}"
+        quiet: true

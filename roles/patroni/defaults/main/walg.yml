@@ -1,0 +1,95 @@
+---
+# Patroni role defaults: WAL-G, WAL archiving and base backups to object
+# storage.
+# The role loads every file in defaults/main/ (see tasks/export_vars.yml).
+
+# WAL-G (PostgreSQL WAL archiving + base backups to object storage).
+# Defaults to enabled, but only takes effect when the selected backend has
+# a bucket configured: s3_bucket for walg_storage_type=s3, walg_gcs_bucket
+# for walg_storage_type=gcs. Set to false in inventory to keep S3 for
+# etcd-snapshot uploads only while skipping WAL-G entirely (no walg.env, no
+# walg-init container, no walg-cron timer, no postgres archive_command).
+walg_enabled: true
+
+# WAL-G is built locally from the official GitHub release binary
+# (no upstream container image is published — see issue wal-g/wal-g#473).
+# The Dockerfile lives in templates/dockerfiles/walg.Dockerfile.j2 and
+# pulls the postgres-flavor binary for v{{ walg_version }}. Override
+# walg_version to bump; walg_image follows it via the v<ver> tag.
+# NOTE: the Ubuntu binary release is amd64-only — aarch64 hosts need
+# a different asset name; not supported by this default.
+walg_version: "v3.0.8"
+walg_image: "localhost/wal-g:pg-{{ walg_version }}"
+
+# Build wal-g locally from the bundled Dockerfile (default) vs. pull a
+# prebuilt image. Set walg_build_local=false in inventory and override
+# walg_image to a public/mirrored reference (e.g. ghcr.io/yourorg/wal-g:pg-v3.0.8)
+# to skip the build and pull instead.
+walg_build_local: true
+
+walg_dir: /opt/walg
+
+walg_retention: 7
+walg_compression: "lz4"
+
+# WAL-G object-storage backend: `s3` (AWS S3, MinIO, Ceph, any S3-compatible
+# gateway — driven by the shared s3_* vars) or `gcs` (native Google Cloud
+# Storage JSON API — driven by the walg_gcs_* vars below). This selects the
+# WAL-G archive target only; etcd snapshots always upload to S3 (s3_bucket),
+# so a GCS-backed cluster that also wants remote etcd snapshots still needs
+# the s3_* vars filled in.
+walg_storage_type: "s3"
+
+# WAL-G S3 key prefix (under s3_bucket) for THIS cluster's base backups + WAL
+# archive. Defaults to a scope-namespaced path ("patroni-walg-<patroni_scope>")
+# so multiple Patroni clusters can share one bucket without colliding at the
+# root. Set to "" to use the bucket root (s3://{{ s3_bucket }}). A standby's
+# wal-fetch fallback (patroni_standby_primary_walg_prefix) points at the
+# PRIMARY's prefix within the same bucket.
+patroni_walg_s3_prefix: "patroni-walg-{{ patroni_scope }}"
+
+# ── Native GCS backend (used only when walg_storage_type == 'gcs') ──────
+# WAL-G authenticates to GCS with a service-account key, not HMAC keys, so
+# the whole JSON key file is the input here (the file GCP hands you at
+# "Create key → JSON"). Accepts either the raw JSON string or an already
+# parsed YAML/JSON mapping. KEEP THIS IN ANSIBLE VAULT — it is a private key.
+# The role writes it to walg_gcs_service_account_file (0600, patroni-owned) and
+# mounts its parent directory read-only into the patroni container, where
+# GOOGLE_APPLICATION_CREDENTIALS points wal-g at it.
+walg_gcs_bucket: ""
+walg_gcs_service_account_json: ""
+
+# GCS object prefix (under walg_gcs_bucket) for THIS cluster — same
+# scope-namespacing rationale as patroni_walg_s3_prefix. Set to "" to use the
+# bucket root (gs://{{ walg_gcs_bucket }}).
+walg_gcs_prefix: "patroni-walg-{{ patroni_scope }}"
+
+# Where the service-account key lands, host side and container side. The
+# DIRECTORY is what gets bind-mounted, not the bare file: re-rendering the key
+# replaces the inode, which a file bind-mount would not follow, leaving the
+# running container on a stale copy.
+#
+#   _dir    host directory   — bind-mount source, 0700 patroni-owned
+#   _file   host file        — what the role renders the key to, 0600
+#   _mount  container dir    — bind-mount target, read-only
+#   _path   container file   — what GOOGLE_APPLICATION_CREDENTIALS points at
+walg_gcs_service_account_dir: "{{ walg_dir }}/gcs"
+walg_gcs_service_account_file: "{{ walg_gcs_service_account_dir }}/credentials.json"
+walg_gcs_service_account_mount: "/etc/walg"
+walg_gcs_service_account_path: "{{ walg_gcs_service_account_mount }}/credentials.json"
+
+# WAL-G backup schedule — systemd OnCalendar expression (see `man
+# systemd.time`). Replaces the in-container sleep loop. Examples:
+#   "*-*-* 02:00:00"        daily at 02:00 (default)
+#   "Sun *-*-* 03:00:00"    weekly Sunday 03:00
+#   "00,12:00:00"           every 12 hours on the hour
+# Set to an empty string to disable scheduled backups (on-demand
+# `patroni_action: backup` still works).
+walg_schedule: "*-*-* 02:00:00"
+
+# Dedicated PostgreSQL role used by WAL-G for backup-push (calls
+# pg_backup_start / pg_backup_stop, which require REPLICATION). LOGIN +
+# REPLICATION only — no superuser, no read access to user data. Avoids
+# putting the postgres superuser password in walg.env.
+walg_auth_user: "walg"
+walg_auth_password: ""

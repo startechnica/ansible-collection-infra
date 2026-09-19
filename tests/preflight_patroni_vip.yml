@@ -1,0 +1,127 @@
+---
+# Regression coverage for roles/preflight/tasks/patroni_vip.yml.
+#
+# The check imports only patroni's VIP settings (defaults_from: main/vip.yml,
+# vars_from: empty.yml). If that import ever widened to all of patroni's
+# variables, nothing would fail: the extra defaults would silently change other
+# roles' fallbacks in every play that runs preflight. So this checks what the
+# import exposes as well as what the assert accepts.
+#
+# Run from collection root:
+#   ansible-playbook tests/preflight_patroni_vip.yml
+
+- name: VIP unset — check skipped, only patroni's VIP variables imported
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  tasks:
+    - name: Run the preflight VIP check
+      ansible.builtin.include_role:
+        name: preflight
+        tasks_from: patroni_vip
+
+    - name: Only defaults/main/vip.yml is visible
+      ansible.builtin.assert:
+        that:
+          - patroni_vip_engine == 'vip-manager'
+          - patroni_vip_address == ''
+          - patroni_vip_mask | int == 32
+          - patroni_vip_iface == 'ens192'
+          - vip_manager_version is not defined
+          - _vip_manager_arch is not defined
+          - postgresql_port is not defined
+          - patroni_services is not defined
+
+- name: VIP set with patroni's default engine and mask — check passes
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  vars:
+    patroni_vip_address: 10.0.0.10
+  tasks:
+    - name: Run the preflight VIP check
+      ansible.builtin.include_role:
+        name: preflight
+        tasks_from: patroni_vip
+
+- name: VIP set with an unsupported engine — check fails
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  vars:
+    patroni_vip_address: 10.0.0.10
+    patroni_vip_engine: none
+  tasks:
+    - name: Run the preflight VIP check
+      block:
+        - name: Include the check
+          ansible.builtin.include_role:
+            name: preflight
+            tasks_from: patroni_vip
+      rescue:
+        - name: Record the failure
+          ansible.builtin.set_fact:
+            _vip_check_msg: "{{ ansible_failed_result.msg }}"
+
+    - name: The check rejected the engine
+      ansible.builtin.assert:
+        that:
+          - _vip_check_msg is defined
+          - "'patroni_vip_engine' in _vip_check_msg"
+
+- name: VIP set with an empty mask — check fails
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  vars:
+    patroni_vip_address: 10.0.0.10
+    patroni_vip_mask: ""
+  tasks:
+    - name: Run the preflight VIP check
+      block:
+        - name: Include the check
+          ansible.builtin.include_role:
+            name: preflight
+            tasks_from: patroni_vip
+      rescue:
+        - name: Record the failure
+          ansible.builtin.set_fact:
+            _vip_check_msg: "{{ ansible_failed_result.msg }}"
+
+    - name: The check rejected the mask
+      ansible.builtin.assert:
+        that:
+          - _vip_check_msg is defined
+          - "'patroni_vip_mask' in _vip_check_msg"
+
+- name: Full patroni export_vars still loads every defaults and vars file
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  tasks:
+    - name: Import all of patroni's variables
+      ansible.builtin.import_role:
+        name: patroni
+        tasks_from: export_vars
+
+    # One variable per file. varnames for artifacts.yml: its values template
+    # hostvars['localhost'].artifacts_dir, which a test play doesn't set.
+    - name: Every file in defaults/main/ and vars/main/ is loaded
+      ansible.builtin.assert:
+        that:
+          - patroni_scope is defined                  # patroni.yml
+          - postgresql_port | int == 55432            # postgresql.yml
+          - etcd_image is defined                     # etcd.yml
+          - haproxy_primary_port is defined           # haproxy.yml
+          - pgbouncer_port is defined                 # pgbouncer.yml
+          - walg_enabled is defined                   # walg.yml
+          - s3_bucket is defined                      # s3.yml
+          - patroni_vip_engine == 'vip-manager'       # vip.yml
+          - vip_manager_version is defined            # vip_manager.yml
+          - keepalived_dir is defined                 # keepalived.yml
+          - postgres_exporter_port is defined         # postgres_exporter.yml
+          - tls_cert_days is defined                  # tls.yml
+          - patroni_standby_enabled is defined        # standby.yml
+          - query('ansible.builtin.varnames', '^patroni_credentials_file$') | length == 1  # artifacts.yml
+          - patroni_services is defined               # vars/main/services.yml
+          - _vip_manager_arch is defined              # vars/main/vip_manager.yml

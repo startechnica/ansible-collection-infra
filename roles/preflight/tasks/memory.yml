@@ -1,23 +1,105 @@
 ---
-# RAM sanity vs container request. Caller (mongodb / patroni) sets
-# container_mem_request_mb to its expected aggregate; we warn if the host
-# can't realistically hold it.
+# RAM sanity vs the memory this host is about to commit.
+#
+# Inputs (the whole check is skipped when container_mem_request_mb is unset, so
+# a caller that can't estimate its footprint simply opts out):
+#   container_mem_request_mb    what THIS role is about to commit (MB) —
+#                               container caps plus any in-process allocation
+#                               the role configures, e.g. shared_buffers.
+#   container_mem_reserved_mb   what is ALREADY committed on this host by
+#                               something outside this role: a second stack,
+#                               a non-container daemon. Default 0 — roles can't
+#                               discover each other, so this is inventory's job.
+#   container_mem_headroom_pct  share of RAM left for the kernel, page cache and
+#                               everything not in the budget. Default 15.
+#   container_mem_strict        fail instead of warning. Default false.
+#
+# Why the headroom, and why `reserved`: the original check compared the request
+# against TOTAL RAM, so it only fired above 100% — by which point the host is
+# already doomed, and it still said nothing about a node running two stacks.
+# That combination is exactly what ziarahub hit: three 16 GB nodes running both
+# MongoDB and Patroni, each role sizing itself as if it owned the host, every
+# individual number under total RAM, and the node OOM-killing anyway.
+#
+# A static sum of caps cannot catch every case — PostgreSQL's work_mem and
+# maintenance_work_mem are per-operation, so the true ceiling depends on
+# concurrency, not configuration. The goal here is narrower and still worth
+# having: make the committed total VISIBLE and complete, and fail loudly on the
+# gross case instead of printing a line nobody reads.
+#
+# Everything lives in one block with block-level `vars` rather than set_fact:
+# two roles can include this in the same play (a node running both stacks), and
+# a fact set by the first caller would otherwise still be in scope for the
+# second — which, for a caller that passes no request, would silently report the
+# previous role's numbers as its own.
 
-- name: Check available RAM
-  ansible.builtin.debug:
-    msg: >-
-      Total RAM: {{ ansible_facts['memtotal_mb'] }}MB —
-      container requests: {{ container_mem_request_mb }}MB
+- name: Memory budget check
   when:
-    - ansible_facts['memtotal_mb'] is defined
     - container_mem_request_mb is defined
+    - ansible_facts['memtotal_mb'] is defined
+  vars:
+    # Everything committed on this host once this role is done.
+    _mem_budget_mb: >-
+      {{ (container_mem_request_mb | int)
+         + (container_mem_reserved_mb | default(0) | int) }}
+    # What we're willing to see committed, i.e. RAM minus headroom.
+    _mem_ceiling_mb: >-
+      {{ ((ansible_facts['memtotal_mb'] | int)
+          * (100 - (container_mem_headroom_pct | default(15) | int)) / 100) | int }}
+    _mem_total_mb: "{{ ansible_facts['memtotal_mb'] | int }}"
+    _mem_budgeted_pct: "{{ 100 - (container_mem_headroom_pct | default(15) | int) }}"
+    # Built here rather than inline in the message below: an `{%- if %}` in the
+    # middle of a folded scalar reads badly and trips ansible-lint's spacing rule.
+    _mem_reserved_note: >-
+      {{ ' + ' ~ container_mem_reserved_mb ~ 'MB reserved elsewhere'
+         if (container_mem_reserved_mb | default(0) | int) > 0 else '' }}
+  block:
+    - name: Report the memory budget
+      ansible.builtin.debug:
+        msg: >-
+          Memory budget: {{ _mem_budget_mb }}MB committed
+          ({{ container_mem_request_mb }}MB this role{{ _mem_reserved_note }})
+          of {{ _mem_total_mb }}MB total — ceiling {{ _mem_ceiling_mb }}MB
+          ({{ _mem_budgeted_pct }}% of RAM),
+          {{ (_mem_ceiling_mb | int) - (_mem_budget_mb | int) }}MB spare.
 
-- name: Warn if RAM insufficient
-  ansible.builtin.debug:
-    msg: >-
-      WARNING: container memory requests ({{ container_mem_request_mb }}MB)
-      exceed available RAM ({{ ansible_facts['memtotal_mb'] }}MB). Expect OOM kills.
-  when:
-    - ansible_facts['memtotal_mb'] is defined
-    - container_mem_request_mb is defined
-    - (container_mem_request_mb | int) > (ansible_facts['memtotal_mb'] | int)
+    # Over the headroom line but still under total RAM: survivable, but there is
+    # nothing left for page cache or a traffic spike.
+    - name: Warn when the budget eats into headroom
+      ansible.builtin.debug:
+        msg: >-
+          WARNING: committed memory ({{ _mem_budget_mb }}MB) exceeds the
+          {{ _mem_budgeted_pct }}% ceiling ({{ _mem_ceiling_mb }}MB) on a
+          {{ _mem_total_mb }}MB host. Still under total RAM, so it will start —
+          but with little left for page cache, connection spikes or
+          per-operation allocations. Lower the limits, or raise
+          container_mem_headroom_pct if this host really is meant to run this
+          hot.
+      when:
+        - (_mem_budget_mb | int) > (_mem_ceiling_mb | int)
+        - (_mem_budget_mb | int) <= (_mem_total_mb | int)
+
+    # Over total RAM: the kernel cannot honour this, so something will be
+    # killed. Strict mode turns it into a failure; otherwise it stays advisory
+    # so an existing over-committed host can still be managed.
+    - name: Fail when the budget exceeds total RAM (container_mem_strict)
+      ansible.builtin.assert:
+        that:
+          - (_mem_budget_mb | int) <= (_mem_total_mb | int)
+        fail_msg: >-
+          Committed memory ({{ _mem_budget_mb }}MB) exceeds total RAM
+          ({{ _mem_total_mb }}MB) on this host. The kernel cannot honour that,
+          so expect OOM kills. Reduce the per-container limits, move a stack off
+          this node, or set container_mem_strict=false to proceed anyway.
+        success_msg: "Committed memory fits within total RAM."
+      when: container_mem_strict | default(false) | bool
+
+    - name: Warn when the budget exceeds total RAM
+      ansible.builtin.debug:
+        msg: >-
+          WARNING: committed memory ({{ _mem_budget_mb }}MB) exceeds total RAM
+          ({{ _mem_total_mb }}MB). Expect OOM kills. Set
+          container_mem_strict=true to make this a hard failure.
+      when:
+        - not (container_mem_strict | default(false) | bool)
+        - (_mem_budget_mb | int) > (_mem_total_mb | int)

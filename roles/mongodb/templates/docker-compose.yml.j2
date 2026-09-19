@@ -61,6 +61,8 @@ services:
       resources:
         limits:
           memory: {{ mongod_mem_limit_mb }}m
+    # Host-level OOM victim bias — see mongod_oom_score_adj in defaults.
+    oom_score_adj: {{ mongod_oom_score_adj }}
 
 {% if mongodb_cluster_type == 'sharded' %}
   configsvr:
@@ -116,6 +118,7 @@ services:
       resources:
         limits:
           memory: {{ configsvr_mem_limit_mb }}m
+    oom_score_adj: {{ configsvr_oom_score_adj }}
 
   mongos:
     image: {{ mongodb_image_registry }}/{{ mongodb_image_repository }}:{{ mongodb_image_tag }}
@@ -170,6 +173,8 @@ services:
       resources:
         limits:
           memory: {{ mongos_mem_limit_mb }}m
+    # Preferred victim: stateless router, cheapest thing here to lose.
+    oom_score_adj: {{ mongos_oom_score_adj }}
 {% endif %}
 
 {% if mongodb_exporter_enabled | bool %}
@@ -196,7 +201,8 @@ services:
     deploy:
       resources:
         limits:
-          memory: 128m
+          memory: {{ mongodb_exporter_mem_limit_mb }}m
+    oom_score_adj: {{ mongodb_exporter_oom_score_adj }}
 {% endif %}
 
 networks:

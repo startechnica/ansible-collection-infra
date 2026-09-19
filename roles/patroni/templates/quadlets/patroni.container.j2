@@ -22,6 +22,18 @@ Network=host
 Environment=PATRONI_CONFIG=/etc/patroni/patroni.yml
 Environment=PATRONI_POSTGRESQL_DATA_DIR=/var/lib/postgresql/pg_data
 Environment=PATRONI_POSTGRESQL_CONFIG_DIR=/var/lib/postgresql/pg_data
+{% if patroni_pg_backend_oom_adjust_enabled | bool %}
+# The container (and so the postmaster) runs at patroni_oom_score_adj, which is
+# negative — protected. Without these, every forked backend would inherit that
+# protection, so under host memory pressure the kernel would either skip
+# PostgreSQL entirely or pick the postmaster and take the instance down with it.
+# These make the postmaster reset each child to a killable score, so a single
+# backend dies and PostgreSQL does crash recovery instead of Patroni failing the
+# node over. PostgreSQL's documented mechanism (9.5+); raising a child's
+# oom_score_adj never requires privileges.
+Environment=PG_OOM_ADJUST_FILE=/proc/self/oom_score_adj
+Environment=PG_OOM_ADJUST_VALUE={{ patroni_pg_backend_oom_score_adj }}
+{% endif %}
 {% if walg_enabled %}
 EnvironmentFile={{ walg_dir }}/walg.env
 {% endif %}
@@ -44,7 +56,11 @@ Volume={{ walg_gcs_service_account_dir }}:{{ walg_gcs_service_account_mount }}:r
 {% endif %}
 
 # Quadlet doesn't have a direct `ulimits` mapping — pass through.
-PodmanArgs=--ulimit nofile=65536:65536 --ulimit nproc=65536:65536
+# --oom-score-adj protects the postmaster from host-level OOM. Its backends are
+# pushed back to a killable score by the environment set above, unless
+# patroni_pg_backend_oom_adjust_enabled is false.
+PodmanArgs=--ulimit nofile=65536:65536 --ulimit nproc=65536:65536 \
+          --oom-score-adj={{ patroni_oom_score_adj }}
 
 # Healthcheck: patroni's /readiness returns 200 only when patroni AND
 # postgres are running. /health is too lenient — it returns 200 even

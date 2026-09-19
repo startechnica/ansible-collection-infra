@@ -29,12 +29,12 @@ dependencies:
   community.crypto: ">=3.2.0"
   community.docker: ">=5.2.0"
   community.general: ">=12.6.0"
-  community.mongodb: ">=1.7.12"
+  community.mongodb: ">=1.8.0"
   community.postgresql: ">=3.14.3"
   community.routeros: ">=3.0.0"
   community.vmware: ">=6.2.0"
   containers.podman: ">=1.19.2"
-  netbox.netbox: ">=3.22.0"
+  netbox.netbox: ">=3.23.0"
   vmware.vmware: ">=2.8.0"
 build_ignore:
   - .git

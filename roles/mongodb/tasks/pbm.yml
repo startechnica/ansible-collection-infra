@@ -257,6 +257,13 @@
          (mongodb_backup_schedule | length > 0) }}
   run_once: true
 
+# The unit runs the engine by absolute path: for a bare ExecStart= name systemd
+# only searches a fixed list of directories. _engine_bin.yml resolves the path on
+# each host, without preflight; mongodb_container_engine_bin overrides the lookup.
+- name: Resolve the container engine binary for the PBM backup unit
+  ansible.builtin.include_tasks: _engine_bin.yml
+  when: _pbm_backup_timer
+
 - name: Install mongodb-pbm.service unit
   ansible.builtin.copy:
     dest: /etc/systemd/system/mongodb-pbm.service
@@ -271,8 +278,8 @@
       [Service]
       Type=oneshot
       LogsDirectory=mongodb
-      ExecStart=/usr/bin/{{ mongodb_container_engine }} exec -e PBM_MONGODB_URI={{ _pbm_uri_sd }} {{ _pbm_control }} pbm backup {{ _pbm_compression_args }} --wait
-      ExecStartPost=/usr/bin/{{ mongodb_container_engine }} exec -e PBM_MONGODB_URI={{ _pbm_uri_sd }} {{ _pbm_control }} pbm cleanup --older-than {{ mongodb_backup_retain_days }}d --yes
+      ExecStart={{ _mongodb_engine_bin }} exec -e PBM_MONGODB_URI={{ _pbm_uri_sd }} {{ _pbm_control }} pbm backup {{ _pbm_compression_args }} --wait
+      ExecStartPost={{ _mongodb_engine_bin }} exec -e PBM_MONGODB_URI={{ _pbm_uri_sd }} {{ _pbm_control }} pbm cleanup --older-than {{ mongodb_backup_retain_days }}d --yes
       StandardOutput=append:/var/log/mongodb/mongodb-pbm.log
       StandardError=append:/var/log/mongodb/mongodb-pbm.log
   notify: reload systemd

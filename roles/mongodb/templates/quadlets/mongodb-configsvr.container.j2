@@ -36,7 +36,8 @@ Volume={{ mongodb_tls_dir }}/ca.pem:/etc/mongo/ssl/ca.pem:ro,z
 Volume={{ mongodb_tls_dir }}/healthcheck.pem:/etc/mongo/ssl/healthcheck.pem:ro,z
 
 PodmanArgs=--ulimit nofile={{ mongodb_ulimit_nofile }}:{{ mongodb_ulimit_nofile }} \
-          --ulimit nproc=-1:-1
+          --ulimit nproc=-1:-1 \
+          --oom-score-adj={{ configsvr_oom_score_adj }}
 
 Memory={{ configsvr_mem_limit_mb }}m
 

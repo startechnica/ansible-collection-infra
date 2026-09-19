@@ -37,6 +37,10 @@ Exec=etcd \
 Volume={{ etcd_data_dir }}:/etcd-data:Z
 Volume={{ etcd_certs_dir }}:/etc/certs:ro,Z
 
+# Most strongly protected container in the stack: losing the DCS makes Patroni
+# demote the primary cluster-wide. See etcd_oom_score_adj in defaults.
+PodmanArgs=--oom-score-adj={{ etcd_oom_score_adj }}
+
 LogDriver=journald
 
 [Service]

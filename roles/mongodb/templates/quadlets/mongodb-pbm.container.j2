@@ -51,6 +51,9 @@ Volume={{ mongodb_tls_dir }}/ca.pem:/etc/mongo/ssl/ca.pem:ro,z
 Volume={{ mongodb_root_dir }}/pbm/pbm-config.yaml:/etc/pbm/pbm-config.yaml:ro,z
 
 Memory={{ mongodb_backup_pbm_mem_limit_mb }}m
+# Biased toward being the OOM victim ahead of the data-bearing nodes it backs
+# up — a missed backup window is recoverable, a killed mongod is not free.
+PodmanArgs=--oom-score-adj={{ mongodb_backup_pbm_oom_score_adj }}
 LogDriver=journald
 
 [Service]

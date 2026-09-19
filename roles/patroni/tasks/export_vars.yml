@@ -1,8 +1,8 @@
 ---
 # Export anchor — intentionally does no work.
 #
-# Importing this role with `tasks_from: export_vars` loads the patroni role's
-# defaults/main.yml + vars/main.yml (postgresql_port, patroni_scope,
+# Importing this role with `tasks_from: export_vars` loads every file in the
+# patroni role's defaults/main/ and vars/main/ (postgresql_port, patroni_scope,
 # walg_enabled, patroni_vip_address, postgres_exporter_enabled, etc.) into the
 # calling play WITHOUT running any of the deploy/day-2 tasks in main.yml.
 #
@@ -15,6 +15,21 @@
 #   - ansible.builtin.import_role:
 #       name: patroni
 #       tasks_from: export_vars
+#
+# defaults/main/ has one file per component: patroni, postgresql, etcd,
+# haproxy, pgbouncer, walg, s3, vip, vip_manager, keepalived,
+# postgres_exporter, tls, standby, artifacts. To import only the variables you
+# use, name one with `defaults_from`, and pass `vars_from: empty.yml` to skip
+# the computed vars in vars/main/ (services.yml, vip_manager.yml):
+#
+#   - ansible.builtin.import_role:
+#       name: patroni
+#       tasks_from: export_vars
+#       defaults_from: main/vip.yml
+#       vars_from: empty.yml
+#
+# `vars_from` must name an existing file; without it, all of vars/main/ loads.
+# roles/preflight/tasks/patroni_vip.yml imports the VIP settings this way.
 #
 # Role defaults are lowest precedence, so anything the inventory sets still
 # wins. Keep this file task-free; its only job is to trigger var loading.

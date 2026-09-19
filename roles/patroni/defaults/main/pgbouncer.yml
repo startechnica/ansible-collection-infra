@@ -1,0 +1,109 @@
+---
+# Patroni role defaults: PgBouncer (image, port, credentials, pooling,
+# client TLS).
+# The role loads every file in defaults/main/ (see tasks/export_vars.yml).
+
+pgbouncer_image: "docker.io/edoburu/pgbouncer:v1.25.1-p0"
+pgbouncer_port: 6543
+pgbouncer_dir: /opt/pgbouncer
+
+# PgBouncer container UID/GID — edoburu/pgbouncer (Alpine) uses postgres:70.
+# Override if you switch to a different image (e.g. bitnami uses 1001).
+pgbouncer_uid: 70
+pgbouncer_gid: 70
+
+# Dedicated PostgreSQL role used by PgBouncer for auth_query lookups.
+# A LOGIN-only role; no other privileges. Auto-generated if empty and
+# persisted to artifacts/<inv>/patroni/pgbouncer.password on the controller.
+pgbouncer_auth_password: ""
+
+# Password for the read-only PgBouncer admin console user (`pgbouncer_stats`,
+# see pgbouncer_stats_users below). PgBouncer-internal only — no PG role,
+# no userlist auth_query path; lives only in userlist.txt. Auto-generated
+# if empty and persisted to artifacts/<inv>/patroni/pgbouncer_stats.password.
+pgbouncer_stats_password: ""
+
+pgbouncer_pool_mode: "session"
+# Comma-separated list of database users allowed to run all commands on the
+# pgbouncer admin console. Must be present in userlist.txt (admin console
+# does NOT use auth_query). Default: the dedicated `pgbouncer` auth_user.
+pgbouncer_admin_users: "pgbouncer"
+# Comma-separated list of users allowed to run read-only SHOW commands on
+# the pgbouncer admin console. Same constraint as admin_users — must be in
+# userlist.txt. Default: the dedicated `pgbouncer_stats` user, separate
+# from the auth_user so monitoring credentials can rotate independently
+# and a SHOW-only credential leak doesn't expose pg_shadow access.
+pgbouncer_stats_users: "pgbouncer_stats"
+pgbouncer_default_pool_size: 20
+
+# Per-database overrides for the [databases] section. PgBouncer resolves an
+# exact database name before falling back to the `*` entry, so each item here
+# carves one database out of the global pgbouncer_pool_mode above.
+#
+# Keep `session` as the global default and opt individual databases INTO
+# transaction pooling, not the other way round. Session mode is always
+# correct, just less efficient; transaction mode silently breaks LISTEN/NOTIFY,
+# session-level SET, advisory locks held across transactions, WITH HOLD
+# cursors, and temp tables. With session as the fallback, a database you forget
+# to list costs connections (visible); with transaction as the fallback, it
+# corrupts behavior (not visible).
+#
+#   name                — REQUIRED. The database name the CLIENT REQUESTS, not
+#                         a label. If it doesn't match the name in the client's
+#                         startup packet the entry never matches and `*`
+#                         applies — silently, with no error.
+#   dbname              — optional; physical database to connect to, when the
+#                         key above is an alias.
+#   pool_mode           — session | transaction | statement
+#   pool_size           — server connections for this database (else
+#                         default_pool_size)
+#   min_pool_size, reserve_pool, max_db_connections — optional passthrough
+#
+# GitLab is the motivating case: Rails requires transaction pooling, while
+# Praefect requires session pooling for its LISTEN/NOTIFY cache-invalidation
+# connection. Both are served from one PgBouncer by listing only GitLab's
+# databases here. Praefect then needs no entry (it inherits session from `*`)
+# and no separate `database.session_pooled` connection.
+#
+#   pgbouncer_database_overrides:
+#     - { name: gitlabhq_production, pool_mode: transaction }
+#     - { name: gitlabhq_production_ci, pool_mode: transaction }
+pgbouncer_database_overrides: []
+
+# ── PgBouncer client-facing TLS (clients → PgBouncer) ──────────────────
+# Counterpart to the server_tls_* block (PgBouncer → PostgreSQL) already in
+# pgbouncer.ini.j2. PgBouncer terminates client TLS for the WHOLE stack:
+# HAProxy runs `mode tcp` with no TLS on its bind, so a client connecting to
+# haproxy_primary_port / haproxy_replicas_port passes straight through and
+# completes its TLS handshake against PgBouncer, not PostgreSQL.
+#
+#   disable       plain TCP only; a client's TLS request is ignored
+#   allow         TLS when the client asks for it, plaintext otherwise
+#   prefer        identical to allow (PgBouncer treats them the same)
+#   require       client MUST use TLS; client certs are not validated
+#   verify-ca     client must use TLS *and present a valid client cert*
+#   verify-full   identical to verify-ca (PgBouncer treats them the same)
+#
+# `prefer` is the default here because it is non-breaking: existing plaintext
+# clients keep working while TLS-capable ones get an encrypted session. Set
+# `require` to force TLS once every client is known to speak it.
+#
+# NOTE: verify-ca / verify-full make a CLIENT certificate mandatory on every
+# connection — that means issuing a per-application cert from this cluster's
+# CA and generally switching `auth_type` to `cert`. Don't flip to those
+# without that groundwork or every app locks itself out.
+pgbouncer_client_tls_sslmode: "prefer"
+
+# TLS versions accepted from clients. `secure` = tlsv1.2 + tlsv1.3. This is
+# already PgBouncer's own default; pinned explicitly so an upstream default
+# change can't silently re-admit TLS 1.0/1.1. `all` allows tlsv1.0/tlsv1.1.
+pgbouncer_client_tls_protocols: "secure"
+
+# Cipher list for TLS 1.2 and below (TLS 1.3 suites are negotiated
+# separately and unaffected). Shortcuts: default / secure / fast / normal,
+# or any OpenSSL cipher string.
+pgbouncer_client_tls_ciphers: "default"
+
+# Host-level OOM victim bias — same reasoning as haproxy_oom_score_adj: on the
+# client path, cheap to restart. See patroni_oom_score_adj for the ranking.
+pgbouncer_oom_score_adj: -300

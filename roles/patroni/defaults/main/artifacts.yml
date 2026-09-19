@@ -1,0 +1,14 @@
+---
+# Patroni role defaults: files kept on the Ansible controller (generated
+# passwords, local certificate copies).
+# The role loads every file in defaults/main/ (see tasks/export_vars.yml).
+
+# Local artifacts (on the Ansible controller)
+# artifacts_dir is set by playbooks/patroni/_setup.yml on localhost only,
+# because add_host nodes have inventory_file == None.
+patroni_credentials_dir: "{{ hostvars['localhost'].artifacts_dir }}/patroni"
+patroni_credentials_file: "{{ patroni_credentials_dir }}/postgres.password"
+pgbouncer_credentials_file: "{{ patroni_credentials_dir }}/pgbouncer.password"
+pgbouncer_stats_credentials_file: "{{ patroni_credentials_dir }}/pgbouncer_stats.password"
+walg_credentials_file: "{{ patroni_credentials_dir }}/walg.password"
+patroni_local_certs_dir: "{{ patroni_credentials_dir }}/certs"

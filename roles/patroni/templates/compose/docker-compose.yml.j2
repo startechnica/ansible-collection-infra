@@ -34,6 +34,9 @@ services:
     volumes:
       - {{ etcd_data_dir }}:/etcd-data:Z
       - {{ etcd_certs_dir }}:/etc/certs:ro,Z
+    # Host-level OOM victim bias — most strongly protected container in the
+    # stack; see etcd_oom_score_adj in defaults.
+    oom_score_adj: {{ etcd_oom_score_adj }}
     logging:
       driver: json-file
       options:
@@ -67,6 +70,14 @@ services:
       PATRONI_CONFIG: /etc/patroni/patroni.yml
       PATRONI_POSTGRESQL_DATA_DIR: /var/lib/postgresql/pg_data
       PATRONI_POSTGRESQL_CONFIG_DIR: /var/lib/postgresql/pg_data
+{% if patroni_pg_backend_oom_adjust_enabled | bool %}
+      # Postmaster runs protected (oom_score_adj below); these push each forked
+      # backend back to a killable score so a single backend is the OOM victim
+      # and PostgreSQL crash-recovers instead of Patroni failing the node over.
+      # See patroni_pg_backend_oom_score_adj in defaults.
+      PG_OOM_ADJUST_FILE: /proc/self/oom_score_adj
+      PG_OOM_ADJUST_VALUE: "{{ patroni_pg_backend_oom_score_adj }}"
+{% endif %}
 {% if walg_enabled %}
     env_file:
       - {{ walg_dir }}/walg.env
@@ -95,6 +106,7 @@ services:
       nproc:
         soft: 65536
         hard: 65536
+    oom_score_adj: {{ patroni_oom_score_adj }}
     depends_on:
       # Long (mapping) form throughout — the walg-init entry needs
       # `condition:`, and compose forbids mixing the short list form with
@@ -137,6 +149,7 @@ services:
       nofile:
         soft: 65536
         hard: 65536
+    oom_score_adj: {{ haproxy_oom_score_adj }}
     healthcheck:
       # Stats endpoint always returns 200 once haproxy has parsed its config
       # and is accepting connections — proves both the process is up and
@@ -168,6 +181,7 @@ services:
       nofile:
         soft: 65536
         hard: 65536
+    oom_score_adj: {{ pgbouncer_oom_score_adj }}
     depends_on:
       - patroni
     logging:
@@ -193,6 +207,8 @@ services:
     volumes:
       - {{ vip_manager_dir }}/vip-manager.yml:/etc/default/vip-manager.yml:ro,Z
       - {{ vip_manager_certs_dir }}:/etc/certs:ro,Z
+    # Holds the VIP — a kill moves client traffic. See vip_manager_oom_score_adj.
+    oom_score_adj: {{ vip_manager_oom_score_adj }}
     depends_on:
       - etcd
     healthcheck:
@@ -227,6 +243,8 @@ services:
     volumes:
       - {{ keepalived_dir }}/keepalived.conf:/etc/keepalived/keepalived.conf:ro,Z
       - {{ haproxy_certs_dir }}:/etc/certs:ro,z
+    # Holds the VIP — a kill moves client traffic. See keepalived_oom_score_adj.
+    oom_score_adj: {{ keepalived_oom_score_adj }}
     depends_on:
       - haproxy
     logging:
@@ -258,7 +276,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 128m
+          memory: {{ postgres_exporter_mem_limit_mb }}m
+    # Telemetry only — first in line for the OOM killer.
+    oom_score_adj: {{ postgres_exporter_oom_score_adj }}
 {% endif %}
 
 # walg-cron service removed — scheduled backups now run via host-level

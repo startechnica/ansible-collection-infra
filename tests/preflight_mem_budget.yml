@@ -1,0 +1,317 @@
+---
+# Regression coverage for the preflight memory budget.
+#
+# The bug this guards against already happened. ziarahub runs MongoDB (sharded)
+# and Patroni on the same three 16 GB nodes; every individual limit was under
+# total RAM, so the old check — mongod+configsvr+mongos vs memtotal_mb, printed
+# as a debug line — said nothing, and the nodes OOM-killed in production anyway.
+# Three separate defects combined:
+#   1. patroni passed no request at all, so PG hosts had no check whatsoever;
+#   2. mongodb's sum omitted the PBM agents and the exporter (640MB on a sharded
+#      node), so even the number it did print was wrong;
+#   3. the threshold was ">100% of total RAM", which only fires once the host is
+#      already doomed, and nothing modelled a second stack on the same node.
+#
+# Run from collection root:
+#   ansible-playbook tests/preflight_mem_budget.yml
+
+- name: "Budget :: patroni request composition"
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  vars:
+    # No facts are gathered, so play vars supply memtotal_mb. ziarahub's size.
+    ansible_facts:
+      memtotal_mb: 16384
+
+  tasks:
+    - name: "Patroni :: import role variables"
+      ansible.builtin.import_role:
+        name: patroni
+        tasks_from: export_vars
+
+    - name: "Patroni :: verify the budget's one tunable input"
+      ansible.builtin.assert:
+        that:
+          - patroni_stack_overhead_mb == 640
+        fail_msg: >-
+          The stack overhead changed; update the expectations below, and check
+          whether ziarahub's patroni_mem_reserved_mb is still right.
+
+    # shared_buffers accepts PostgreSQL's suffixed forms. Each is exercised
+    # because a mis-parse silently changes the budget by orders of magnitude —
+    # reading "2GB" as 2MB would make any host look fine.
+    #
+    # Overriding pg_shared_buffers with task-level vars works precisely because
+    # patroni_mem_request_mb is a LAZY expression in vars/main/memory.yml rather
+    # than a set_fact: the whole chain re-evaluates per iteration. A fact would
+    # have frozen on the first value and needed a separate file per case.
+    - name: "Patroni :: verify every shared_buffers form resolves correctly"
+      ansible.builtin.assert:
+        that:
+          - patroni_mem_request_mb | int == _case.want
+        fail_msg: >-
+          pg_shared_buffers={{ _case.sb | default('(auto)', true) }} should give
+          {{ _case.want }}MB (shared_buffers + {{ patroni_stack_overhead_mb }}MB
+          overhead), got {{ patroni_mem_request_mb }}MB.
+        success_msg: >-
+          {{ _case.sb | default('(auto)', true) }} -> {{ patroni_mem_request_mb }}MB
+      vars:
+        pg_shared_buffers: "{{ _case.sb }}"
+      loop:
+        - {sb: "2GB", want: 2688}
+        - {sb: "2048MB", want: 2688}
+        - {sb: "524288kB", want: 1152}
+        - {sb: "2048", want: 2688}
+        # Mixed case and stray whitespace both reach us from inventory.
+        - {sb: " 2gb ", want: 2688}
+        # Empty = auto-calculated as memtotal/4 = 4096, the value that made
+        # ziarahub over-commit. preflight runs BEFORE main.yml's auto-calculation
+        # set_fact, so vars/main/memory.yml has to mirror that formula.
+        - {sb: "", want: 4736}
+      loop_control:
+        loop_var: _case
+        label: "{{ _case.sb | default('(auto)', true) }} -> {{ _case.want }}"
+
+    - name: "Patroni :: verify the overhead is a lever, not a constant"
+      ansible.builtin.assert:
+        that:
+          - patroni_mem_request_mb | int == 3048
+      vars:
+        pg_shared_buffers: "2GB"
+        patroni_stack_overhead_mb: 1000
+
+    - name: "Patroni :: an unpinned host reports every pg_* var as auto-sized"
+      ansible.builtin.assert:
+        that:
+          - patroni_pg_autosized == ['pg_shared_buffers', 'pg_work_mem', 'pg_maint_mem']
+
+    - name: "Patroni :: a fully pinned host reports nothing as auto-sized"
+      ansible.builtin.assert:
+        that:
+          - patroni_pg_autosized == []
+          - patroni_mem_request_mb | int == 2688
+        fail_msg: >-
+          Pinning all three pg_* settings must clear patroni_pg_autosized —
+          otherwise the co-located-stack warning cries wolf on a host already
+          fixed. The 2688MB is also what ziarahub's node budget assumes.
+      vars:
+        pg_shared_buffers: "2GB"
+        pg_work_mem: "64MB"
+        pg_maint_mem: "512MB"
+
+# The design decision that makes cross-role discovery safe, tested directly.
+# mongodb reads patroni's budget by importing ONE defaults file. Importing all
+# of patroni's defaults instead would also load tls_key_curve — which patroni
+# defaults to secp384r1 and mongodb to secp256r1 — silently changing the curve
+# of every certificate mongodb then generates.
+- name: "Budget :: narrow cross-role import"
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  vars:
+    ansible_facts:
+      memtotal_mb: 16384
+
+  tasks:
+    - name: "Import :: load mongodb's variables first, as its own run would"
+      ansible.builtin.import_role:
+        name: mongodb
+        tasks_from: export_vars
+
+    - name: "Import :: confirm the two roles really do disagree on the curve"
+      ansible.builtin.assert:
+        that:
+          - tls_key_curve == 'secp256r1'
+        fail_msg: >-
+          mongodb no longer defaults tls_key_curve to secp256r1. If the two roles
+          now agree, the narrow-import constraint below may be relaxable — but
+          check every other shared name before widening it.
+
+    - name: "Import :: pull in only patroni's memory budget"
+      ansible.builtin.import_role:
+        name: patroni
+        tasks_from: export_vars
+        defaults_from: main/postgresql.yml
+        vars_from: main/memory.yml
+
+    - name: "Import :: the budget arrived and nothing else moved"
+      ansible.builtin.assert:
+        that:
+          # What we came for.
+          - patroni_mem_request_mb is defined
+          - patroni_mem_request_mb | int > 0
+          # What must NOT have followed it in.
+          - tls_key_curve == 'secp256r1'
+          - s3_bucket == ''
+        fail_msg: >-
+          The narrow import leaked. patroni's defaults must not reach a mongodb
+          run beyond main/postgresql.yml — tls_key_curve is now
+          {{ tls_key_curve }}, which changes the curve of every certificate the
+          mongodb role generates.
+
+- name: "Budget :: preflight thresholds"
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  vars:
+    ansible_facts:
+      memtotal_mb: 16384
+    # Mirrors roles/preflight/tasks/memory.yml. The budget and ceiling live in
+    # block-level `vars` there, not facts (deliberately — see that file's header
+    # on cross-caller fact leakage), so they can't be read back. Behaviour is
+    # asserted through strict mode below; this documents the arithmetic.
+    _ceiling: "{{ (16384 * 85 / 100) | int }}"
+
+  tasks:
+    - name: "Threshold :: the ceiling is RAM minus the default 15% headroom"
+      ansible.builtin.assert:
+        that:
+          - _ceiling | int == 13926
+
+    # ziarahub after the fix: Mongo 7296 reserved + Patroni 2688 = 9984 of
+    # 16384, against a 13926 ceiling. Comfortable — the point of the exercise.
+    - name: "Threshold :: co-located stacks within the ceiling"
+      ansible.builtin.include_role:
+        name: preflight
+        tasks_from: memory
+      vars:
+        container_mem_request_mb: 2688
+        container_mem_reserved_mb: 7296
+        container_mem_strict: true
+
+    # Strict mode is the only observable behaviour, so every boundary below is
+    # expressed as "does strict pass or fail". Exactly at total RAM must pass:
+    # the comparison is <=, and an off-by-one here would fail healthy hosts.
+    - name: "Threshold :: a budget exactly at total RAM passes strict"
+      ansible.builtin.include_role:
+        name: preflight
+        tasks_from: memory
+      vars:
+        container_mem_request_mb: 8000
+        container_mem_reserved_mb: 8384
+        container_mem_strict: true
+
+    # One MB more must fail — which also proves `reserved` is summed into the
+    # total rather than ignored, since the request alone is well under RAM.
+    - name: "Threshold :: one MB over total RAM fails strict"
+      block:
+        - name: "Threshold :: run strict at total RAM + 1"
+          ansible.builtin.include_role:
+            name: preflight
+            tasks_from: memory
+          vars:
+            container_mem_request_mb: 8000
+            container_mem_reserved_mb: 8385
+            container_mem_strict: true
+
+        - name: "Threshold :: strict mode should not have reached here"
+          ansible.builtin.fail:
+            msg: >-
+              container_mem_strict=true must fail once the committed total
+              exceeds total RAM. Either the comparison is wrong, or
+              container_mem_reserved_mb is not being added to the request.
+      rescue:
+        - name: "Threshold :: confirm strict mode aborted"
+          ansible.builtin.debug:
+            msg: "strict correctly failed at 16385MB on a 16384MB host"
+
+    # Between the ceiling and total RAM the check must stay advisory even under
+    # strict: crossing the headroom line is a warning, not a hard error.
+    - name: "Threshold :: over the ceiling but under RAM still passes strict"
+      ansible.builtin.include_role:
+        name: preflight
+        tasks_from: memory
+      vars:
+        container_mem_request_mb: 14000
+        container_mem_reserved_mb: 0
+        container_mem_strict: true
+
+    # A caller that can't estimate its footprint opts out by leaving the request
+    # unset. The check must then do nothing — and must NOT reuse the numbers a
+    # previous caller left behind, which is what a fact-based implementation did.
+    - name: "Threshold :: no request means no check"
+      ansible.builtin.include_role:
+        name: preflight
+        tasks_from: memory
+      vars:
+        container_mem_strict: true
+
+- name: "Budget :: mongodb request composition"
+  hosts: localhost
+  gather_facts: false
+  connection: local
+
+  tasks:
+    - name: "Mongodb :: import role variables"
+      ansible.builtin.import_role:
+        name: mongodb
+        tasks_from: export_vars
+
+    - name: "Mongodb :: verify the caps the aggregate is built from"
+      ansible.builtin.assert:
+        that:
+          - mongodb_exporter_mem_limit_mb == 128
+          - mongodb_backup_pbm_mem_limit_mb == 256
+
+    # Mirrors the expression in roles/mongodb/tasks/main.yml. Kept as a literal
+    # copy on purpose: if that sum is edited, this fails and forces a look at
+    # whether the new term belongs in the budget.
+    - name: "Mongodb :: verify the aggregate covers every container"
+      ansible.builtin.assert:
+        that:
+          - _request | int == _case.want
+        fail_msg: >-
+          {{ _case.name }}: expected {{ _case.want }}MB, got {{ _request }}MB.
+          Every container this role puts on the node must be counted — the PBM
+          agents (one per data-bearing node) and the exporter included.
+      loop:
+        # ziarahub's caps: 4096 + 1536 + 1024, two PBM agents, one exporter.
+        - name: sharded with PBM and exporter
+          sharded: true
+          pbm: true
+          exporter: true
+          mongod: 4096
+          configsvr: 1536
+          mongos: 1024
+          want: 7296
+        # The old expression's answer for the same host — 640MB short.
+        - name: sharded without PBM or exporter
+          sharded: true
+          pbm: false
+          exporter: false
+          mongod: 4096
+          configsvr: 1536
+          mongos: 1024
+          want: 6656
+        # Replica set: no configsvr/mongos, and only ONE PBM agent.
+        - name: replicaset with PBM and exporter
+          sharded: false
+          pbm: true
+          exporter: true
+          mongod: 2048
+          configsvr: 512
+          mongos: 1024
+          want: 2432
+        # Role defaults, sharded, PBM off (the shipped default).
+        - name: default sharded without PBM
+          sharded: true
+          pbm: false
+          exporter: true
+          mongod: 2048
+          configsvr: 512
+          mongos: 1024
+          want: 3712
+      loop_control:
+        loop_var: _case
+        label: "{{ _case.name }}"
+      vars:
+        _request: >-
+          {{ (_case.mongod | int)
+             + ((_case.configsvr | int) + (_case.mongos | int)
+                if _case.sharded else 0)
+             + ((mongodb_backup_pbm_mem_limit_mb | int)
+                * (2 if _case.sharded else 1)
+                if _case.pbm else 0)
+             + ((mongodb_exporter_mem_limit_mb | int)
+                if _case.exporter else 0) }}

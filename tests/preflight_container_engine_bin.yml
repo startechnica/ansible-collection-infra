@@ -1,0 +1,48 @@
+---
+# Regression coverage for preflight's container_engine_bin check: it passes
+# when the `container_engine` binary is on PATH and fails, naming the engine,
+# when it isn't. Each play runs the check alone, with no parent role. `sh`
+# stands in for docker / podman, since every host has it.
+#
+# Run from collection root:
+#   ansible-playbook tests/preflight_container_engine_bin.yml
+
+- name: Engine on PATH
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  vars:
+    container_engine: sh
+  tasks:
+    - name: Check the stand-in engine
+      ansible.builtin.include_role:
+        name: preflight
+        tasks_from: container_engine_bin
+
+    - name: Verify the check found an absolute path
+      ansible.builtin.assert:
+        that:
+          - _container_engine_lookup.stdout is search('^/.*/sh$')
+
+- name: Engine missing
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  vars:
+    container_engine: no-such-engine
+  tasks:
+    - name: Check an engine that is not installed
+      block:
+        - name: Check the missing engine
+          ansible.builtin.include_role:
+            name: preflight
+            tasks_from: container_engine_bin
+
+        - name: Fail when the check passed
+          ansible.builtin.fail:
+            msg: container_engine_bin passed for an engine that is not on PATH.
+      rescue:
+        - name: Verify the failure names the engine
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_result.msg is search('no-such-engine')

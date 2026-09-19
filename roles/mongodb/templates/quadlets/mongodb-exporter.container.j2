@@ -36,7 +36,9 @@ Exec=--mongodb.uri=mongodb://localhost:{{ _peer_port }}/?tls=true&tlsCertificate
 Volume={{ mongodb_tls_dir }}/exporter.pem:/etc/mongo/ssl/exporter.pem:ro,Z
 Volume={{ mongodb_tls_dir }}/ca.pem:/etc/mongo/ssl/ca.pem:ro,z
 
-Memory=128m
+Memory={{ mongodb_exporter_mem_limit_mb }}m
+# First in line for the OOM killer — telemetry, nothing depends on it.
+PodmanArgs=--oom-score-adj={{ mongodb_exporter_oom_score_adj }}
 LogDriver=journald
 
 [Service]

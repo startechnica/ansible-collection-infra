@@ -21,6 +21,9 @@ AddCapability=NET_RAW
 Volume={{ vip_manager_dir }}/vip-manager.yml:/etc/default/vip-manager.yml:ro,Z
 Volume={{ vip_manager_certs_dir }}:/etc/certs:ro,Z
 
+# Holds the VIP — a kill moves client traffic. See vip_manager_oom_score_adj.
+PodmanArgs=--oom-score-adj={{ vip_manager_oom_score_adj }}
+
 # vip-manager has no health endpoint of its own. Best proxy for
 # liveness is "can it still talk to etcd?" — without etcd it can't
 # decide who holds the leader key, so the VIP can't move correctly.
