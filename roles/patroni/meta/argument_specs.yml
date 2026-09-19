@@ -562,6 +562,10 @@ argument_specs:
           etcd-snapshot-<STAMP>.db names. Override to pin a custom layout.
 
       # ── PostgreSQL memory (auto-calculated if empty) ──
+      # NOTE: every auto-calculation below derives from TOTAL host RAM and
+      # assumes PostgreSQL is the only significant consumer on the node. On a
+      # host shared with another memory-hungry stack (co-located MongoDB, for
+      # instance) the defaults will over-commit the box — set them explicitly.
       pg_shared_buffers:
         type: str
         default: ""
@@ -569,15 +573,99 @@ argument_specs:
       pg_effective_cache:
         type: str
         default: ""
-        description: Empty = ansible_facts['memtotal_mb'] * 3 / 4.
+        description: >-
+          Planner hint for available OS page cache, not an allocation. Empty =
+          ansible_facts['memtotal_mb'] * 3 / 4, which overstates it on a shared
+          host and biases the planner toward index scans over cache that isn't
+          there.
       pg_work_mem:
         type: str
         default: ""
-        description: Empty = max(mem/64, 4)MB.
+        description: >-
+          Per sort/hash operation, per backend — not a global budget, so the
+          real worst case is this times the concurrent operation count. Empty =
+          max(mem/64, 4)MB.
       pg_maint_mem:
         type: str
         default: ""
-        description: Empty = min(mem/8, 2048)MB.
+        description: >-
+          Per maintenance operation, so up to autovacuum_max_workers of these
+          concurrently. Empty = min(mem/8, 2048)MB.
+
+      # ── Preflight memory budget (shared/_mem_budget.yml) ──
+      patroni_mem_reserved_mb:
+        type: int
+        default: 0
+        description: >-
+          Memory committed on this node by something OTHER than this role — set
+          it on a host that also runs MongoDB so preflight's budget sees the
+          whole picture. Passed to preflight as `container_mem_reserved_mb`.
+          Per-role rather than host-wide on purpose: each role needs
+          "everything except me", so one shared figure would double-count. Also
+          arms the warning that fires when any pg_* memory setting is still
+          auto-calculated from total host RAM on a node with reservations.
+      patroni_stack_overhead_mb:
+        type: int
+        default: 640
+        description: >-
+          Everything this role runs besides PostgreSQL's shared_buffers — etcd,
+          patroni, haproxy, pgbouncer, the VIP manager and the exporter. Only
+          the exporter is capped; the rest are uncapped deliberately, because
+          capping a consensus store or the VIP holder turns memory pressure into
+          a cluster event. One declared estimate rather than a sum of limits,
+          used only by the preflight budget and never enforced. Flat rather than
+          conditional on postgres_exporter_enabled so the whole budget depends
+          on this one defaults file, which is what lets another role import it
+          with a single `defaults_from`.
+      postgres_exporter_mem_limit_mb:
+        type: int
+        default: 128
+        description: >-
+          Exporter container memory cap. Named (rather than hardcoded in the
+          templates) so the preflight memory budget can count it.
+
+      # ── OOM victim selection (oom_score_adj, -1000..1000) ──
+      # Higher = killed first when the HOST (not the cgroup) runs out of memory.
+      # See patroni_oom_score_adj in defaults/main/patroni.yml for the ranking
+      # rationale. Negative values require the rootful Quadlet/compose path.
+      patroni_oom_score_adj:
+        type: int
+        default: -500
+        description: >-
+          Protects the postmaster; a kill costs crash recovery or a failover.
+      patroni_pg_backend_oom_adjust_enabled:
+        type: bool
+        default: true
+        description: >-
+          Set PG_OOM_ADJUST_FILE/VALUE so the postmaster resets each forked
+          backend to a killable score. Without it, backends inherit the
+          postmaster's protection and the kernel targets the postmaster (or
+          another service) instead of a single expendable backend.
+      patroni_pg_backend_oom_score_adj:
+        type: int
+        default: 0
+        description: Score the postmaster assigns to its backends.
+      etcd_oom_score_adj:
+        type: int
+        default: -900
+        description: >-
+          Most protected in the stack — losing the DCS demotes the cluster.
+      haproxy_oom_score_adj:
+        type: int
+        default: -300
+      pgbouncer_oom_score_adj:
+        type: int
+        default: -300
+      keepalived_oom_score_adj:
+        type: int
+        default: -500
+      vip_manager_oom_score_adj:
+        type: int
+        default: -500
+      postgres_exporter_oom_score_adj:
+        type: int
+        default: 1000
+        description: Telemetry only — first in line for the OOM killer.
 
       # ── Monitoring ──
       postgres_exporter_enabled:

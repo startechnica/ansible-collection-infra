@@ -72,3 +72,8 @@ haproxy_tunnel_timeout: "24h"
 # well below haproxy_tunnel_timeout.
 haproxy_client_fin_timeout: "30s"
 haproxy_server_fin_timeout: "30s"
+
+# Host-level OOM victim bias — on the client path, so protected, but less than
+# etcd/Patroni: a restart drops in-flight connections rather than costing
+# recovery or a failover. See patroni_oom_score_adj for the full ranking.
+haproxy_oom_score_adj: -300

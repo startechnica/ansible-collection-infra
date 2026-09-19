@@ -51,9 +51,41 @@ mongodb_image_repository: mongo
 mongodb_image_tag: "{{ mongodb_version }}"
 
 # ── Container resources (MB) ──
+# mongod and configsvr get --wiredTigerCacheSizeGB at 50% of their limit, so
+# they self-throttle and the cgroup cap is a backstop they shouldn't reach.
+# mongos has no such knob: its footprint is per-connection thread stacks,
+# cross-shard sort/merge buffers and the cached routing table, none of which it
+# will voluntarily shrink. For mongos the limit is a cliff, not a ceiling —
+# reaching it is an OOM kill that drops every client connection on the node —
+# so it is budgeted more generously than its idle footprint suggests.
 mongod_mem_limit_mb: 2048
 configsvr_mem_limit_mb: 512
-mongos_mem_limit_mb: 512
+mongos_mem_limit_mb: 1024
+
+# ── OOM victim selection ──
+# Per-container oom_score_adj (-1000..1000, higher = killed first). These only
+# matter once the HOST runs out of memory, which is a real possibility when a
+# node also runs another memory-hungry stack (e.g. co-located Patroni). They
+# matter most without swap: FCOS never has any, so page cache is the only
+# reclaimable memory and the kernel goes straight from "full" to an OOM kill
+# with no paging step. On Ubuntu, swap plus the strict-overcommit sysctls the
+# patroni role applies when swap is present make these a backstop instead.
+#
+# Left at the kernel default (0) the victim is chosen by proportional RSS,
+# i.e. whichever process is biggest — mongod here. That is the most expensive
+# thing to lose, so bias the cheap, restartable processes upward instead and
+# let them absorb the kill:
+#   mongod / configsvr  0     data-bearing; a kill means recovery on restart
+#   mongos              500   stateless router, Restart=always reconnects
+#   pbm-agent           800   backup agent; a missed window is recoverable
+#   exporter            1000  telemetry only, nothing depends on it
+# Negative values are permitted because these units run rootful (Quadlets in
+# /etc/containers/systemd). Set any of these to 0 for the kernel default.
+mongod_oom_score_adj: 0
+configsvr_oom_score_adj: 0
+mongos_oom_score_adj: 500
+mongodb_backup_pbm_oom_score_adj: 800
+mongodb_exporter_oom_score_adj: 1000
 
 # ── Networking ──
 mongodb_network: mongodb-cluster
@@ -191,6 +223,17 @@ mongodb_exporter_enabled: true
 # than implicit.
 mongodb_exporter_image: "docker.io/percona/mongodb_exporter:0.52.0"
 mongodb_exporter_port: 9216
+# Was hardcoded in the Quadlet/compose templates; named so the preflight memory
+# budget can count it instead of silently under-reporting by this much.
+mongodb_exporter_mem_limit_mb: 128
+
+# Extra memory committed on this node that the collection cannot introspect —
+# a non-container daemon, another tenant, something outside this collection.
+# ADDED to preflight's budget on top of what is discovered automatically: when
+# patroni_enabled is true this role imports patroni's own patroni_mem_request_mb
+# rather than asking you to restate it here, so leave this at 0 for a plain
+# mongodb+patroni node.
+mongodb_mem_reserved_mb: 0
 
 # ── Percona Backup for MongoDB (PBM) ──
 # Cluster-consistent backups + point-in-time recovery for SHARDED clusters

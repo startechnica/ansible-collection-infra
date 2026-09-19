@@ -117,7 +117,51 @@ argument_specs:
         default: 512
       mongos_mem_limit_mb:
         type: int
-        default: 512
+        default: 1024
+        description: >-
+          mongos container memory cap. Unlike mongod/configsvr there is no
+          wiredTigerCacheSizeGB equivalent to make the router self-throttle, so
+          reaching this limit is an OOM kill that drops every client connection
+          on the node — budget above the idle footprint.
+
+      # ── OOM victim selection (oom_score_adj, -1000..1000) ──
+      # Higher = killed first when the HOST (not the cgroup) runs out of memory.
+      mongod_oom_score_adj:
+        type: int
+        default: 0
+        description: Data-bearing; left at the kernel default.
+      configsvr_oom_score_adj:
+        type: int
+        default: 0
+        description: Data-bearing; left at the kernel default.
+      mongos_oom_score_adj:
+        type: int
+        default: 500
+        description: >-
+          Biased toward being the victim — a stateless router restarts cleanly,
+          whereas letting the kernel pick by RSS would target mongod instead.
+      mongodb_exporter_oom_score_adj:
+        type: int
+        default: 1000
+        description: Telemetry only — first in line for the OOM killer.
+
+      # ── Preflight memory budget ──
+      mongodb_exporter_mem_limit_mb:
+        type: int
+        default: 128
+        description: >-
+          Exporter container memory cap. Named (rather than hardcoded in the
+          templates) so the preflight memory budget can count it.
+      mongodb_mem_reserved_mb:
+        type: int
+        default: 0
+        description: >-
+          Extra memory committed on this node that the collection cannot
+          introspect — a non-container daemon, another tenant, something outside
+          this collection. Added on top of what is discovered automatically:
+          when `patroni_enabled` is true this role imports patroni's own
+          `patroni_mem_request_mb` rather than asking you to restate it, so a
+          plain mongodb+patroni node leaves this at 0.
 
       # ── TLS / PKI ──
       ssl_days:
@@ -232,6 +276,12 @@ argument_specs:
       mongodb_backup_pbm_mem_limit_mb:
         type: int
         default: 256
+      mongodb_backup_pbm_oom_score_adj:
+        type: int
+        default: 800
+        description: >-
+          Biased toward being the OOM victim ahead of the nodes it backs up — a
+          missed backup window is recoverable, a killed mongod costs recovery.
       mongodb_backup_storage_type:
         type: str
         default: minio

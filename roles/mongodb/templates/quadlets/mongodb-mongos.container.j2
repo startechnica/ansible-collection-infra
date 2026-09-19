@@ -35,8 +35,11 @@ Volume={{ mongodb_tls_dir }}/mongodb-mongos.pem:/etc/mongo/ssl/mongodb-mongos.pe
 Volume={{ mongodb_tls_dir }}/ca.pem:/etc/mongo/ssl/ca.pem:ro,z
 Volume={{ mongodb_tls_dir }}/healthcheck.pem:/etc/mongo/ssl/healthcheck.pem:ro,z
 
+# mongos is the preferred OOM victim by default: stateless router, cheapest
+# thing on the node to lose. See mongos_oom_score_adj in defaults.
 PodmanArgs=--ulimit nofile={{ mongodb_ulimit_nofile }}:{{ mongodb_ulimit_nofile }} \
-          --ulimit nproc=-1:-1
+          --ulimit nproc=-1:-1 \
+          --oom-score-adj={{ mongos_oom_score_adj }}
 
 Memory={{ mongos_mem_limit_mb }}m
 

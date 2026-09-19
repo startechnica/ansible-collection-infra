@@ -9,3 +9,7 @@ vip_manager_version: "4.0.0"
 # air-gapped mirror with a renamed asset, …).
 vip_manager_arch: "{{ _vip_manager_arch }}"
 vip_manager_dir: /opt/vip-manager
+
+# Host-level OOM victim bias — holds the VIP, so a kill moves client traffic to
+# another node. Tiny footprint; protect it. See patroni_oom_score_adj.
+vip_manager_oom_score_adj: -500

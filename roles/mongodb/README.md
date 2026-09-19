@@ -277,6 +277,9 @@ Inputs are validated by [meta/argument_specs.yml](meta/argument_specs.yml). High
 | Backup S3 | `s3_bucket`, `s3_endpoint`, `s3_access_key`, `s3_secret_key`, `mongodb_backup_s3_prefix` |
 | PBM (sharded PITR) | `mongodb_backup_pbm_enabled`, `mongodb_backup_init`, `mongodb_backup_pbm_image`, `mongodb_backup_storage_type`, `mongodb_backup_gcs_bucket`, `mongodb_backup_gcs_service_account`, `mongodb_backup_gcs_prefix`, `mongodb_backup_compression_type`, `mongodb_backup_compression_level`, `mongodb_backup_pbm_mem_limit_mb` (schedule/retention via `mongodb_backup_schedule`/`mongodb_backup_retain_days`) |
 | Monitoring | `mongodb_exporter_enabled`, `mongodb_exporter_port` |
+| Container memory | `mongod_mem_limit_mb`, `configsvr_mem_limit_mb`, `mongos_mem_limit_mb`, `mongodb_exporter_mem_limit_mb`, `mongodb_backup_pbm_mem_limit_mb` (mongod/configsvr also get `--wiredTigerCacheSizeGB` at 50% of their cap; mongos has no such knob, so its cap is a hard cliff) |
+| Memory budget | `mongodb_mem_reserved_mb` — *additive* escape hatch for memory the collection can't introspect. When `patroni_enabled` is true this role imports patroni's own `patroni_mem_request_mb`, so a plain mongodb+patroni node needs no number here |
+| OOM victim order | `mongod_oom_score_adj` / `configsvr_oom_score_adj` (0), `mongos_oom_score_adj` (500), `mongodb_backup_pbm_oom_score_adj` (800), `mongodb_exporter_oom_score_adj` (1000) — applies when the **host** runs out of memory, not when one container hits its own cap |
 | Uninstall | `mongodb_destroy_prune`, `mongodb_skip_confirm` |
 
 ## Artifacts (controller-side)

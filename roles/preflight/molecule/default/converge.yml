@@ -9,3 +9,35 @@
         name: preflight
       vars:
         container_mem_request_mb: 512
+
+    # The memory budget is a safety check, so it gets checked here rather than
+    # only in the developer-run tests/preflight_mem_budget.yml — this scenario is
+    # what CI actually executes. Uses the real memtotal_mb of the container host.
+    - name: "Memory budget :: an impossible request fails under strict"
+      block:
+        - name: "Memory budget :: request twice the host's RAM, strict on"
+          ansible.builtin.include_role:
+            name: preflight
+            tasks_from: memory
+          vars:
+            container_mem_request_mb: "{{ ansible_facts['memtotal_mb'] | int * 2 }}"
+            container_mem_strict: true
+
+        - name: "Memory budget :: strict mode should not have reached here"
+          ansible.builtin.fail:
+            msg: >-
+              container_mem_strict=true must fail when the committed total
+              exceeds total RAM, but the check passed.
+      rescue:
+        - name: "Memory budget :: strict mode correctly aborted"
+          ansible.builtin.debug:
+            msg: "strict mode failed as expected on an impossible request"
+
+    # Same impossible request with strict off must be advisory only, so an
+    # already over-committed host stays manageable.
+    - name: "Memory budget :: the same request is advisory by default"
+      ansible.builtin.include_role:
+        name: preflight
+        tasks_from: memory
+      vars:
+        container_mem_request_mb: "{{ ansible_facts['memtotal_mb'] | int * 2 }}"

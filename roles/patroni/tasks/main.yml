@@ -93,9 +93,21 @@
 # ── System-level preflight role (engine-agnostic basics) ─────────────────────
 # Skipped on uninstall/status/etc. so we don't burn cycles on kernel /
 # time-sync / ulimit checks just to tear things down or read state.
+
+# Runs before preflight so the co-located-stack warning lands next to the memory
+# budget it's about. The budget itself needs no task — patroni_mem_request_mb is
+# a lazy expression in vars/main/memory.yml.
+- name: Check for auto-sized PostgreSQL memory on a shared host
+  ansible.builtin.include_tasks: shared/_mem_budget.yml
+
 - name: Run preflight role (system + container engine + venv)
   ansible.builtin.include_role:
     name: preflight
+  vars:
+    container_mem_request_mb: "{{ patroni_mem_request_mb }}"
+    # See mongodb/tasks/main.yml for why this is a per-role var and not one
+    # host-wide figure: each role needs "everything except me".
+    container_mem_reserved_mb: "{{ patroni_mem_reserved_mb | default(0) }}"
   when: >-
     patroni_action in
     ['provision', 'backup', 'manage-databases', 'rotate-passwords', 'renew-certs']

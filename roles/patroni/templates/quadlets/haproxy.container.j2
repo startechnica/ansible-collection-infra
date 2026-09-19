@@ -15,7 +15,7 @@ Network=host
 Volume={{ haproxy_dir }}/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro,Z
 Volume={{ haproxy_certs_dir }}:/etc/certs:ro,z
 
-PodmanArgs=--ulimit nofile=65536:65536
+PodmanArgs=--ulimit nofile=65536:65536 --oom-score-adj={{ haproxy_oom_score_adj }}
 
 # Stats endpoint always returns 200 once haproxy has parsed its config
 # and is accepting connections — proves both the process is up and the

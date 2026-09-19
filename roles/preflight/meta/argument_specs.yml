@@ -15,8 +15,34 @@ argument_specs:
       container_mem_request_mb:
         type: int
         description: >-
-          Total RAM requested by containers on this host (MB). Used for a
-          sanity warning when ansible_facts['memtotal_mb'] is below the request.
+          RAM the CALLING role is about to commit on this host (MB) — container
+          memory caps plus any in-process allocation the role configures, such
+          as PostgreSQL's shared_buffers. Leave unset to skip the memory check
+          entirely.
+      container_mem_reserved_mb:
+        type: int
+        default: 0
+        description: >-
+          RAM already committed on this host by something OUTSIDE the calling
+          role — a second stack on the same node, a non-container daemon. Roles
+          cannot discover one another, so this is inventory's job: on a node
+          running both mongodb and patroni, set it to the other stack's total
+          so each run sees the whole budget.
+      container_mem_headroom_pct:
+        type: int
+        default: 15
+        description: >-
+          Share of total RAM deliberately left unbudgeted for the kernel, page
+          cache and anything not counted above. The check warns once the
+          committed total crosses `memtotal_mb * (100 - this) / 100`, rather
+          than waiting for it to exceed RAM outright.
+      container_mem_strict:
+        type: bool
+        default: false
+        description: >-
+          Fail the run when the committed total exceeds total RAM, instead of
+          warning. Off by default so an already over-committed host stays
+          manageable; the headroom warning is advisory either way.
       service_venv_path:
         type: str
         default: /opt/ansible-venv

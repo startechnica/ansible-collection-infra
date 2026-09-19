@@ -1,0 +1,326 @@
+---
+# Regression coverage for host-level OOM victim selection.
+#
+# The failure this guards against is silent in the worst way: if any container
+# stops emitting its oom_score_adj it simply reverts to the kernel default of
+# 0, and nothing fails, logs or alerts. The node keeps working — right up until
+# it runs out of memory, at which point the kernel picks by proportional RSS
+# and kills whichever process is biggest (PostgreSQL, or mongod) instead of the
+# cheap restartable one we nominated. That only shows up as an outage, months
+# later, on the one node under real pressure.
+#
+# Two plays, one per role: `export_vars` imports are play-wide, and the mongodb
+# and patroni roles share variable names (s3_*, node_ip, …), so importing both
+# into one play would let one role's defaults shadow the other's.
+#
+# Run from collection root:
+#   ansible-playbook tests/oom_score_adj.yml
+
+- name: "OOM :: patroni stack"
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  vars:
+    _oom_dir: /tmp/oom-score-adj-test/patroni
+    # Node identity the etcd/patroni templates expect from the inventory.
+    node_ip: 10.0.0.11
+    node_ips: [10.0.0.11, 10.0.0.12, 10.0.0.13]
+    etcd_cluster_state: new
+    postgresql_postgres_password: test-only
+    # Normally derived by shared/_computed_vars.yml from patroni_vip_address,
+    # but that task file needs a `patroni_nodes` inventory group — set the two
+    # flags the compose template reads directly instead.
+    patroni_vip_enabled: true
+    use_vip_manager: true
+    # Off by default, so the exporter service would not render at all.
+    postgres_exporter_enabled: true
+    # Each Quadlet paired with the variable whose value it must render.
+    _patroni_oom_units:
+      - {unit: etcd, expect: "{{ etcd_oom_score_adj }}"}
+      - {unit: patroni, expect: "{{ patroni_oom_score_adj }}"}
+      - {unit: haproxy, expect: "{{ haproxy_oom_score_adj }}"}
+      - {unit: pgbouncer, expect: "{{ pgbouncer_oom_score_adj }}"}
+      - {unit: keepalived, expect: "{{ keepalived_oom_score_adj }}"}
+      - {unit: vip-manager, expect: "{{ vip_manager_oom_score_adj }}"}
+      - {unit: postgres-exporter, expect: "{{ postgres_exporter_oom_score_adj }}"}
+
+  tasks:
+    # Loads every file in patroni's defaults/main/ and vars/main/ — the same
+    # variables the role sees. Runs no tasks.
+    - name: "Patroni :: import role variables"
+      ansible.builtin.import_role:
+        name: patroni
+        tasks_from: export_vars
+
+    - name: "Patroni :: verify the default ranking holds as an ordering"
+      ansible.builtin.assert:
+        that:
+          # etcd must outlive everything: losing the DCS makes Patroni demote
+          # the primary cluster-wide, which is strictly worse than any single
+          # container dying.
+          - etcd_oom_score_adj < patroni_oom_score_adj
+          - etcd_oom_score_adj < haproxy_oom_score_adj
+          - etcd_oom_score_adj < pgbouncer_oom_score_adj
+          # The data/VIP path is protected; telemetry is expendable.
+          - patroni_oom_score_adj < 0
+          - keepalived_oom_score_adj < 0
+          - vip_manager_oom_score_adj < 0
+          - postgres_exporter_oom_score_adj > 0
+          # Everything stays inside the kernel's accepted range.
+          - etcd_oom_score_adj >= -1000
+          - postgres_exporter_oom_score_adj <= 1000
+        fail_msg: >-
+          The OOM ranking no longer holds. etcd must be the most protected
+          container in the stack and the exporter the least — see
+          patroni_oom_score_adj in roles/patroni/defaults/main/patroni.yml.
+
+    - name: "Patroni :: verify documented default values"
+      ansible.builtin.assert:
+        that:
+          - etcd_oom_score_adj == -900
+          - patroni_oom_score_adj == -500
+          - keepalived_oom_score_adj == -500
+          - vip_manager_oom_score_adj == -500
+          - haproxy_oom_score_adj == -300
+          - pgbouncer_oom_score_adj == -300
+          - postgres_exporter_oom_score_adj == 1000
+          - patroni_pg_backend_oom_adjust_enabled | bool
+          - patroni_pg_backend_oom_score_adj == 0
+
+    - name: "Patroni :: recreate render directory"
+      ansible.builtin.file:
+        path: "{{ _oom_dir }}"
+        state: "{{ _oom_state }}"
+        mode: "0755"
+      loop: [absent, directory]
+      loop_control:
+        loop_var: _oom_state
+
+    - name: "Patroni :: render every Quadlet that sets a score"
+      ansible.builtin.template:
+        src: "../roles/patroni/templates/quadlets/{{ item.unit }}.container.j2"
+        dest: "{{ _oom_dir }}/{{ item.unit }}.container"
+        mode: "0644"
+      loop: "{{ _patroni_oom_units }}"
+      loop_control:
+        label: "{{ item.unit }}"
+
+    - name: "Patroni :: read rendered Quadlets"
+      ansible.builtin.slurp:
+        src: "{{ _oom_dir }}/{{ item.unit }}.container"
+      loop: "{{ _patroni_oom_units }}"
+      loop_control:
+        label: "{{ item.unit }}"
+      register: _patroni_rendered
+
+    # Quadlet PodmanArgs= may wrap across lines with a trailing backslash, so
+    # match the flag anywhere in the file rather than anchoring to a line.
+    - name: "Patroni :: verify each unit carries its own score"
+      ansible.builtin.assert:
+        that:
+          - _found | length == 1
+          - _found[0] | int == item.item.expect | int
+        fail_msg: >-
+          {{ item.item.unit }}.container should pass
+          --oom-score-adj={{ item.item.expect }} to podman, found {{ _found }}.
+          Without it the container reverts to the kernel default of 0 and the
+          OOM killer picks by RSS instead.
+      loop: "{{ _patroni_rendered.results }}"
+      loop_control:
+        label: "{{ item.item.unit }}"
+      vars:
+        _found: "{{ item.content | b64decode | regex_findall('--oom-score-adj=(-?[0-9]+)') }}"
+
+    - name: "Patroni :: verify the postmaster resets its backends"
+      ansible.builtin.assert:
+        that:
+          - "'Environment=PG_OOM_ADJUST_FILE=/proc/self/oom_score_adj' in _unit"
+          - "'Environment=PG_OOM_ADJUST_VALUE=' ~ patroni_pg_backend_oom_score_adj in _unit"
+        fail_msg: >-
+          patroni.container is missing PG_OOM_ADJUST_FILE/VALUE. Backends would
+          inherit the postmaster's protected score, so under host pressure the
+          kernel skips PostgreSQL or kills the postmaster itself — taking the
+          instance down instead of one expendable backend.
+      vars:
+        _unit: "{{ _patroni_rendered.results[1].content | b64decode }}"
+
+    - name: "Patroni :: render patroni.container with backend adjustment off"
+      ansible.builtin.template:
+        src: ../roles/patroni/templates/quadlets/patroni.container.j2
+        dest: "{{ _oom_dir }}/patroni-no-pg-adjust.container"
+        mode: "0644"
+      vars:
+        patroni_pg_backend_oom_adjust_enabled: false
+
+    # Matches the directives, not the surrounding comments — prose is free to
+    # mention PG_OOM_ADJUST while explaining the opt-out.
+    - name: "Patroni :: verify the opt-out drops only the PG_OOM_ADJUST pair"
+      ansible.builtin.assert:
+        that:
+          - "'Environment=PG_OOM_ADJUST' not in _unit"
+          # The container's own score is independent of the backend knob.
+          - "'--oom-score-adj=' ~ patroni_oom_score_adj in _unit"
+      vars:
+        _unit: "{{ lookup('file', _oom_dir ~ '/patroni-no-pg-adjust.container') }}"
+
+    # Both VIP engines: the compose template renders vip-manager or keepalived
+    # exclusively, so one render can only ever cover one of them.
+    - name: "Patroni :: render the compose stack for each VIP engine"
+      ansible.builtin.template:
+        src: ../roles/patroni/templates/compose/docker-compose.yml.j2
+        dest: "{{ _oom_dir }}/docker-compose-{{ 'vip-manager' if _use_vipmgr else 'keepalived' }}.yml"
+        mode: "0644"
+      vars:
+        use_vip_manager: "{{ _use_vipmgr }}"
+      loop: [true, false]
+      loop_control:
+        loop_var: _use_vipmgr
+
+    - name: "Patroni :: verify compose carries the same scores as the Quadlets"
+      ansible.builtin.assert:
+        that:
+          - _svc.etcd.oom_score_adj | int == etcd_oom_score_adj | int
+          - _svc.patroni.oom_score_adj | int == patroni_oom_score_adj | int
+          - _svc.haproxy.oom_score_adj | int == haproxy_oom_score_adj | int
+          - _svc.pgbouncer.oom_score_adj | int == pgbouncer_oom_score_adj | int
+          - _svc['postgres-exporter'].oom_score_adj | int == postgres_exporter_oom_score_adj | int
+          - _svc['vip-manager'].oom_score_adj | int == vip_manager_oom_score_adj | int
+          - _svc.patroni.environment.PG_OOM_ADJUST_FILE == '/proc/self/oom_score_adj'
+          - _svc.patroni.environment.PG_OOM_ADJUST_VALUE | int == patroni_pg_backend_oom_score_adj | int
+        fail_msg: >-
+          The compose path has drifted from the Quadlet path. Both engines must
+          apply the same ranking or the same inventory behaves differently
+          depending on container_engine.
+      vars:
+        _svc: "{{ (lookup('file', _oom_dir ~ '/docker-compose-vip-manager.yml') | from_yaml).services }}"
+
+    - name: "Patroni :: verify the keepalived branch is scored too"
+      ansible.builtin.assert:
+        that:
+          - _svc.keepalived.oom_score_adj | int == keepalived_oom_score_adj | int
+          - "'vip-manager' not in _svc"
+      vars:
+        _svc: "{{ (lookup('file', _oom_dir ~ '/docker-compose-keepalived.yml') | from_yaml).services }}"
+
+- name: "OOM :: mongodb stack"
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  vars:
+    _oom_dir: /tmp/oom-score-adj-test/mongodb
+    mongodb_nodes:
+      - {name: db-1, ipv4: 10.0.0.11}
+      - {name: db-2, ipv4: 10.0.0.12}
+      - {name: db-3, ipv4: 10.0.0.13}
+    # The PBM Quadlet is rendered once per data-bearing node, parameterized by
+    # `_pbm_agent` — mirror the shard entry that tasks/pbm.yml builds.
+    _pbm_agent:
+      name: mongodb-pbm-shard
+      role: shard
+      svc: mongodb-mongod
+      port: "{{ mongodb_mongod_node_port }}"
+    # Each Quadlet paired with the variable whose value it must render.
+    _mongodb_oom_units:
+      - {unit: mongodb-mongod, expect: "{{ mongod_oom_score_adj }}"}
+      - {unit: mongodb-configsvr, expect: "{{ configsvr_oom_score_adj }}"}
+      - {unit: mongodb-mongos, expect: "{{ mongos_oom_score_adj }}"}
+      - {unit: mongodb-pbm, expect: "{{ mongodb_backup_pbm_oom_score_adj }}"}
+      - {unit: mongodb-exporter, expect: "{{ mongodb_exporter_oom_score_adj }}"}
+
+  tasks:
+    - name: "Mongodb :: import role variables"
+      ansible.builtin.import_role:
+        name: mongodb
+        tasks_from: export_vars
+
+    - name: "Mongodb :: verify the default ranking holds as an ordering"
+      ansible.builtin.assert:
+        that:
+          # The data-bearing nodes must never be a more attractive target than
+          # the stateless router or the backup agent in front of them.
+          - mongod_oom_score_adj < mongos_oom_score_adj
+          - configsvr_oom_score_adj < mongos_oom_score_adj
+          - mongos_oom_score_adj < mongodb_backup_pbm_oom_score_adj
+          - mongodb_backup_pbm_oom_score_adj < mongodb_exporter_oom_score_adj
+          - mongodb_exporter_oom_score_adj <= 1000
+        fail_msg: >-
+          The OOM ranking no longer holds. mongod/configsvr hold data and must
+          be the last to be killed; mongos, the PBM agent and the exporter are
+          the cheap victims — see mongod_oom_score_adj in
+          roles/mongodb/defaults/main.yml.
+
+    - name: "Mongodb :: verify documented default values"
+      ansible.builtin.assert:
+        that:
+          - mongod_oom_score_adj == 0
+          - configsvr_oom_score_adj == 0
+          - mongos_oom_score_adj == 500
+          - mongodb_backup_pbm_oom_score_adj == 800
+          - mongodb_exporter_oom_score_adj == 1000
+          # mongos has no wiredTigerCacheSizeGB equivalent, so its cap is a
+          # cliff rather than a ceiling and is budgeted above idle footprint.
+          - mongos_mem_limit_mb == 1024
+
+    - name: "Mongodb :: recreate render directory"
+      ansible.builtin.file:
+        path: "{{ _oom_dir }}"
+        state: "{{ _oom_state }}"
+        mode: "0755"
+      loop: [absent, directory]
+      loop_control:
+        loop_var: _oom_state
+
+    - name: "Mongodb :: render every Quadlet that sets a score"
+      ansible.builtin.template:
+        src: "../roles/mongodb/templates/quadlets/{{ item.unit }}.container.j2"
+        dest: "{{ _oom_dir }}/{{ item.unit }}.container"
+        mode: "0644"
+      loop: "{{ _mongodb_oom_units }}"
+      loop_control:
+        label: "{{ item.unit }}"
+
+    - name: "Mongodb :: read rendered Quadlets"
+      ansible.builtin.slurp:
+        src: "{{ _oom_dir }}/{{ item.unit }}.container"
+      loop: "{{ _mongodb_oom_units }}"
+      loop_control:
+        label: "{{ item.unit }}"
+      register: _mongodb_rendered
+
+    - name: "Mongodb :: verify each unit carries its own score"
+      ansible.builtin.assert:
+        that:
+          - _found | length == 1
+          - _found[0] | int == item.item.expect | int
+        fail_msg: >-
+          {{ item.item.unit }}.container should pass
+          --oom-score-adj={{ item.item.expect }} to podman, found {{ _found }}.
+      loop: "{{ _mongodb_rendered.results }}"
+      loop_control:
+        label: "{{ item.item.unit }}"
+      vars:
+        _found: "{{ item.content | b64decode | regex_findall('--oom-score-adj=(-?[0-9]+)') }}"
+
+    - name: "Mongodb :: render the compose stack (sharded)"
+      ansible.builtin.template:
+        src: ../roles/mongodb/templates/docker-compose.yml.j2
+        dest: "{{ _oom_dir }}/docker-compose.yml"
+        mode: "0644"
+      vars:
+        mongodb_cluster_type: sharded
+
+    - name: "Mongodb :: verify compose carries the same scores as the Quadlets"
+      ansible.builtin.assert:
+        that:
+          - _svc.mongod.oom_score_adj | int == mongod_oom_score_adj | int
+          - _svc.configsvr.oom_score_adj | int == configsvr_oom_score_adj | int
+          - _svc.mongos.oom_score_adj | int == mongos_oom_score_adj | int
+          - _svc['mongodb-exporter'].oom_score_adj | int == mongodb_exporter_oom_score_adj | int
+          # The compose cap must track the same variable the Quadlet uses.
+          - _svc.mongos.deploy.resources.limits.memory == mongos_mem_limit_mb ~ 'm'
+        fail_msg: >-
+          The compose path has drifted from the Quadlet path. Both engines must
+          apply the same ranking or the same inventory behaves differently
+          depending on container_engine.
+      vars:
+        _svc: "{{ (lookup('file', _oom_dir ~ '/docker-compose.yml') | from_yaml).services }}"

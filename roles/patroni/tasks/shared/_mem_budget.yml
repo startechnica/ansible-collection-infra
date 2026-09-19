@@ -1,0 +1,26 @@
+---
+# The one memory check that needs a task rather than a variable.
+#
+# The budget itself (patroni_mem_request_mb) is a lazy expression in
+# vars/main/memory.yml, not a fact, so nothing here has to compute it — see that
+# file for why. preflight reads it directly as container_mem_request_mb.
+#
+# What's left is this warning, which fires on the precise shape of the failure
+# that prompted the whole memory-budget rework: PostgreSQL sizing itself off
+# TOTAL host RAM while something else already owns a large share of it. Neither
+# role can see the other, so this is the only place the contradiction is visible.
+
+- name: Warn when PostgreSQL auto-sizes on a host with other reservations
+  ansible.builtin.debug:
+    msg: >-
+      WARNING: {{ patroni_pg_autosized | join(', ') }}
+      {{ 'is' if patroni_pg_autosized | length == 1 else 'are' }}
+      auto-calculated from TOTAL host RAM
+      ({{ ansible_facts['memtotal_mb'] | default('unknown') }}MB), but
+      patroni_mem_reserved_mb says {{ patroni_mem_reserved_mb }}MB is already
+      committed on this host by another stack. The auto-calculation cannot see
+      that reservation, so it will over-commit the node — pin
+      {{ patroni_pg_autosized | join(', ') }} explicitly in inventory.
+  when:
+    - (patroni_mem_reserved_mb | default(0) | int) > 0
+    - patroni_pg_autosized | length > 0

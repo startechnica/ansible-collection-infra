@@ -103,3 +103,7 @@ pgbouncer_client_tls_protocols: "secure"
 # separately and unaffected). Shortcuts: default / secure / fast / normal,
 # or any OpenSSL cipher string.
 pgbouncer_client_tls_ciphers: "default"
+
+# Host-level OOM victim bias — same reasoning as haproxy_oom_score_adj: on the
+# client path, cheap to restart. See patroni_oom_score_adj for the ranking.
+pgbouncer_oom_score_adj: -300

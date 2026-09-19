@@ -289,8 +289,130 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   `include_role: {name: preflight, tasks_from: patroni_vip}`. It imports only
   patroni's VIP settings (`defaults_from: main/vip.yml`), not the rest of
   patroni's variables. Regression coverage: `tests/preflight_patroni_vip.yml`.
+- **OOM victim selection across the `mongodb` and `patroni` containers.** Every
+  long-lived container in both roles now sets `oom_score_adj` (podman
+  `--oom-score-adj` on the Quadlet path, the `oom_score_adj` service key on the
+  compose path), tunable per component:
+
+  | Container | Variable | Default |
+  | --- | --- | --- |
+  | etcd | `etcd_oom_score_adj` | -900 |
+  | patroni / postgres | `patroni_oom_score_adj` | -500 |
+  | keepalived | `keepalived_oom_score_adj` | -500 |
+  | vip-manager | `vip_manager_oom_score_adj` | -500 |
+  | haproxy | `haproxy_oom_score_adj` | -300 |
+  | pgbouncer | `pgbouncer_oom_score_adj` | -300 |
+  | mongod | `mongod_oom_score_adj` | 0 |
+  | configsvr | `configsvr_oom_score_adj` | 0 |
+  | mongos | `mongos_oom_score_adj` | 500 |
+  | pbm-agent | `mongodb_backup_pbm_oom_score_adj` | 800 |
+  | exporters | `{mongodb,postgres}_exporter_oom_score_adj` | 1000 |
+
+  These only take effect once the **host** runs out of memory, as opposed to a
+  single container hitting its own cgroup cap — a live risk whenever one node
+  runs both stacks. How much they matter depends on swap, which patroni's
+  `shared/os_tuning.yml` detects per host with `swapon --show` rather than
+  assuming per platform. Where swap exists (Ubuntu) it also applies
+  `vm.overcommit_memory=2` / `vm.overcommit_ratio=80`, so the kernel refuses
+  allocations past CommitLimit and a spike surfaces as ENOMEM — these scores
+  are a backstop. On Fedora CoreOS, which never has swap, that block is
+  skipped, page cache is the only reclaimable memory and the kernel goes
+  straight from "full" to an OOM kill with no paging step, so victim selection
+  is the primary lever.
+
+  Previously every container sat at the kernel default of 0, so the victim was
+  whichever process had the largest proportional RSS — PostgreSQL or mongod,
+  the two most expensive things on the node to lose. The defaults above rank by
+  what a kill actually costs instead: etcd is protected hardest because losing
+  the DCS makes Patroni demote the primary cluster-wide, while a stateless
+  mongos, a backup agent and the exporters are pushed forward as cheap,
+  restartable victims. Set any value to 0 for the kernel default. Regression
+  coverage: `tests/oom_score_adj.yml`, which asserts the ranking as an ordering
+  (not just literal values) and that the Quadlet and compose paths agree.
+- **PostgreSQL backend OOM adjustment** (`patroni_pg_backend_oom_adjust_enabled`,
+  default true, and `patroni_pg_backend_oom_score_adj`, default 0). The patroni
+  container — and so the postmaster — now runs at a protected (negative) score,
+  and without this every backend it forks would inherit that protection: under
+  host pressure the kernel would skip PostgreSQL entirely or pick the postmaster
+  and take the whole instance down with it. Setting `PG_OOM_ADJUST_FILE` and
+  `PG_OOM_ADJUST_VALUE` makes the postmaster reset each child to a killable
+  score, so a single backend becomes the victim and PostgreSQL does crash
+  recovery instead of Patroni failing the node over. This is PostgreSQL's
+  documented mechanism (9.5+); raising a child's `oom_score_adj` never requires
+  privileges. Set the flag to false to leave backends protected.
 
 ### Changed
+- **The preflight memory check now models the whole host, and can fail.** It was
+  a `debug` line comparing mongodb's container caps against total RAM, and it had
+  three defects that combined into silence on exactly the hosts it existed for:
+  `patroni` called preflight but passed no request at all, so PostgreSQL hosts
+  had no memory check whatsoever; mongodb's sum omitted the PBM agents and the
+  exporter, understating a sharded node by 640MB; and the threshold was "greater
+  than 100% of RAM", which only trips once the host is already doomed.
+
+  What changed:
+  - **`patroni` now passes a request.** New `vars/main/memory.yml` resolves
+    `pg_shared_buffers` (including its `2GB`/`524288kB` suffix forms, and the
+    auto-calculated case — preflight runs *before* that `set_fact`) and adds
+    `patroni_stack_overhead_mb` (640) for etcd, patroni, haproxy, pgbouncer, the
+    VIP manager and the exporter. Only the exporter is capped; the rest are
+    uncapped by design, since capping a consensus store or the VIP holder turns
+    memory pressure into a cluster event — so it's one declared estimate, not a
+    sum of limits. These are lazy expressions rather than `set_fact`s so another
+    role can read them via `export_vars` without this role having run first.
+  - **mongodb's sum is complete**: PBM agents (one per data-bearing node, so two
+    when sharded) and the exporter are counted.
+  - **New `container_mem_reserved_mb`**, so a node running both stacks sees the
+    whole budget. The mongodb role fills it in by *importing patroni's own*
+    `patroni_mem_request_mb` (`tasks_from: export_vars`), so there is no second
+    copy of that number to keep in step. The import is deliberately narrow —
+    `defaults_from: main/postgresql.yml`, `vars_from: main/memory.yml` — because
+    patroni and mongodb both define `tls_key_curve` with *different* defaults
+    (secp384r1 vs secp256r1), and a wholesale defaults import would silently
+    change the curve of every certificate the importing role then generates.
+    `tests/preflight_mem_budget.yml` asserts that specific leak cannot happen.
+
+    The reverse direction still needs a declared number,
+    `patroni_mem_reserved_mb`: `roles/mongodb/defaults/main.yml` is one
+    monolithic file, so `defaults_from` cannot narrow it and patroni can't import
+    it safely. Splitting mongodb's defaults into topic files (as patroni's
+    already are) would make the discovery symmetric and retire that var.
+    `mongodb_mem_reserved_mb` remains as an additive escape hatch for anything
+    outside the collection.
+  - **New `container_mem_headroom_pct`** (15) warns once the committed total
+    crosses `RAM * 85%`, instead of waiting for it to exceed RAM outright.
+  - **New `container_mem_strict`** (false) turns "over total RAM" into a hard
+    failure. Off by default so an already over-committed host stays manageable.
+  - `mongodb_exporter_mem_limit_mb` and `postgres_exporter_mem_limit_mb` (both
+    128) replace the hardcoded `128m` in the templates, so the budget can count
+    them.
+
+  Honest about the limit: `work_mem` and `maintenance_work_mem` are
+  per-operation, so a static sum of caps can never bound them — the check makes
+  the committed total visible and complete, and fails on the gross case. It also
+  warns when any `pg_*` memory setting is still auto-calculated from total host
+  RAM on a node that declares a reservation, which is the precise shape of the
+  failure that prompted this. Regression coverage:
+  `tests/preflight_mem_budget.yml` (suffix parsing, both roles' aggregates,
+  strict-mode boundaries at exactly RAM and RAM+1) plus strict-mode coverage in
+  the preflight molecule scenario, which is what CI actually runs.
+- **Raised `mongos_mem_limit_mb` from 512 to 1024.** mongod and configsvr get
+  `--wiredTigerCacheSizeGB` at 50% of their cap, so they self-throttle and the
+  cgroup limit is a backstop they should never reach. mongos has no equivalent
+  knob: its footprint is per-connection thread stacks, cross-shard sort/merge
+  buffers and the cached routing table, none of which it will voluntarily
+  shrink. For mongos the limit is therefore a cliff, not a ceiling — reaching
+  it is an OOM kill that drops every client connection routed through that
+  node, while mongod under the same pressure merely degrades. 512 MB also sat
+  badly against `mongodb_ulimit_nofile: 64000`, advertising room for tens of
+  thousands of connections while budgeting for a few hundred. Nodes already
+  running mongos will use up to 512 MB more; on a host shared with another
+  memory-hungry stack, check the total budget before upgrading.
+- **Raised minimum `netbox.netbox` to `>=3.23.0` and `community.mongodb` to
+  `>=1.8.0`** in `galaxy.yml` and `requirements.yml`. `netbox.netbox` 3.23.0
+  stops importing `ansible.module_utils._text`, which ansible-core 2.20+ reports
+  as deprecated (removal in 2.24). `community.mongodb` 1.8.0 still uses that
+  import, so MongoDB runs keep the warning until a later release.
 - **`patroni` defaults and vars are split into one file per component.**
   `roles/patroni/defaults/main.yml` is now a `defaults/main/` directory:
   `patroni.yml`, `postgresql.yml`, `etcd.yml`, `haproxy.yml`, `pgbouncer.yml`,
@@ -304,6 +426,12 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   along). Playbooks or tests that load `roles/patroni/defaults/main.yml` by path
   must import the role instead:
   `import_role: {name: patroni, tasks_from: export_vars}`.
+- **`patroni` HAProxy servers are named by node hostname.** The `server` lines
+  in `pg-primary`, `pg-replicas` and `pg-direct` now use the node's inventory
+  hostname as the server name instead of its IP; the address is still the IP.
+  The stats page and the Prometheus `server` label change with it, so update
+  dashboards or alerts that match a server by IP. The next deploy re-renders
+  `haproxy.cfg` and restarts HAProxy.
 - **`grafana_alloy` engine fallback follows `instance_platform_preset`.**
   `grafana_alloy_container_engine` now defaults to common's
   `_resolved_container_engine` (loaded through `common` `export_vars`) instead

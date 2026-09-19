@@ -17,7 +17,7 @@ Volume={{ pgbouncer_dir }}/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro,Z
 Volume={{ pgbouncer_dir }}/userlist.txt:/etc/pgbouncer/userlist.txt:ro,Z
 Volume={{ pgbouncer_certs_dir }}:/etc/certs:ro,Z
 
-PodmanArgs=--ulimit nofile=65536:65536
+PodmanArgs=--ulimit nofile=65536:65536 --oom-score-adj={{ pgbouncer_oom_score_adj }}
 
 LogDriver=journald
 

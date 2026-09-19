@@ -41,3 +41,47 @@ patroni_api_port: 8008
 patroni_uid: 999
 patroni_gid: 999
 patroni_dir: /opt/patroni
+
+# ── OOM victim selection ──
+# Per-container oom_score_adj (-1000..1000, higher = killed first). These decide
+# who dies when the HOST runs out of memory — distinct from a single container
+# hitting its own cgroup cap, which kills only that container.
+#
+# How much they matter depends on swap, which shared/os_tuning.yml detects per
+# host with `swapon --show` rather than assuming per platform:
+#   Ubuntu (swap present)  vm.overcommit_memory=2 + overcommit_ratio=80 are
+#                          applied, so the kernel refuses allocations past
+#                          CommitLimit and a spike surfaces as ENOMEM, with
+#                          swap absorbing the rest at swappiness=1. These
+#                          scores are a backstop for when it still goes wrong.
+#   FCOS (never has swap)  the overcommit block is skipped, page cache is the
+#                          only reclaimable memory, and the kernel goes
+#                          straight from "full" to an OOM kill with no paging
+#                          step. These scores are the primary lever.
+# Either way a node running a second memory-hungry stack (co-located MongoDB,
+# say) is the case that makes host-level OOM realistic.
+#
+# Left at the kernel default (0) the victim is chosen by proportional RSS, so
+# the biggest process dies — here PostgreSQL, one of the two most expensive
+# things on the box. Rank by what a kill actually costs instead:
+#   etcd                -900   losing the DCS demotes the whole cluster
+#   patroni/postgres    -500   kill means crash recovery, or failover
+#   keepalived/vip-mgr  -500   holds the VIP; a kill moves client traffic
+#   haproxy/pgbouncer   -300   the client path; cheap to restart, not free
+#   postgres-exporter   1000   telemetry only, nothing depends on it
+# Negative values are permitted because these units run rootful (Quadlets in
+# /etc/containers/systemd). Set any of these to 0 for the kernel default.
+patroni_oom_score_adj: -500
+
+# PostgreSQL's own OOM handling, layered on top of patroni_oom_score_adj. The
+# postmaster inherits the container's protected score, and without this every
+# backend it forks would inherit that protection too — so under host pressure
+# the kernel would skip PostgreSQL entirely and kill something else, or pick the
+# postmaster and take the whole instance down with it. Setting these makes the
+# postmaster reset each child's score to patroni_pg_backend_oom_score_adj, so a
+# single backend is the victim: PostgreSQL does crash recovery and stays up,
+# instead of Patroni failing the node over. This is PostgreSQL's documented
+# mechanism (PG 9.5+); raising a child's score never needs privileges.
+# Set patroni_pg_backend_oom_adjust_enabled: false to leave children protected.
+patroni_pg_backend_oom_adjust_enabled: true
+patroni_pg_backend_oom_score_adj: 0

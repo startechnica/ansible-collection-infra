@@ -52,8 +52,11 @@ Volume={{ mongodb_tls_dir }}/ca.pem:/etc/mongo/ssl/ca.pem:ro,z
 Volume={{ mongodb_tls_dir }}/healthcheck.pem:/etc/mongo/ssl/healthcheck.pem:ro,z
 
 # Quadlet doesn't have a direct `ulimits` mapping — pass through to podman run.
+# --oom-score-adj biases host-level OOM victim selection; see
+# mongod_oom_score_adj in defaults for the ranking rationale.
 PodmanArgs=--ulimit nofile={{ mongodb_ulimit_nofile }}:{{ mongodb_ulimit_nofile }} \
-          --ulimit nproc=-1:-1
+          --ulimit nproc=-1:-1 \
+          --oom-score-adj={{ mongod_oom_score_adj }}
 
 # Resource limits
 Memory={{ mongod_mem_limit_mb }}m

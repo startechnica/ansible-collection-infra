@@ -34,6 +34,29 @@ patroni_backup_dir: "{{ postgresql_dir }}/backups"
 wal_archive_dir: "{{ postgresql_dir }}/wal_archive"
 
 # PostgreSQL memory (auto-calculated if empty)
+# Everything this role runs on the node BESIDES PostgreSQL's shared_buffers:
+# etcd, patroni itself, haproxy, pgbouncer, the VIP manager and the exporter.
+# Only the exporter sets a Memory= cap; the rest are uncapped deliberately,
+# because capping a consensus store or the holder of the VIP turns memory
+# pressure into a cluster event. So this is one declared estimate rather than a
+# sum of limits, and it is only ever used by the preflight memory budget
+# (vars/main/memory.yml), never enforced.
+#
+# Deliberately flat, and deliberately not conditional on
+# postgres_exporter_enabled: it lets the whole budget depend on THIS defaults
+# file alone, which is what allows another role to import it with a single
+# `defaults_from` and none of patroni's other topics. Cost of that choice is
+# over-budgeting by ~128MB when the exporter is off — the conservative
+# direction, on an estimate that is already approximate.
+patroni_stack_overhead_mb: 640
+
+# Memory committed on this node by something OTHER than this role — set it on a
+# host that also runs MongoDB (or anything else sizeable) so preflight's budget
+# sees the whole picture rather than half of it. Passed through to preflight as
+# container_mem_reserved_mb. Per-role rather than host-wide on purpose: each
+# role needs "everything except me", so one shared figure would double-count.
+patroni_mem_reserved_mb: 0
+
 pg_shared_buffers: ""
 pg_effective_cache: ""
 pg_work_mem: ""

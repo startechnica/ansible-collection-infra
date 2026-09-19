@@ -1,0 +1,54 @@
+---
+# Internal computed vars for the preflight memory budget — vars/ precedence so
+# they can't be overridden from inventory. The user-facing knobs they read
+# (pg_shared_buffers, patroni_stack_overhead_mb) live in
+# defaults/main/postgresql.yml, so inventory still steers the result.
+#
+# These are LAZY Jinja expressions, not set_facts, for two reasons:
+#   1. Another role can read them via `tasks_from: export_vars` — a host fact
+#      would only exist after this role had already run on that host.
+#   2. Overriding pg_shared_buffers at any higher precedence (task vars, an
+#      inventory value) re-evaluates the whole chain, so there is no stale copy.
+#
+# Everything here depends only on defaults/main/postgresql.yml, deliberately:
+# `defaults_from` takes a single file, so a consumer importing this budget gets
+# exactly one defaults file and none of patroni's other topics. That matters —
+# patroni and mongodb both define tls_key_curve with DIFFERENT defaults
+# (secp384r1 vs secp256r1), so a wholesale defaults import across the two roles
+# would silently change which curve the other role's certificates use.
+
+# pg_shared_buffers takes PostgreSQL's suffixed forms (2GB, 2048MB, 524288kB);
+# a bare number is read as MB, which is what the role's own auto-calculation
+# writes. Empty means tasks/main.yml will auto-calculate memtotal/4 — but that
+# runs AFTER preflight, so mirror the same formula here.
+#
+# memtotal_mb is defaulted rather than assumed: a caller with gather_facts:
+# false still gets a usable number, and preflight's own check skips itself when
+# memtotal_mb is missing.
+_pg_sb_raw: "{{ pg_shared_buffers | default('', true) | trim | lower }}"
+_pg_sb_value: "{{ _pg_sb_raw | regex_search('^[0-9.]+') | default('0', true) }}"
+# "2gb" → "gb" → "g"; "524288kb" → "k"; bare "2048" → "" → MB.
+_pg_sb_suffix: "{{ _pg_sb_raw | regex_replace('^[0-9.\\s]*', '') | regex_replace('b$', '') }}"
+_pg_sb_unit_mb: "{{ {'k': 0.0009765625, 'm': 1, 'g': 1024, 't': 1048576}.get(_pg_sb_suffix, 1) }}"
+
+_pg_shared_buffers_mb: >-
+  {{ ((ansible_facts['memtotal_mb'] | default(0) | int) / 4) | int
+     if not _pg_sb_raw | length
+     else ((_pg_sb_value | float) * (_pg_sb_unit_mb | float)) | round | int }}
+
+# What this role commits on the host: PostgreSQL's shared_buffers (by far the
+# largest single allocation) plus a flat allowance for the rest of the stack.
+# Read by preflight via container_mem_request_mb, and by the mongodb role when
+# both stacks share a node.
+patroni_mem_request_mb: >-
+  {{ (_pg_shared_buffers_mb | int) + (patroni_stack_overhead_mb | int) }}
+
+# Which PostgreSQL memory settings are still being derived from total host RAM.
+# Non-empty means the auto-calculation is in play, which is only safe when
+# PostgreSQL owns the host — see the warning in tasks/shared/_mem_budget.yml.
+# Parenthesised per term: `A if c else [] + B` parses as `A if c else ([] + B)`
+# and would silently drop terms.
+patroni_pg_autosized: >-
+  {{ (['pg_shared_buffers'] if not (pg_shared_buffers | default('', true) | trim | length) else [])
+     + (['pg_work_mem'] if not (pg_work_mem | default('', true) | trim | length) else [])
+     + (['pg_maint_mem'] if not (pg_maint_mem | default('', true) | trim | length) else []) }}

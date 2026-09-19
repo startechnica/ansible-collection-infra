@@ -7,7 +7,14 @@
 postgres_exporter_enabled: false
 postgres_exporter_image: "prometheuscommunity/postgres-exporter:v0.19.1"
 postgres_exporter_port: 9187
+# Was hardcoded in the Quadlet/compose templates; named so the preflight memory
+# budget can count it instead of silently under-reporting by this much.
+postgres_exporter_mem_limit_mb: 128
 # Optional custom queries.yaml content — rendered verbatim into the
 # exporter's queries file when non-empty. Empty (default) ships only the
 # exporter's built-in collectors.
 postgres_exporter_custom_queries: ""
+
+# Host-level OOM victim bias — telemetry only, so first in line for the OOM
+# killer ahead of anything on the data or client path.
+postgres_exporter_oom_score_adj: 1000

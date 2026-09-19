@@ -27,3 +27,9 @@ etcd_snapshot_retain: 7
 # one bucket without colliding on the same etcd-snapshot-<STAMP>.db names.
 # Override to pin a custom layout.
 patroni_etcd_s3_prefix: "patroni-etcd-{{ patroni_scope }}"
+
+# Host-level OOM victim bias — the most strongly protected container in the
+# stack: losing the DCS makes Patroni demote the primary cluster-wide, so etcd
+# must outlive everything else on the node. See patroni_oom_score_adj for the
+# full ranking.
+etcd_oom_score_adj: -900
