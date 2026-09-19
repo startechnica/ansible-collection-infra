@@ -314,6 +314,54 @@ argument_specs:
         default: "10s"
         description: Per-check timeout; a Patroni REST API response slower than this counts as a failed check.
 
+      # ── HAProxy connection caps ──
+      # Frontend caps bound what HAProxy accepts; server caps bound what it
+      # forwards to one backend. Keep each frontend above its server cap so
+      # excess queues inside HAProxy rather than being refused at accept.
+      patroni_haproxy_primary_maxconn:
+        type: int
+        default: 1100
+        description: Frontend cap on pg-primary. Must exceed patroni_haproxy_primary_server_maxconn.
+      patroni_haproxy_primary_server_maxconn:
+        type: int
+        default: 1000
+        description: >-
+          Per-server cap on pg-primary. These are CLIENT connections to
+          PgBouncer, so the ceiling that matters is its own max_client_conn
+          (1000); PgBouncer's server-side pool is what bounds real PostgreSQL
+          backends.
+      patroni_haproxy_replicas_maxconn:
+        type: int
+        default: 1100
+        description: Frontend cap on pg-replicas. Must exceed patroni_haproxy_replicas_server_maxconn.
+      patroni_haproxy_replicas_server_maxconn:
+        type: int
+        default: 1000
+        description: Per-server cap on pg-replicas. Same reasoning as pg-primary — fronts PgBouncer.
+      patroni_haproxy_direct_maxconn:
+        type: int
+        default: 100
+        description: Frontend cap on pg-direct. Must exceed patroni_haproxy_direct_server_maxconn.
+      patroni_haproxy_direct_server_maxconn:
+        type: int
+        default: 20
+        description: >-
+          Per-server cap on pg-direct, an order of magnitude below the pooled
+          listeners because this path BYPASSES PgBouncer — every connection is a
+          real PostgreSQL backend competing for max_connections (200), against
+          PgBouncer's pools at (default_pool_size + reserve_pool_size) per
+          user/database pair plus Patroni, the exporter and WAL-G. Three app
+          databases already put the pooler near that limit. Held small so a
+          runaway migration cannot starve PgBouncer's pool and take the
+          application down; raise max_connections alongside it.
+      patroni_haproxy_global_maxconn:
+        type: int
+        default: 4000
+        description: >-
+          Process-wide ceiling. Must exceed the sum of every listener's frontend
+          cap (1100 + 1100 + 100 + 100 for stats = 2400 by default), or the
+          frontends silently cap here instead of at their own limits.
+
       # ── HAProxy connection timeouts (inactivity, not absolute age) ──
       haproxy_client_timeout:
         type: str

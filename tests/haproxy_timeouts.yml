@@ -128,3 +128,81 @@
           - _servers | map('join', ' ') | unique | list == ['pg-1 10.0.0.11', 'pg-2 10.0.0.12', 'pg-3 10.0.0.13']
       vars:
         _servers: "{{ _hap_rendered.results[0].content | b64decode | regex_findall('(?m)^ +server ([^ ]+) ([0-9.]+):') }}"
+
+    # The pooled and bypass listeners are sized against different resources:
+    # pg-primary/pg-replicas front PgBouncer (client connections, bounded by its
+    # max_client_conn), while pg-direct bypasses it and spends real PostgreSQL
+    # backends against max_connections. Letting pg-direct drift up to the pooled
+    # listeners' size is how a runaway migration starves PgBouncer's pool and
+    # takes the application down, so the gap is asserted, not just documented.
+    - name: Verify the bypass listener stays far below the pooled ones
+      ansible.builtin.assert:
+        that:
+          - patroni_haproxy_direct_server_maxconn | int < patroni_haproxy_primary_server_maxconn | int
+          - patroni_haproxy_direct_server_maxconn | int < patroni_haproxy_replicas_server_maxconn | int
+          # Real headroom check: PgBouncer's pools plus the bypass path have to
+          # fit inside PostgreSQL's max_connections with room for Patroni, the
+          # exporter and WAL-G. 60 is default_pool_size + reserve_pool_size.
+          - (patroni_haproxy_direct_server_maxconn | int) + 60 < 200
+        fail_msg: >-
+          pg-direct's per-server maxconn
+          ({{ patroni_haproxy_direct_server_maxconn }}) is no longer small
+          relative to the pooled listeners. Every connection on that path is a
+          real PostgreSQL backend competing for max_connections (200) with
+          PgBouncer's pools — see patroni_haproxy_direct_server_maxconn in
+          defaults/main/haproxy.yml.
+
+    # Each frontend must sit above its own server cap (so excess queues inside
+    # HAProxy instead of being refused at accept), and their sum must sit below
+    # the global ceiling (or the per-listener caps stop being the real limit).
+    - name: Verify the frontend, server and global caps are ordered correctly
+      ansible.builtin.assert:
+        that:
+          - patroni_haproxy_primary_maxconn | int > patroni_haproxy_primary_server_maxconn | int
+          - patroni_haproxy_replicas_maxconn | int > patroni_haproxy_replicas_server_maxconn | int
+          - patroni_haproxy_direct_maxconn | int > patroni_haproxy_direct_server_maxconn | int
+          - _frontend_sum | int <= patroni_haproxy_global_maxconn | int
+        fail_msg: >-
+          Frontend caps sum to {{ _frontend_sum }} against a global maxconn of
+          {{ patroni_haproxy_global_maxconn }}. Above that, a listener's own cap
+          is no longer the effective limit.
+      vars:
+        # + 100 for the stats listener, which is hardcoded in the template.
+        _frontend_sum: >-
+          {{ (patroni_haproxy_primary_maxconn | int)
+             + (patroni_haproxy_replicas_maxconn | int)
+             + (patroni_haproxy_direct_maxconn | int) + 100 }}
+
+    - name: Verify every cap renders from its variable
+      ansible.builtin.assert:
+        that:
+          # Frontend caps, in listener order: stats, pg-primary, pg-replicas,
+          # pg-direct. The global line is matched separately below.
+          - _maxconns == _expected
+        fail_msg: >-
+          Rendered maxconn values {{ _maxconns }} do not match the variables
+          {{ _expected }} — a hardcoded cap has crept back into the template.
+      vars:
+        _cfg: "{{ _hap_rendered.results[0].content | b64decode }}"
+        _maxconns: "{{ _cfg | regex_findall('(?m)^ +maxconn ([0-9]+)$') }}"
+        # `| string` on each: regex_findall returns strings, while native Jinja
+        # would otherwise hand back ints and the comparison fails on type.
+        _expected:
+          - "{{ patroni_haproxy_global_maxconn | string }}"
+          - "100"
+          - "{{ patroni_haproxy_primary_maxconn | string }}"
+          - "{{ patroni_haproxy_replicas_maxconn | string }}"
+          - "{{ patroni_haproxy_direct_maxconn | string }}"
+
+    - name: Verify per-server caps render from their variables
+      ansible.builtin.assert:
+        that:
+          # Three nodes per listener, in template order.
+          - _server_maxconns == _expected_servers
+      vars:
+        _cfg: "{{ _hap_rendered.results[0].content | b64decode }}"
+        _server_maxconns: "{{ _cfg | regex_findall('(?m)^ +server .* maxconn ([0-9]+) check') }}"
+        _expected_servers: >-
+          {{ ([patroni_haproxy_primary_server_maxconn | string] * 3)
+             + ([patroni_haproxy_replicas_server_maxconn | string] * 3)
+             + ([patroni_haproxy_direct_server_maxconn | string] * 3) }}

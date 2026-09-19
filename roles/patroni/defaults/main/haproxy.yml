@@ -30,6 +30,43 @@ haproxy_check_fall: 5
 haproxy_check_rise: 2
 haproxy_check_timeout: "10s"
 
+# ── HAProxy connection caps ────────────────────────────────────────────
+# Two limits per listener. The FRONTEND cap bounds what HAProxy accepts on the
+# entry; the SERVER cap bounds what it forwards to one backend. Keep the
+# frontend ABOVE the server cap: excess then queues visibly inside HAProxy
+# (`timeout queue`, the Tw field in the tcplog) instead of being refused at
+# accept and left in the kernel backlog. Raising a server cap without raising
+# its frontend has no effect.
+#
+# The pooled and bypass listeners are sized against DIFFERENT resources, which
+# is why their numbers are an order of magnitude apart:
+#
+#   pg-primary / pg-replicas → PgBouncer. These are CLIENT connections to a
+#     pooler, which is what a pooler is for. The real ceiling is PgBouncer's
+#     own `max_client_conn` (1000 in templates/pgbouncer.ini.j2), so 1000 here
+#     lines up with it exactly. PgBouncer's server-side pool — not this cap —
+#     is what bounds real PostgreSQL backends.
+#
+#   pg-direct → PostgreSQL, bypassing the pooler. EVERY connection here is a
+#     real backend competing for max_connections (200 in patroni.yml.j2),
+#     against PgBouncer's pools at (default_pool_size + reserve_pool_size) per
+#     user/database pair plus Patroni, the exporter and WAL-G. Three app
+#     databases already put the pooler near that limit. This path is for
+#     migrations and admin tooling — low concurrency by design — and is held
+#     deliberately small so a runaway job cannot starve PgBouncer's pool and
+#     take the application down with it. Raise it only after checking what is
+#     actually free, and prefer raising max_connections with it.
+patroni_haproxy_primary_maxconn: 1100
+patroni_haproxy_primary_server_maxconn: 1000
+patroni_haproxy_replicas_maxconn: 1100
+patroni_haproxy_replicas_server_maxconn: 1000
+patroni_haproxy_direct_maxconn: 100
+patroni_haproxy_direct_server_maxconn: 20
+# Process-wide ceiling. Every listener above draws from this one budget, so it
+# must exceed their sum (currently 1100 + 1100 + 100 + the stats listener's
+# hardcoded 100 = 2400) or the frontends silently cap here instead.
+patroni_haproxy_global_maxconn: 4000
+
 # ── HAProxy connection timeouts ────────────────────────────────────────
 # These are INACTIVITY timers: HAProxy measures time since application data
 # last moved in that direction. Kernel TCP keepalives (option clitcpka /

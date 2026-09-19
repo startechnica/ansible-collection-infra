@@ -445,6 +445,7 @@ Inputs are validated by [meta/argument_specs.yml](meta/argument_specs.yml). High
 | TLS | `tls_key_type`, `tls_key_curve`, `tls_signature_digest`, `tls_cert_days` |
 | Client TLS | `pgbouncer_client_tls_sslmode` (`prefer`; `require` forces TLS), `pgbouncer_client_tls_protocols`, `pgbouncer_client_tls_ciphers` |
 | Pooling | `pgbouncer_pool_mode` (`session`), `pgbouncer_database_overrides` (per-database pool modes) |
+| HAProxy caps | `patroni_haproxy_{primary,replicas,direct}_maxconn` (frontend), `patroni_haproxy_{primary,replicas,direct}_server_maxconn` (per-server), `patroni_haproxy_global_maxconn`. Keep each frontend above its server cap, and note `pg-direct` is deliberately ~50x smaller than the pooled listeners: it bypasses PgBouncer, so every connection is a real PostgreSQL backend against `max_connections` |
 | HAProxy timeouts | `haproxy_tunnel_timeout` (24h — governs established sessions), `haproxy_client_timeout` / `haproxy_server_timeout` (300s — backstop; superseded by `tunnel` on the pg listeners), `haproxy_connect_timeout` (bounds backend connection setup), `haproxy_client_fin_timeout` / `haproxy_server_fin_timeout` (override `tunnel` for half-closed connections) |
 | Extensions | `patroni_extensions` |
 | App DBs | `patroni_databases` (list of {name, owner, users[{name, password, roles, grants}]}) |

@@ -329,6 +329,28 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   restartable victims. Set any value to 0 for the kernel default. Regression
   coverage: `tests/oom_score_adj.yml`, which asserts the ranking as an ordering
   (not just literal values) and that the Quadlet and compose paths agree.
+- **HAProxy connection caps are configurable** —
+  `patroni_haproxy_{primary,replicas,direct}_maxconn` for the frontends,
+  `patroni_haproxy_{primary,replicas,direct}_server_maxconn` for the per-server
+  limits, and `patroni_haproxy_global_maxconn` for the process-wide ceiling. All
+  were hardcoded in the template. Defaults keep every existing value except
+  `pg-replicas`, which moves from a frontend cap of 250 / per-server 100 to
+  1100 / 1000, matching `pg-primary`.
+
+  The pooled and bypass listeners are sized against **different resources**, and
+  the defaults now say so in one place. `pg-primary` and `pg-replicas` front
+  PgBouncer, so their caps are client connections to a pooler and the ceiling
+  that matters is its own `max_client_conn` (1000) — 250 was well under it and
+  was the real bottleneck. `pg-direct` bypasses the pooler, so every connection
+  is a live PostgreSQL backend competing for `max_connections` (200) against
+  PgBouncer's pools at `default_pool_size + reserve_pool_size` per user/database
+  pair, plus Patroni, the exporter and WAL-G; three app databases already put
+  the pooler near that limit. It therefore stays at 20 per server, so a runaway
+  migration cannot starve the pool and take the application down.
+  `tests/haproxy_timeouts.yml` asserts that gap, the frontend-above-server
+  ordering, and that the frontends still sum below the global ceiling — the
+  comment block in the template now renders those figures from the variables, so
+  it cannot go stale again.
 - **PostgreSQL backend OOM adjustment** (`patroni_pg_backend_oom_adjust_enabled`,
   default true, and `patroni_pg_backend_oom_score_adj`, default 0). The patroni
   container — and so the postmaster — now runs at a protected (negative) score,

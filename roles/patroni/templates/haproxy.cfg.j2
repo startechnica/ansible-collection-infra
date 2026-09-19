@@ -1,5 +1,8 @@
 global
-    maxconn 4000
+    # Process-wide ceiling every listener below draws from. It must exceed their
+    # sum, or a frontend's own cap stops being the effective limit — see
+    # patroni_haproxy_global_maxconn in defaults/main/haproxy.yml.
+    maxconn {{ patroni_haproxy_global_maxconn }}
     log stdout format raw local0
 
 defaults
@@ -98,13 +101,16 @@ listen stats
     #                                        session limits of the frontends routing to
     #                                        that backend, divided by 10.
     #
-    # A backend showing 400 therefore means its frontend is at 4000 — i.e. inheriting
-    # `global maxconn` instead of carrying its own cap. Useful as a check that the
-    # frontend maxconn lines below actually took effect:
-    #   pg-primary  1100 -> backend 110      pg-replicas 250 -> backend 25
-    #   pg-direct    100 -> backend  10      stats        100 -> backend 10
-    # If pg-primary's backend row reads 400, its `maxconn 1100` is not live and the
-    # server-side limit cannot queue as intended.
+    # A backend showing {{ (patroni_haproxy_global_maxconn | int / 10) | int }} therefore means its frontend is at
+    # {{ patroni_haproxy_global_maxconn }} — i.e. inheriting `global maxconn` instead of carrying its own
+    # cap. Useful as a check that the frontend maxconn lines below actually took
+    # effect (these figures are rendered from the vars, so they cannot go stale):
+    #   pg-primary  {{ patroni_haproxy_primary_maxconn }} -> backend {{ (patroni_haproxy_primary_maxconn | int / 10) | int }}
+    #   pg-replicas {{ patroni_haproxy_replicas_maxconn }} -> backend {{ (patroni_haproxy_replicas_maxconn | int / 10) | int }}
+    #   pg-direct   {{ patroni_haproxy_direct_maxconn }} -> backend {{ (patroni_haproxy_direct_maxconn | int / 10) | int }}
+    #   stats       100 -> backend 10
+    # If pg-primary's backend row reads {{ (patroni_haproxy_global_maxconn | int / 10) | int }}, its `maxconn
+    # {{ patroni_haproxy_primary_maxconn }}` is not live and the server-side limit cannot queue as intended.
     #
     # fullconn does NOT cap anything in this config. It only scales a server's effective
     # limit when the server line carries BOTH `minconn` and `maxconn`; ours have only
@@ -114,33 +120,37 @@ listen pg-primary
     bind *:{{ haproxy_primary_port }}
 
     # Frontend cap — limits what HAProxy ACCEPTS on this entry. Unset, it
-    # inherits `global maxconn` (4000) and this one entry could consume the
-    # whole process budget.
+    # inherits `global maxconn` ({{ patroni_haproxy_global_maxconn }}) and this one entry could consume
+    # the whole process budget.
     #
-    # MUST stay ABOVE the server-side maxconn below (1100 > 1000). The frontend accepts,
-    # the server line forwards; keeping the frontend higher means the excess queues
-    # visibly inside HAProxy (`timeout queue`, and the Tw field in the tcplog) instead
-    # of being refused at accept and left in the kernel backlog. Raising the server line
-    # without raising this one has no effect.
-    maxconn 1100
+    # MUST stay ABOVE the server-side maxconn below ({{ patroni_haproxy_primary_maxconn }} > {{ patroni_haproxy_primary_server_maxconn }}). The frontend
+    # accepts, the server line forwards; keeping the frontend higher means the excess
+    # queues visibly inside HAProxy (`timeout queue`, and the Tw field in the tcplog)
+    # instead of being refused at accept and left in the kernel backlog. Raising the
+    # server line without raising this one has no effect.
+    maxconn {{ patroni_haproxy_primary_maxconn }}
 
     option httpchk GET /primary
     http-check expect status 200
     default-server inter {{ haproxy_check_inter }} fall {{ haproxy_check_fall }} rise {{ haproxy_check_rise }} on-marked-down shutdown-sessions
 
 {% for node in patroni_nodes %}
-    server {{ node.name }} {{ node.ipv4 }}:{{ pgbouncer_port }} maxconn 1000 check port {{ patroni_api_port }} check-ssl ca-file /etc/certs/ca.crt crt /etc/certs/haproxy-client.pem verify required
+    server {{ node.name }} {{ node.ipv4 }}:{{ pgbouncer_port }} maxconn {{ patroni_haproxy_primary_server_maxconn }} check port {{ patroni_api_port }} check-ssl ca-file /etc/certs/ca.crt crt /etc/certs/haproxy-client.pem verify required
 {% endfor %}
 
 listen pg-replicas
     bind *:{{ haproxy_replicas_port }}
 
     # Frontend cap, for the same reason as pg-primary: without it this entry
-    # inherits `global maxconn` (4000) and an unused endpoint could starve the
-    # one that matters. Each replica passing the /replica check adds 100 on the
-    # server side (200 for a three-node cluster); 250 sits just above that.
-    # Raise both together if replica reads are ever enabled.
-    maxconn 1100
+    # inherits `global maxconn` ({{ patroni_haproxy_global_maxconn }}) and an unused endpoint could starve
+    # the one that matters.
+    #
+    # Sized like pg-primary rather than to the replica count: every replica passing
+    # the /replica check contributes {{ patroni_haproxy_replicas_server_maxconn }} on the server side
+    # ({{ patroni_haproxy_replicas_server_maxconn | int * 3 }} for a three-node cluster), and these are client connections to
+    # PgBouncer, so the ceiling that matters is its max_client_conn — not PostgreSQL's
+    # max_connections. Raise this and the server line together.
+    maxconn {{ patroni_haproxy_replicas_maxconn }}
 
     balance roundrobin
     option httpchk GET /replica
@@ -148,30 +158,34 @@ listen pg-replicas
     default-server inter {{ haproxy_check_inter }} fall {{ haproxy_check_fall }} rise {{ haproxy_check_rise }} on-marked-down shutdown-sessions
 
 {% for node in patroni_nodes %}
-    server {{ node.name }} {{ node.ipv4 }}:{{ pgbouncer_port }} maxconn 1000 check port {{ patroni_api_port }} check-ssl ca-file /etc/certs/ca.crt crt /etc/certs/haproxy-client.pem verify required
+    server {{ node.name }} {{ node.ipv4 }}:{{ pgbouncer_port }} maxconn {{ patroni_haproxy_replicas_server_maxconn }} check port {{ patroni_api_port }} check-ssl ca-file /etc/certs/ca.crt crt /etc/certs/haproxy-client.pem verify required
 {% endfor %}
 
 # POOLER BYPASS, direct to the Patroni leader.
 listen pg-direct
     bind *:{{ haproxy_direct_port }}
 
-    # Frontend cap: accepts up to 1100, above the server-side limit of 1000 below,
-    # so excess connections queue inside HAProxy (`timeout queue`) rather than
-    # being refused at accept — same pattern as pg-primary.
-    maxconn 1100
+    # Frontend cap: accepts up to {{ patroni_haproxy_direct_maxconn }}, above the server-side limit of
+    # {{ patroni_haproxy_direct_server_maxconn }} below, so excess connections queue inside HAProxy
+    # (`timeout queue`) rather than being refused at accept — same pattern as
+    # pg-primary. Both are an order of magnitude below the pooled listeners
+    # because this path spends PostgreSQL backends directly; see
+    # patroni_haproxy_direct_maxconn in defaults/main/haproxy.yml.
+    maxconn {{ patroni_haproxy_direct_maxconn }}
 
     option httpchk GET /primary
     http-check expect status 200
     default-server inter 3s fall 5 rise 2 on-marked-down shutdown-sessions
 
-    # Server-side `maxconn 1000`: unpooled clients (schema migrations, admin
+    # Server-side `maxconn {{ patroni_haproxy_direct_server_maxconn }}`: unpooled clients (schema migrations, admin
     # tooling) are low-concurrency. Deliberately small so a runaway job cannot
-    # consume the leader's max_connections through the unpooled path.
+    # consume the leader's max_connections through the unpooled path — the first
+    # casualty of that would be PgBouncer's pool, i.e. the whole application.
     #
     # No timeout overrides here on purpose — the long `timeout tunnel` from
     # defaults is what a long ALTER TABLE needs, since it sends nothing on the
     # socket for its duration. If timeout tunnel is ever removed from defaults,
     # set it explicitly HERE first.
 {% for node in patroni_nodes %}
-    server {{ node.name }} {{ node.ipv4 }}:{{ postgresql_port }} maxconn 1000 check port {{ patroni_api_port }} check-ssl ca-file /etc/certs/ca.crt crt /etc/certs/haproxy-client.pem verify required
+    server {{ node.name }} {{ node.ipv4 }}:{{ postgresql_port }} maxconn {{ patroni_haproxy_direct_server_maxconn }} check port {{ patroni_api_port }} check-ssl ca-file /etc/certs/ca.crt crt /etc/certs/haproxy-client.pem verify required
 {% endfor %}
