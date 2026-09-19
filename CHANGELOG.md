@@ -15,7 +15,7 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   variables. `vars/main.yml` is split the same way, and `vars/empty.yml` is
   added for the `vars_from: empty.yml` narrow-import idiom.
 
-  21 variables are renamed with **no aliases** — an old name is silently
+  22 variables are renamed with **no aliases** — an old name is silently
   ignored and the role default applies. Full table + migration:
   [docs/UPGRADING.md](docs/UPGRADING.md). In brief: `mongod_*` / `configsvr_*` /
   `mongos_*` gain the prefix (`mongod_mem_limit_mb` →
@@ -23,7 +23,10 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   `_tls_mode`); `ssl_days` / `ssl_ca_days` become `mongodb_tls_days` /
   `mongodb_tls_ca_days`; `tls_key_{type,curve,size}` and
   `s3_{endpoint,bucket,access_key,secret_key,region,force_path_style,client_image}`
-  gain the prefix.
+  gain the prefix; and `debug` becomes `mongodb_debug`, defaulting to
+  `{{ debug | default(false) }}` so the role *reads* the collection-wide value
+  without declaring the name — `-e debug=true` still reaches it. (Nothing in the
+  role reads it yet, so that one changes no behaviour.)
 
   **The S3 rename fails quietly, so read this one.** `s3_*` is still a valid
   variable — it belongs to `patroni` now. A dual-stack inventory that set it
@@ -38,9 +41,10 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   whichever role's defaults loaded last silently chose the curve for the
   other's certificates. That collision is what forced cross-role imports to
   stay narrow, and it would have recurred with every new shared name. The two
-  roles now share no variable name except the collection-wide `debug`, which
+  roles now share **no** variable name at all, which
   `tests/preflight_mem_budget.yml` asserts by diffing the two defaults
-  directories — so the next collision fails a test instead of mis-issuing a
+  directories, alongside a second assertion that nothing in mongodb's defaults
+  is unprefixed — so the next collision fails a test instead of mis-issuing a
   certificate.
 - **Renamed `pgbouncer_default_pool_size` → `patroni_pgbouncer_default_pool_size`,
   and changed its default from `20` to `50`.** The old variable was **dead**:

@@ -32,10 +32,12 @@
 # references to other defaults files) so the memory budget can be imported that
 # way — the same discipline patroni keeps for main/postgresql.yml.
 #
-# Every variable here is mongodb_-prefixed except the collection-wide `debug`,
-# so importing this role cannot redefine another role's settings. That is
-# enforced by tests/preflight_mem_budget.yml, which asserts mongodb and patroni
-# share no name but `debug`.
+# Every variable here is mongodb_-prefixed, with no exceptions, so importing this
+# role cannot redefine another role's settings. Where the role needs the value of
+# a collection-wide variable it READS it with a fallback instead of declaring it
+# — see mongodb_debug in defaults/main/mongodb.yml. Both halves are enforced by
+# tests/preflight_mem_budget.yml, which asserts mongodb and patroni share no name
+# at all and that nothing here is unprefixed.
 #
 # Role defaults are lowest precedence, so anything the inventory sets still
 # wins. Keep this file task-free; its only job is to trigger var loading.

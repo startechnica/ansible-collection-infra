@@ -132,21 +132,24 @@
         loop_var: _role
         label: "{{ _role.name }}"
 
-    - name: "Namespace :: the two roles collide on nothing but `debug`"
+    - name: "Namespace :: the two roles share no variable name at all"
       ansible.builtin.assert:
         that:
-          - _collisions == ['debug']
+          - _collisions == []
         fail_msg: >-
           mongodb and patroni now share these variable names: {{ _collisions }}.
           Each role loads all of its own defaults, so a play that runs or imports
           both gets whichever definition landed last — silently, with no warning.
           The previous instance was tls_key_curve, where the two roles disagreed
           (secp256r1 vs secp384r1) and the loser's certificates were generated on
-          the wrong curve. Prefix the new name; if it is genuinely
-          collection-wide like `debug`, add it to this expectation deliberately.
+          the wrong curve. Prefix the new name. If you need the value of a
+          collection-wide variable, READ it with a fallback default rather than
+          declaring it — see mongodb_debug in mongodb's main/mongodb.yml, which
+          is `{{ '{{' }} debug | default(false) {{ '}}' }}` precisely so the role
+          consumes `debug` without owning it.
         success_msg: >-
-          No collisions: {{ _mongodb_defaults | length }} mongodb defaults vs
-          {{ _patroni_defaults | length }} patroni defaults share only `debug`.
+          No collisions at all: {{ _mongodb_defaults | length }} mongodb defaults
+          vs {{ _patroni_defaults | length }} patroni defaults, zero shared names.
       vars:
         _collisions: >-
           {{ _mongodb_defaults.keys() | list
@@ -159,20 +162,20 @@
     - name: "Namespace :: every mongodb default is mongodb_-prefixed"
       ansible.builtin.assert:
         that:
-          - _unprefixed == ['debug']
+          - _unprefixed == []
         fail_msg: >-
           These mongodb defaults are not mongodb_-prefixed: {{ _unprefixed }}.
           An unprefixed name is a collision waiting for the next role that picks
           it — which is how tls_key_curve ended up silently deciding the curve
           of another role's certificates. Prefix it, and add an UPGRADING entry:
           there are no aliases, so an inventory on the old name goes silently
-          back to the default.
+          back to the default. There are deliberately NO exceptions to this,
+          including collection-wide names like `debug` — to consume one of those,
+          declare a prefixed variable that defaults to it.
         success_msg: >-
-          All {{ _mongodb_defaults | length }} mongodb defaults are namespaced
-          (bar the collection-wide `debug`).
+          All {{ _mongodb_defaults | length }} mongodb defaults are namespaced,
+          with no exceptions.
       vars:
-        # `debug` is the deliberate exception: every role in the collection
-        # declares it so that `-e debug=true` reaches all of them at once.
         _unprefixed: >-
           {{ _mongodb_defaults.keys() | reject('match', '^mongodb_')
              | reject('match', '^_') | list | sort }}

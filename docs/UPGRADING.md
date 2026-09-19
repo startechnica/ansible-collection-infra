@@ -10,12 +10,13 @@ documents the migration steps for breaking changes.
 ### Breaking — every `mongodb` role variable is now `mongodb_`-prefixed
 
 `roles/mongodb/defaults/main.yml` is split into `defaults/main/*.yml` (one file
-per topic, like `patroni`), and the 21 variables that weren't namespaced have
+per topic, like `patroni`), and the 22 variables that weren't namespaced have
 been renamed. There are **no aliases** — an inventory using an old name is
 silently ignored and the role's default applies.
 
 | Old name | New name |
 | --- | --- |
+| `debug` | `mongodb_debug` (defaults to `debug`, so `-e debug=true` still works) |
 | `mongod_mem_limit_mb` | `mongodb_mongod_mem_limit_mb` |
 | `configsvr_mem_limit_mb` | `mongodb_configsvr_mem_limit_mb` |
 | `mongos_mem_limit_mb` | `mongodb_mongos_mem_limit_mb` |
@@ -91,11 +92,20 @@ of the other's certificates. That one collision is why cross-role variable
 imports (added in 1.0.3 for the memory budget) had to be kept to a single
 `defaults_from` file, and it would have recurred with every new shared name.
 
-After the rename the two roles share **no** variable name at all except the
-collection-wide `debug`, which `tests/preflight_mem_budget.yml` now asserts
-directly by diffing the two roles' defaults directories. `debug` is deliberately
-left unprefixed: every role in the collection declares it, and `-e debug=true`
-has to reach all of them at once.
+After the rename the two roles share **no** variable name at all, which
+`tests/preflight_mem_budget.yml` asserts directly by diffing the two roles'
+defaults directories — alongside a second assertion that nothing in mongodb's
+defaults is unprefixed.
+
+That includes `debug`, which mongodb used to declare like nine other roles do.
+It is now `mongodb_debug`, defaulting to `{{ debug | default(false) }}` — the
+role *reads* the collection-wide value without owning the name, so
+`-e debug=true` still reaches it and nothing else in the play gets its `debug`
+overwritten by whichever role's defaults happened to load last. Same shape as
+`mongodb_container_engine` falling back to `container_engine`. Note that nothing
+in the role reads it yet: no mongodb task has debug-gated output today, so this
+rename changes no behaviour. If you set `debug` for mongodb specifically, set
+`mongodb_debug` instead.
 
 ### Breaking — `pgbouncer_default_pool_size` renamed, and PgBouncer pool sizes are now real variables
 

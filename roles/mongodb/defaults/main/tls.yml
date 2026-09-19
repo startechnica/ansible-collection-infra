@@ -9,7 +9,7 @@
 # secp384r1 there). A role that imported patroni's defaults wholesale silently
 # changed the curve of every certificate this role then generated, which is why
 # the cross-role memory-budget import had to be kept narrow. With the prefix the
-# two roles share no name at all except `debug`.
+# two roles share no name at all.
 
 # ── Certificate validity (days) ──
 # Formerly "ssl_days" / "ssl_ca_days". Renamed to tls_ so the whole block reads

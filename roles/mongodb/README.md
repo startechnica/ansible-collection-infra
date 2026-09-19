@@ -270,9 +270,12 @@ defined in [defaults/main/](defaults/main/) — one file per topic (`mongodb`,
 `exporter`, `artifacts`), so another role can import just the slice it needs
 with `defaults_from`. See [tasks/export_vars.yml](tasks/export_vars.yml).
 
-**Every variable is `mongodb_`-prefixed** except the collection-wide `debug`.
-That is deliberate and enforced by a test: mongodb and patroni share no variable
-name, so importing one role's variables can never silently redefine the other's.
+**Every variable is `mongodb_`-prefixed**, with no exceptions — enforced by a
+test, so importing this role's variables can never silently redefine another
+role's. Where the role needs a collection-wide value it *reads* it rather than
+declaring it: `mongodb_debug` defaults to `{{ debug | default(false) }}`, so
+`-e debug=true` still reaches it while the bare name stays unowned. Same shape as
+`mongodb_container_engine`, which falls back to `container_engine`.
 
 Highlights:
 

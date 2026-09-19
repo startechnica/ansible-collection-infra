@@ -3,10 +3,21 @@
 # network and replica-set names.
 # The role loads every file in defaults/main/ (see tasks/export_vars.yml).
 
-# Verbose / introspection output. Collection-wide convention (every role
-# declares it), so it is deliberately NOT mongodb_-prefixed — `-e debug=true`
-# has to reach all of them at once.
-debug: false
+# Verbose / introspection output. Namespaced like everything else in this role,
+# but defaulting to the collection-wide `debug` so `-e debug=true` still reaches
+# it — the same per-role-selector-with-global-fallback shape as
+# mongodb_container_engine in main/engine.yml.
+#
+# This is why the role no longer DEFINES a bare `debug`: it reads whatever
+# `debug` the play has in scope, whether that came from the CLI, from inventory,
+# or from another role's export_vars the play imported. Defining its own copy
+# was the last name mongodb shared with patroni, and a role that declares a
+# collection-wide name also gets to overwrite it for everyone else in the play.
+#
+# Note: nothing in this role reads it yet — the mongodb tasks have no
+# debug-gated output today. It is declared so that when they do, the name is
+# already the right one.
+mongodb_debug: "{{ debug | default(false) }}"
 
 mongodb_enabled: false
 mongodb_version: "8.0.28"

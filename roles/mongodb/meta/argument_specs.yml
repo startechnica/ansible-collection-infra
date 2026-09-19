@@ -7,10 +7,15 @@ argument_specs:
         add/remove node).
       - Dispatches on the `mongodb_action` variable; default is full provisioning.
     options:
-      debug:
+      mongodb_debug:
         type: bool
-        default: false
-        description: Verbose / introspection output. Defensive `| bool` filter still used in tasks because CLI `-e debug=true` arrives as a string.
+        description: >-
+          Verbose / introspection output for this role. Defaults to the
+          collection-wide `debug` when that is set, so `-e debug=true` still
+          reaches it; set mongodb_debug directly to turn it on for mongodb
+          alone. No literal default is declared here because the real one is
+          that fallback. Use a defensive `| bool` filter when reading it — CLI
+          `-e debug=true` arrives as a string.
       mongodb_enabled:
         type: bool
         default: true
