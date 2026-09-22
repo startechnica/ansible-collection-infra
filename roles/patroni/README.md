@@ -463,7 +463,8 @@ Highlights:
 | HAProxy timeouts | `patroni_haproxy_tunnel_timeout` (24h — governs established sessions), `patroni_haproxy_client_timeout` / `patroni_haproxy_server_timeout` (300s — backstop; superseded by `tunnel` on the pg listeners), `patroni_haproxy_connect_timeout` (bounds backend connection setup), `patroni_haproxy_client_fin_timeout` / `patroni_haproxy_server_fin_timeout` (override `tunnel` for half-closed connections) |
 | Extensions | `patroni_extensions` |
 | App DBs | `patroni_databases` (list of {name, owner, users[{name, password, roles, grants}]}) |
-| Backup | `patroni_backup_dir`, `patroni_wal_archive_dir`, `patroni_walg_retention`, `patroni_walg_storage_type` (`s3`\|`gcs`) |
+| etcd | `patroni_etcd_auto_compaction_mode` (`periodic`; `""` turns compaction off, and Patroni then fills the 2 GB quota in months), `patroni_etcd_auto_compaction_retention` (`1h`), `patroni_etcd_snapshot_schedule`, `patroni_etcd_snapshot_retain` |
+| Backup | `patroni_backup_dir`, `patroni_wal_archive_dir`, `patroni_walg_retention`, `patroni_walg_storage_type` (`s3`\|`gcs`), `patroni_walg_schedule` (daily `walg-cron.timer`, on docker and podman) |
 | S3 | `patroni_s3_bucket`, `patroni_s3_endpoint`, `patroni_s3_access_key`, `patroni_s3_secret_key`, `patroni_walg_s3_prefix` |
 | GCS | `patroni_walg_gcs_bucket`, `patroni_walg_gcs_service_account_json` (vault the service-account key), `patroni_walg_gcs_prefix` |
 | Memory (auto) | `patroni_pg_shared_buffers`, `patroni_pg_effective_cache`, `patroni_pg_work_mem`, `patroni_pg_maint_mem` — all derived from **total host RAM** as if PostgreSQL were the only consumer; set them explicitly on a node shared with another memory-hungry stack |

@@ -10,6 +10,25 @@ patroni_etcd_gid: 42782
 patroni_etcd_dir: /opt/etcd
 patroni_etcd_data_dir: "{{ patroni_etcd_dir }}/data"
 
+# etcd history compaction. etcd keeps every old version of every key until
+# something compacts them, and Patroni rewrites its member, status and leader
+# keys every loop_wait (10 s) from every node. Uncompacted, a 3-node cluster's
+# backend grows by roughly 18 MB a day and reaches etcd's default 2 GB quota in
+# about four months. etcd then raises a NOSPACE alarm and rejects every write:
+# the running primary keeps its lease, so nothing looks wrong, but the next time
+# it fails no replica can take the leader lock and the cluster is left with no
+# primary. Compaction keeps the backend at a few MB.
+#
+#   periodic + "1h"      keep one hour of history (default)
+#   revision + "1000"    keep the last 1000 revisions
+#
+# Set patroni_etcd_auto_compaction_mode to "" to omit both flags (etcd's own
+# default: compaction off). Changing either value recreates the etcd container
+# on the next provision run; see docs/UPGRADING.md for rolling it out to a
+# running cluster one member at a time.
+patroni_etcd_auto_compaction_mode: periodic
+patroni_etcd_auto_compaction_retention: "1h"
+
 # etcd snapshots — driven by a systemd timer (no cron dependency; FCOS
 # doesn't ship crond). `patroni_etcd_snapshot_schedule` is a systemd OnCalendar
 # expression; see `man systemd.time` (section "CALENDAR EVENTS"). Examples:

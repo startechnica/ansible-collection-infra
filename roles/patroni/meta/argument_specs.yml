@@ -670,6 +670,24 @@ argument_specs:
           - systemd OnCalendar expression for scheduled WAL-G backups.
           - Empty string disables the timer (on-demand backups still work).
 
+      # ── etcd history compaction ──
+      patroni_etcd_auto_compaction_mode:
+        type: str
+        default: periodic
+        choices: [periodic, revision, ""]
+        description:
+          - etcd `--auto-compaction-mode`. Empty omits both compaction flags,
+            which leaves compaction off.
+          - Without compaction Patroni's key updates fill etcd's 2 GB quota in
+            months. etcd then raises NOSPACE and rejects writes, so no replica
+            can take the leader lock when the primary fails.
+      patroni_etcd_auto_compaction_retention:
+        type: str
+        default: "1h"
+        description:
+          - etcd `--auto-compaction-retention`. A duration for `periodic`
+            (for example `1h`), a revision count for `revision` (for example `1000`).
+
       # ── etcd snapshots ──
       patroni_etcd_snapshot_schedule:
         type: str

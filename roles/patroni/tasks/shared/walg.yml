@@ -86,22 +86,14 @@
     dest: "{{ patroni_dir }}/walg-backup.sh"
     mode: "0755"
 
+# Templated rather than inline: the unit it depends on is engine-specific
+# (patroni.service on podman, docker.service on docker), and a template can be
+# render-tested (tests/walg_cron_unit.yml).
 - name: Install walg-cron.service unit
-  ansible.builtin.copy:
+  ansible.builtin.template:
+    src: walg-cron.service.j2
     dest: /etc/systemd/system/walg-cron.service
     mode: "0644"
-    content: |
-      [Unit]
-      Description=WAL-G scheduled backup (oneshot)
-      Documentation=man:systemd.timer(5)
-      After=patroni.service
-      Requires=patroni.service
-
-      [Service]
-      Type=oneshot
-      ExecStart={{ patroni_dir }}/walg-backup.sh
-      StandardOutput=append:/var/log/walg-backup.log
-      StandardError=append:/var/log/walg-backup.log
   notify: reload systemd
   when: patroni_walg_schedule | length > 0
 

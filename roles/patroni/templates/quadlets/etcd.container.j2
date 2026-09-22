@@ -32,6 +32,10 @@ Exec=etcd \
   --peer-client-cert-auth=true \
   --initial-cluster={% for ip in node_ips %}etcd-{{ ip }}=https://{{ ip }}:{{ patroni_etcd_peer_port }}{% if not loop.last %},{% endif %}{% endfor %} \
   --initial-cluster-state={{ etcd_cluster_state }} \
+{% if patroni_etcd_auto_compaction_mode | length > 0 %}
+  --auto-compaction-mode={{ patroni_etcd_auto_compaction_mode }} \
+  --auto-compaction-retention={{ patroni_etcd_auto_compaction_retention }} \
+{% endif %}
   --initial-cluster-token={{ patroni_scope }}
 
 Volume={{ patroni_etcd_data_dir }}:/etcd-data:Z
