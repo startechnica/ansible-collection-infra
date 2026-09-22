@@ -1,0 +1,17 @@
+# {{ ansible_managed }}
+{#
+  Order after whatever runs etcd on this engine: the Quadlet-generated
+  etcd.service on podman, docker.service on docker (there is no per-container
+  unit). After= only — a missing unit is harmless for ordering, and a failed
+  snapshot should not stop etcd or anything else.
+#}
+[Unit]
+Description=etcd snapshot
+Documentation=man:etcdctl(3)
+After={{ 'etcd.service' if patroni_container_engine == 'podman' else 'docker.service' }}
+
+[Service]
+Type=oneshot
+ExecStart={{ patroni_dir }}/etcd-snapshot.sh
+StandardOutput=append:/var/log/etcd-snapshot.log
+StandardError=append:/var/log/etcd-snapshot.log

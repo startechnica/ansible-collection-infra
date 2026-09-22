@@ -612,7 +612,9 @@ argument_specs:
           WAL-G object-storage backend. `s3` uses the shared s3_* vars (AWS S3,
           MinIO, Ceph, any S3-compatible gateway); `gcs` uses the native Google
           Cloud Storage JSON API via the walg_gcs_* vars. Selects the WAL-G
-          archive target only — etcd snapshots always upload to patroni_s3_bucket.
+          archive target. On `gcs`, etcd snapshots upload there too
+          (patroni_etcd_gcs_prefix). They also upload to S3 whenever
+          patroni_s3_bucket is set.
       patroni_walg_gcs_bucket:
         type: str
         default: ""
@@ -698,9 +700,18 @@ argument_specs:
       patroni_etcd_snapshot_dir:
         type: str
         default: /opt/etcd/snapshots
+        description: >-
+          Host directory for snapshots. Bind-mounted into the etcd container at
+          patroni_etcd_snapshot_mount and owned by patroni_etcd_uid, because
+          etcd writes the file itself.
+      patroni_etcd_snapshot_mount:
+        type: str
+        default: /etcd-snapshots
+        description: Where patroni_etcd_snapshot_dir appears inside the etcd container.
       patroni_etcd_snapshot_retain:
         type: int
         default: 7
+        description: How many snapshots to keep on each host. The newest are kept.
       patroni_etcd_s3_prefix:
         type: str
         default: patroni-etcd-{{ patroni_scope }}
@@ -709,6 +720,15 @@ argument_specs:
           scope-namespaced path (patroni-etcd-<patroni_scope>) so multiple
           Patroni clusters can share one bucket without colliding on the same
           etcd-snapshot-<STAMP>.db names. Override to pin a custom layout.
+      patroni_etcd_gcs_prefix:
+        type: str
+        default: patroni-etcd-{{ patroni_scope }}
+        description: >-
+          Object prefix in patroni_walg_gcs_bucket for uploaded etcd snapshots,
+          used when patroni_walg_storage_type is `gcs`. Each host uploads
+          under <prefix>/<short hostname>/. The upload runs in a
+          throwaway container from patroni_walg_image with WAL-G's
+          service-account key.
 
       # ── PostgreSQL memory (auto-calculated if empty) ──
       # NOTE: every auto-calculation below derives from TOTAL host RAM and

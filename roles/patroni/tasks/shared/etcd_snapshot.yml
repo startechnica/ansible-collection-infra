@@ -14,21 +14,13 @@
     dest: "{{ patroni_dir }}/etcd-snapshot.sh"
     mode: "0755"
 
+# Templated rather than inline so the engine-specific ordering can be
+# render-tested (tests/etcd_snapshot.yml).
 - name: Install etcd-snapshot.service unit
-  ansible.builtin.copy:
+  ansible.builtin.template:
+    src: etcd-snapshot.service.j2
     dest: /etc/systemd/system/etcd-snapshot.service
     mode: "0644"
-    content: |
-      [Unit]
-      Description=etcd snapshot
-      Documentation=man:etcdctl(3)
-      After=patroni.service
-
-      [Service]
-      Type=oneshot
-      ExecStart={{ patroni_dir }}/etcd-snapshot.sh
-      StandardOutput=append:/var/log/etcd-snapshot.log
-      StandardError=append:/var/log/etcd-snapshot.log
   notify: reload systemd
   when: patroni_etcd_snapshot_schedule | length > 0
 

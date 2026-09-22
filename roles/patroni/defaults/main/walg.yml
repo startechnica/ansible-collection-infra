@@ -35,9 +35,9 @@ patroni_walg_compression: "lz4"
 # WAL-G object-storage backend: `s3` (AWS S3, MinIO, Ceph, any S3-compatible
 # gateway — driven by the shared s3_* vars) or `gcs` (native Google Cloud
 # Storage JSON API — driven by the walg_gcs_* vars below). This selects the
-# WAL-G archive target only; etcd snapshots always upload to S3 (patroni_s3_bucket),
-# so a GCS-backed cluster that also wants remote etcd snapshots still needs
-# the s3_* vars filled in.
+# WAL-G archive target. etcd snapshots follow it on GCS (through the wal-g
+# image, under patroni_etcd_gcs_prefix) and go to S3 whenever
+# patroni_s3_bucket is set, whatever this says.
 patroni_walg_storage_type: "s3"
 
 # WAL-G S3 key prefix (under patroni_s3_bucket) for THIS cluster's base backups + WAL

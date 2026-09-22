@@ -81,6 +81,15 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **etcd snapshots upload to GCS.** On clusters where WAL-G uses the native
+  GCS backend (`patroni_walg_storage_type: gcs`), each snapshot now also goes to
+  `patroni_walg_gcs_bucket` under `patroni_etcd_gcs_prefix` (default
+  `patroni-etcd-<scope>`), in one folder per host because every member takes
+  its snapshot at the same moment. Before this, snapshots only left the host on S3.
+  The upload runs `wal-g st put` in a throwaway container from
+  `patroni_walg_image` with WAL-G's service-account key, so nothing new is
+  installed. S3 upload is unchanged and still runs whenever `patroni_s3_bucket`
+  is set. Remote retention is left to a bucket lifecycle rule.
 - **Percona Backup for MongoDB (PBM)** — cluster-consistent backups and PITR for
   **sharded** clusters, where `mongodump --oplog` cannot run through a `mongos`.
   Opt in with `mongodb_backup_pbm_enabled`; one agent runs beside every
@@ -256,6 +265,26 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **etcd snapshots could fill the host disk, and a failed snapshot looked
+  like a success.** Clusters deployed with older versions of the role write
+  each snapshot to the etcd container's `/tmp` and then run `exec etcd rm`.
+  The etcd image is distroless, so the `rm` failed on every run, with the
+  error sent to `/dev/null`. The copies grew with the etcd database until a
+  production node's disk filled (220 GB). The current script staged snapshots
+  in etcd's own data directory instead. It also exited 0 when etcdctl failed,
+  so a timer that never produced a snapshot still looked healthy. Now
+  `patroni_etcd_snapshot_dir` is bind-mounted into etcd at
+  `patroni_etcd_snapshot_mount` (`/etcd-snapshots`) and owned by etcd's user,
+  so etcdctl writes each snapshot straight to its final place. Rotation (the
+  newest `patroni_etcd_snapshot_retain`), cleanup of interrupted `.part`
+  files and of the old staging files, and uploads all run on the host. The
+  script exits non-zero when the snapshot or an upload fails. The unit
+  (`etcd-snapshot.service`, now a template) orders after `etcd.service` on
+  podman and `docker.service` on docker. It previously ordered after
+  `patroni.service`, which doesn't exist on docker. The mount recreates etcd;
+  see [docs/UPGRADING.md](docs/UPGRADING.md). Regression coverage:
+  `tests/etcd_snapshot.yml`, which runs the rendered script against a
+  stand-in engine and checks what it leaves on disk.
 - **Patroni clusters lost the ability to fail over after about four months.**
   etcd ran without `--auto-compaction-*`, so it kept every version of the
   member, status and leader keys Patroni rewrites every 10 s from each node.
