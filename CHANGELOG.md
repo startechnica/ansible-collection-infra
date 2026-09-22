@@ -256,6 +256,30 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Patroni clusters lost the ability to fail over after about four months.**
+  etcd ran without `--auto-compaction-*`, so it kept every version of the
+  member, status and leader keys Patroni rewrites every 10 s from each node.
+  The backend grew by roughly 18 MB a day until it reached etcd's default 2 GB
+  quota. etcd then raised a `NOSPACE` alarm and rejected every write. The
+  running primary only renews a lease, so it stayed up and nothing looked
+  wrong. When the primary next failed, no replica could write the leader key
+  and the cluster was left with no primary. This happened on a production
+  cluster 127 days after it was built. etcd now compacts to one hour of history
+  by default: `patroni_etcd_auto_compaction_mode` (`periodic`) and
+  `patroni_etcd_auto_compaction_retention` (`1h`), rendered on both the
+  compose and Quadlet paths. Set the mode to `""` to leave compaction off.
+  Existing clusters pick it up by recreating etcd one member at a time. A
+  cluster that is already in `NOSPACE` also needs a one-off compact, defrag and
+  disarm. Both steps are in [docs/UPGRADING.md](docs/UPGRADING.md) and
+  [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md). Regression coverage:
+  `tests/etcd_compaction.yml`.
+- **Scheduled WAL-G backups never ran on docker hosts.** `walg-cron.service`
+  hard-coded `Requires=patroni.service`, and that unit only exists where Quadlet
+  generates it (podman). On docker, systemd refused to start the backup
+  (`Unit patroni.service not found`) every night while the timer stayed active,
+  so the only sign was in the journal. The unit is now a template that depends
+  on `patroni.service` on podman and `docker.service` on docker. Regression
+  coverage: `tests/walg_cron_unit.yml`.
 - **HAProxy dropped idle LISTEN/NOTIFY sessions and long-running statements
   after 5 minutes.** `timeout client` / `timeout server` were hardcoded to
   `300s`, and in `mode tcp` those are *inactivity* timers. A LISTEN/NOTIFY client

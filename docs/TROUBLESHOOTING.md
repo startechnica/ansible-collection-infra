@@ -253,6 +253,48 @@ write, **and** delete (`patroni_walg_retention` prunes old backups).
 
 ---
 
+### etcd `NOSPACE` alarm / Patroni can't elect a leader
+
+**Symptom:** the primary went down and no replica took over. Every member is a
+replica and `cluster_unlocked: true`. Patroni logs `following new leader after
+trying and failing to obtain lock`, and etcd logs `mvcc: database space exceeded`
+or `serving /health false due to an alarm ... NOSPACE`.
+
+**Cause:** etcd reached its backend quota (2 GB by default) and now rejects
+every write. Taking the leader lock is a write. Clusters built before etcd
+compaction was on by default grow until they hit the quota (about four months
+for Patroni). A running primary only renews its lease, so the alarm can be
+active for weeks before anything fails.
+
+**Fix:** compact, defragment one member at a time, then clear the alarm. All
+of it runs inside the `etcd` container on any member (`podman exec` instead of
+`docker exec` on podman hosts). Patroni takes the lock by itself within seconds
+of the last step.
+
+```bash
+E="etcdctl --cacert=/etc/certs/ca.crt --cert=/etc/certs/etcd-server.crt --key=/etc/certs/etcd-server.key"
+EP=https://<ip1>:2379,https://<ip2>:2379,https://<ip3>:2379
+
+# 1. Drop all history before the current revision. Physical compaction of a
+#    2 GB backend can take ~10 min, longer than etcdctl's default timeout. A
+#    "context deadline exceeded" here is fine: the compaction keeps running.
+#    Watch IN USE fall in `endpoint status` before continuing.
+REV=$(docker exec etcd $E --endpoints=$EP endpoint status -w json | grep -o '"revision":[0-9]*' | head -1 | cut -d: -f2)
+docker exec etcd $E --endpoints=$EP --command-timeout=120s compact "$REV" --physical
+
+# 2. Give the space back to the filesystem. One member at a time, leader last.
+docker exec etcd $E --endpoints=https://<ip>:2379 --command-timeout=240s defrag
+
+# 3. Clear the alarm and confirm.
+docker exec etcd $E --endpoints=$EP alarm disarm
+docker exec etcd $E --endpoints=$EP endpoint status -w table
+```
+
+Then turn compaction on so it doesn't come back:
+[UPGRADING: etcd history compaction](UPGRADING.md#new--etcd-history-compaction-recreates-etcd).
+
+---
+
 ### etcd quorum lost after node removal
 
 **Cause:** removed a node from a 2-node cluster, leaving 1 member → no

@@ -31,6 +31,11 @@ services:
 
       - --initial-cluster-state={{ etcd_cluster_state }}
       - --initial-cluster-token={{ patroni_scope }}
+{% if patroni_etcd_auto_compaction_mode | length > 0 %}
+      # History compaction; see patroni_etcd_auto_compaction_mode in defaults.
+      - --auto-compaction-mode={{ patroni_etcd_auto_compaction_mode }}
+      - --auto-compaction-retention={{ patroni_etcd_auto_compaction_retention }}
+{% endif %}
     volumes:
       - {{ patroni_etcd_data_dir }}:/etcd-data:Z
       - {{ patroni_etcd_certs_dir }}:/etc/certs:ro,Z

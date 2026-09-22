@@ -216,6 +216,44 @@ When lowering the value, restart the leader first: a replica whose
 `max_connections` is below the primary's refuses to start (hot standby requires
 `>=`).
 
+### New — etcd history compaction (recreates etcd)
+
+etcd now starts with `--auto-compaction-mode=periodic
+--auto-compaction-retention=1h` (`patroni_etcd_auto_compaction_mode` /
+`patroni_etcd_auto_compaction_retention`). Before this, etcd kept every version
+of Patroni's keys. It fills its 2 GB quota after about four months, and after that
+the cluster can't elect a new primary. See the CHANGELOG for the details.
+
+**Check every existing cluster first.** An older cluster may already be in `NOSPACE`:
+
+```bash
+E="etcdctl --cacert=/etc/certs/ca.crt --cert=/etc/certs/etcd-server.crt --key=/etc/certs/etcd-server.key"
+docker exec etcd $E endpoint status --cluster -w table   # DB SIZE near 2.1 GB = close to the quota
+docker exec etcd $E alarm list                           # memberID:… alarm:NOSPACE = already hit
+```
+
+If `alarm list` shows `NOSPACE`, recover first:
+[TROUBLESHOOTING: etcd NOSPACE](TROUBLESHOOTING.md#etcd-nospace-alarm--patroni-cant-elect-a-leader).
+
+**Rolling it out.** The flags change the etcd container definition, so etcd is
+recreated. A normal provision run does that **on every member at once**. That
+drops etcd quorum for a few seconds, and Patroni demotes the primary when it
+loses the DCS. On a running cluster, apply it one member at a time instead:
+
+1. See the exact change the role will make: `--check --diff --tags patroni`
+   shows it for `docker-compose.yml` (docker) or `etcd.container` (podman).
+2. On one member, make that same edit, then recreate etcd:
+   - docker: `cd /opt/patroni && docker compose up -d --no-deps etcd`
+   - podman: `systemctl daemon-reload && systemctl restart etcd.service`.
+     `patroni.service` has `Requires=etcd.service`, so **Patroni and PostgreSQL
+     restart with it**. Do the replicas first, then `patronictl switchover`, then
+     the former leader.
+3. Wait for `etcdctl endpoint health --cluster` to report every member healthy,
+   then move on to the next member.
+
+Once every member has the edit, the next provision run renders the same file
+and restarts nothing.
+
 ### Breaking — `s3_retain_days` removed
 
 The `s3_retain_days` variable is gone. S3 backup retention now always follows
