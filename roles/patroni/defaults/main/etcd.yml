@@ -38,14 +38,27 @@ patroni_etcd_auto_compaction_retention: "1h"
 #   "*:0/15"                every 15 minutes
 # Set to an empty string to disable scheduled snapshots entirely.
 patroni_etcd_snapshot_schedule: "00,06,12,18:00:00"
+# Snapshots are written by etcd itself, through a bind mount of
+# patroni_etcd_snapshot_dir at patroni_etcd_snapshot_mount in the etcd
+# container, and rotated on the host: the newest patroni_etcd_snapshot_retain
+# are kept. Adding the mount recreates the etcd container; see
+# docs/UPGRADING.md for rolling that out one member at a time.
 patroni_etcd_snapshot_dir: "{{ patroni_etcd_dir }}/snapshots"
+patroni_etcd_snapshot_mount: /etcd-snapshots
 patroni_etcd_snapshot_retain: 7
 
-# S3 key prefix for uploaded etcd snapshots. Defaults to a scope-namespaced
-# path ("patroni-etcd-<patroni_scope>") so multiple Patroni clusters can share
-# one bucket without colliding on the same etcd-snapshot-<STAMP>.db names.
-# Override to pin a custom layout.
+# Off-host copies. Local rotation only covers this host; object-storage
+# retention is up to the bucket (a lifecycle rule).
+#
+# S3: uploaded when patroni_s3_bucket is set, under this key prefix.
+# Defaults to a scope-namespaced path ("patroni-etcd-<patroni_scope>") so
+# multiple Patroni clusters can share one bucket without colliding on the same
+# etcd-snapshot-<STAMP>.db names. Override to pin a custom layout.
 patroni_etcd_s3_prefix: "patroni-etcd-{{ patroni_scope }}"
+# GCS: uploaded when WAL-G uses the native GCS backend
+# (patroni_walg_storage_type: gcs), to patroni_walg_gcs_bucket under
+# <this prefix>/<host>/, with WAL-G's image and service-account key.
+patroni_etcd_gcs_prefix: "patroni-etcd-{{ patroni_scope }}"
 
 # Host-level OOM victim bias — the most strongly protected container in the
 # stack: losing the DCS makes Patroni demote the primary cluster-wide, so etcd

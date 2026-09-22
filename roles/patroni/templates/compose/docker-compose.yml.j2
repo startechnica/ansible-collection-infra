@@ -39,6 +39,8 @@ services:
     volumes:
       - {{ patroni_etcd_data_dir }}:/etcd-data:Z
       - {{ patroni_etcd_certs_dir }}:/etc/certs:ro,Z
+      # etcdctl writes snapshots here; etcd-snapshot.sh rotates them on the host.
+      - {{ patroni_etcd_snapshot_dir }}:{{ patroni_etcd_snapshot_mount }}:Z
     # Host-level OOM victim bias — most strongly protected container in the
     # stack; see patroni_etcd_oom_score_adj in defaults.
     oom_score_adj: {{ patroni_etcd_oom_score_adj }}

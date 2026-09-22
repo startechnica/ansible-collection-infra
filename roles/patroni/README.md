@@ -112,9 +112,8 @@ patroni_s3_secret_key: "{{ vault_s3_secret_key }}"
 #   patroni_walg_gcs_bucket: "pg-backups"
 #   patroni_walg_gcs_service_account_json: "{{ vault_walg_gcs_service_account_json }}"
 # The credentials value is the service-account JSON key GCP hands you at
-# "Create key → JSON" (raw string or parsed mapping — both work). Note that
-# etcd snapshots always upload to S3, so keep the s3_* vars if you want those
-# off-host too.
+# "Create key → JSON" (raw string or parsed mapping — both work). etcd
+# snapshots upload to the same bucket, under patroni_etcd_gcs_prefix.
 
 # --- (optional) PostgreSQL extensions ---
 # Default: [pg_stat_statements]. Extensions you add MUST be bundled in the
@@ -463,7 +462,7 @@ Highlights:
 | HAProxy timeouts | `patroni_haproxy_tunnel_timeout` (24h — governs established sessions), `patroni_haproxy_client_timeout` / `patroni_haproxy_server_timeout` (300s — backstop; superseded by `tunnel` on the pg listeners), `patroni_haproxy_connect_timeout` (bounds backend connection setup), `patroni_haproxy_client_fin_timeout` / `patroni_haproxy_server_fin_timeout` (override `tunnel` for half-closed connections) |
 | Extensions | `patroni_extensions` |
 | App DBs | `patroni_databases` (list of {name, owner, users[{name, password, roles, grants}]}) |
-| etcd | `patroni_etcd_auto_compaction_mode` (`periodic`; `""` turns compaction off, and Patroni then fills the 2 GB quota in months), `patroni_etcd_auto_compaction_retention` (`1h`), `patroni_etcd_snapshot_schedule`, `patroni_etcd_snapshot_retain` |
+| etcd | `patroni_etcd_auto_compaction_mode` (`periodic`; `""` turns compaction off, and Patroni then fills the 2 GB quota in months), `patroni_etcd_auto_compaction_retention` (`1h`), `patroni_etcd_snapshot_schedule` (every 6 h), `patroni_etcd_snapshot_dir` (bind-mounted into etcd, rotated on the host), `patroni_etcd_snapshot_retain` (7), `patroni_etcd_s3_prefix` / `patroni_etcd_gcs_prefix` (off-host copies) |
 | Backup | `patroni_backup_dir`, `patroni_wal_archive_dir`, `patroni_walg_retention`, `patroni_walg_storage_type` (`s3`\|`gcs`), `patroni_walg_schedule` (daily `walg-cron.timer`, on docker and podman) |
 | S3 | `patroni_s3_bucket`, `patroni_s3_endpoint`, `patroni_s3_access_key`, `patroni_s3_secret_key`, `patroni_walg_s3_prefix` |
 | GCS | `patroni_walg_gcs_bucket`, `patroni_walg_gcs_service_account_json` (vault the service-account key), `patroni_walg_gcs_prefix` |

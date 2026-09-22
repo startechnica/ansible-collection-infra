@@ -1,7 +1,24 @@
 #!/bin/bash
+# {{ ansible_managed }}
+# Take an etcd snapshot, keep the newest RETAIN on this host, and upload it
+# when object storage is configured. Invoked by etcd-snapshot.service
+# (oneshot), scheduled by etcd-snapshot.timer.
+#
+# {{ patroni_etcd_snapshot_dir }} is bind-mounted into the etcd container at
+# {{ patroni_etcd_snapshot_mount }}, so etcdctl writes each snapshot straight to its
+# final place on the host. Everything after that (rotation, upload) runs here,
+# on the host: the etcd image is distroless, with no shell and no `rm`, so
+# nothing can be cleaned up from inside the container. An earlier version
+# wrote to the container's /tmp and ran `exec etcd rm`, which failed on every
+# run with the error discarded; the copies filled the host disk.
+#
+# Exits non-zero when the snapshot or an upload fails, so the failure shows
+# in `systemctl --failed` and not only in the log.
 set -u
+
 ENGINE={{ patroni_container_engine }}
 SNAPSHOT_DIR="{{ patroni_etcd_snapshot_dir }}"
+SNAPSHOT_MOUNT="{{ patroni_etcd_snapshot_mount }}"
 RETAIN={{ patroni_etcd_snapshot_retain }}
 {% if s3_enabled %}
 S3_BUCKET="{{ patroni_s3_bucket }}"
@@ -12,72 +29,111 @@ S3_REGION="{{ patroni_s3_region }}"
 {% endif %}
 
 STAMP=$(date +%Y%m%d-%H%M%S)
-SNAPSHOT_FILE="${SNAPSHOT_DIR}/etcd-snapshot-${STAMP}.db"
+NAME="etcd-snapshot-${STAMP}.db"
+SNAPSHOT_FILE="${SNAPSHOT_DIR}/${NAME}"
+RC=0
 
-mkdir -p "${SNAPSHOT_DIR}"
+# etcd writes the file as its own user, so the directory must be its. Reset
+# every run: a directory Docker auto-created for a missing mount is root's.
+install -d -o {{ patroni_etcd_uid }} -g {{ patroni_etcd_gid }} -m 0700 "${SNAPSHOT_DIR}"
 
-# Write the snapshot into the bind-mounted data dir (/etcd-data maps to
-# {{ patroni_etcd_data_dir }} on the host). The etcd image is distroless — it has no
-# `rm`/shell — so we never `exec` cleanup inside it: the temp file lives on the
-# host volume and is moved into place from here.
-CONTAINER_TMP="/etcd-data/.snap-${STAMP}.db"
-HOST_TMP="{{ patroni_etcd_data_dir }}/.snap-${STAMP}.db"
+# etcdctl writes <name>.part and renames it when done. A save killed part-way
+# (OOM, reboot) leaves the .part behind; sweep ones older than a day.
+find "${SNAPSHOT_DIR}" -maxdepth 1 -name 'etcd-snapshot-*.db.part' -mmin +1440 \
+  -printf '  removed stale partial: %f\n' -delete
+# Leftovers from the previous layout, which staged snapshots in etcd's data
+# directory and moved them here.
+find "{{ patroni_etcd_data_dir }}" -maxdepth 1 -name '.snap-*.db*' -mmin +60 \
+  -printf '  removed legacy staging file: %f\n' -delete
 
-${ENGINE} exec etcd etcdctl snapshot save "${CONTAINER_TMP}" \
-  --cacert=/etc/certs/ca.crt \
-  --cert=/etc/certs/etcd-server.crt \
-  --key=/etc/certs/etcd-server.key 2>/dev/null
-
-mv -f "${HOST_TMP}" "${SNAPSHOT_FILE}" 2>/dev/null
-rm -f "${HOST_TMP}" 2>/dev/null
-
-if [[ -f "${SNAPSHOT_FILE}" ]]; then
-  SIZE=$(du -sh "${SNAPSHOT_FILE}" | cut -f1)
-  echo "[$(date)] etcd snapshot saved: ${SNAPSHOT_FILE} (${SIZE})"
+if ! ${ENGINE} exec etcd etcdctl snapshot save "${SNAPSHOT_MOUNT}/${NAME}" \
+    --cacert=/etc/certs/ca.crt \
+    --cert=/etc/certs/etcd-server.crt \
+    --key=/etc/certs/etcd-server.key; then
+  echo "[$(date)] etcd snapshot FAILED"
+  exit 1
+fi
+if [[ ! -s "${SNAPSHOT_FILE}" ]]; then
+  echo "[$(date)] etcd snapshot FAILED: ${SNAPSHOT_FILE} is missing or empty." \
+    "Is ${SNAPSHOT_DIR} mounted at ${SNAPSHOT_MOUNT} in the etcd container?"
+  exit 1
+fi
+SIZE=$(du -sh "${SNAPSHOT_FILE}" | cut -f1)
+echo "[$(date)] etcd snapshot saved: ${SNAPSHOT_FILE} (${SIZE})"
 {% if s3_enabled %}
 
-  # Upload to S3
-  s3_upload() {
-    local file="$1" key="$2"
-    local date_header content_type="application/octet-stream"
-    date_header=$(date -u '+%a, %d %b %Y %H:%M:%S GMT')
-    local string_to_sign
-    string_to_sign=$(printf 'PUT\n\n%s\n%s\n/%s/%s' \
-      "${content_type}" "${date_header}" "${S3_BUCKET}" "${key}")
-    local signature
-    signature=$(printf '%s' "${string_to_sign}" \
-      | openssl dgst -sha1 -hmac "${S3_SECRET_KEY}" -binary | base64)
+# ── Upload to S3 ──
+s3_upload() {
+  local file="$1" key="$2"
+  local date_header content_type="application/octet-stream"
+  date_header=$(date -u '+%a, %d %b %Y %H:%M:%S GMT')
+  local string_to_sign
+  string_to_sign=$(printf 'PUT\n\n%s\n%s\n/%s/%s' \
+    "${content_type}" "${date_header}" "${S3_BUCKET}" "${key}")
+  local signature
+  signature=$(printf '%s' "${string_to_sign}" \
+    | openssl dgst -sha1 -hmac "${S3_SECRET_KEY}" -binary | base64)
 
-    local url
-    if [[ -n "${S3_ENDPOINT}" ]]; then
-      url="${S3_ENDPOINT}/${S3_BUCKET}/${key}"
-    else
-      url="https://${S3_BUCKET}.s3.${S3_REGION}.amazonaws.com/${key}"
-    fi
-
-    curl -sfS -X PUT -T "${file}" \
-      -H "Date: ${date_header}" \
-      -H "Content-Type: ${content_type}" \
-      -H "Authorization: AWS ${S3_ACCESS_KEY}:${signature}" \
-      "${url}"
-  }
-
-  S3_KEY="{{ patroni_etcd_s3_prefix | default('etcd-snapshots') | regex_replace('/$', '') }}/etcd-snapshot-${STAMP}.db"
-  if s3_upload "${SNAPSHOT_FILE}" "${S3_KEY}"; then
-    echo "[$(date)] uploaded to s3://${S3_BUCKET}/${S3_KEY}"
+  local url
+  if [[ -n "${S3_ENDPOINT}" ]]; then
+    url="${S3_ENDPOINT}/${S3_BUCKET}/${key}"
   else
-    echo "[$(date)] S3 upload FAILED (local snapshot preserved)"
+    url="https://${S3_BUCKET}.s3.${S3_REGION}.amazonaws.com/${key}"
   fi
+
+  curl -sfS -X PUT -T "${file}" \
+    -H "Date: ${date_header}" \
+    -H "Content-Type: ${content_type}" \
+    -H "Authorization: AWS ${S3_ACCESS_KEY}:${signature}" \
+    "${url}"
+}
+
+S3_KEY="{{ patroni_etcd_s3_prefix | default('etcd-snapshots') | regex_replace('/$', '') }}/${NAME}"
+if s3_upload "${SNAPSHOT_FILE}" "${S3_KEY}"; then
+  echo "[$(date)] uploaded to s3://${S3_BUCKET}/${S3_KEY}"
+else
+  echo "[$(date)] S3 upload FAILED (local snapshot kept)"
+  RC=1
+fi
+{% endif %}
+{% if patroni_walg_enabled | bool and patroni_walg_storage_type == 'gcs' %}
+{%   set _gcs_prefix = patroni_etcd_gcs_prefix | regex_replace('/$', '') %}
+
+# ── Upload to Google Cloud Storage ──
+# Native GCS needs a service-account key, not the HMAC keys the S3 upload
+# above signs with, so reuse WAL-G: its image and key are already on the host.
+# A throwaway container reads the snapshot and the key through read-only
+# mounts. label=disable because both mounts carry other containers' private
+# SELinux labels on podman hosts; it is a no-op without SELinux.
+# The prefix is the bucket root and the prefix goes into the destination
+# path: `wal-g st put` files a bare name under a literal "./" folder, which
+# `wal-g st rm` can't address afterwards. wal-g compresses the file and
+# appends the method's extension to the object name (.zst, .lz4, ...).
+# Every member runs this timer at the same moment, so each uploads under its
+# own host name; one shared name would have them overwrite each other.
+GCS_HOST=$(hostname -s)
+if ${ENGINE} run --rm --network host --security-opt label=disable \
+    -e GOOGLE_APPLICATION_CREDENTIALS={{ patroni_walg_gcs_service_account_path }} \
+    -e WALG_GS_PREFIX=gs://{{ patroni_walg_gcs_bucket }} \
+    -e WALG_COMPRESSION_METHOD={{ patroni_walg_compression }} \
+    -v {{ patroni_walg_gcs_service_account_dir }}:{{ patroni_walg_gcs_service_account_mount }}:ro \
+    -v "${SNAPSHOT_DIR}:/snapshots:ro" \
+    --entrypoint /usr/local/bin/wal-g \
+    {{ patroni_walg_image }} \
+    st put "/snapshots/${NAME}" "{{ _gcs_prefix }}/${GCS_HOST}/${NAME}"; then
+  echo "[$(date)] uploaded to gs://{{ patroni_walg_gcs_bucket }}/{{ _gcs_prefix }}/${GCS_HOST}/${NAME} ({{ patroni_walg_compression }})"
+else
+  echo "[$(date)] GCS upload FAILED (local snapshot kept)"
+  RC=1
+fi
 {% endif %}
 
-  # Prune old local snapshots beyond retention count
-  SNAP_COUNT=$(find "${SNAPSHOT_DIR}" -name "etcd-snapshot-*.db" | wc -l)
-  if (( SNAP_COUNT > RETAIN )); then
-    find "${SNAPSHOT_DIR}" -name "etcd-snapshot-*.db" | sort | head -n -${RETAIN} | while read -r OLD; do
+# ── Keep the newest RETAIN snapshots on this host ──
+# Names sort by timestamp, so everything before the last RETAIN goes.
+find "${SNAPSHOT_DIR}" -maxdepth 1 -name 'etcd-snapshot-*.db' | sort | head -n -"${RETAIN}" \
+  | while read -r OLD; do
       rm -f "${OLD}"
       echo "  pruned: $(basename "${OLD}")"
     done
-  fi
-else
-  echo "[$(date)] etcd snapshot FAILED"
-fi
+
+exit "${RC}"

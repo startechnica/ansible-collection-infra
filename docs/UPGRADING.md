@@ -254,6 +254,36 @@ loses the DCS. On a running cluster, apply it one member at a time instead:
 Once every member has the edit, the next provision run renders the same file
 and restarts nothing.
 
+### Changed — etcd snapshots are written through a mount (recreates etcd)
+
+`patroni_etcd_snapshot_dir` (`/opt/etcd/snapshots`) is now bind-mounted into
+the etcd container at `patroni_etcd_snapshot_mount` (`/etcd-snapshots`) and
+owned by etcd's user. etcdctl writes each snapshot straight there, and
+`etcd-snapshot.sh` rotates and uploads on the host. On GCS-backed clusters it
+also uploads to `patroni_walg_gcs_bucket` under `patroni_etcd_gcs_prefix`.
+
+**Rolling it out.** The mount recreates etcd, so the same rule applies as for
+[compaction](#new--etcd-history-compaction-recreates-etcd): a normal provision
+run recreates every member at once. On a running cluster, add the volume to
+one member at a time and wait for `endpoint health --cluster` between members.
+If you're rolling out compaction too, do both in the same recreate.
+
+- docker: add `- /opt/etcd/snapshots:/etcd-snapshots:Z` to the `etcd`
+  service's `volumes`, then `docker compose up -d --no-deps etcd`.
+- podman: add `Volume=/opt/etcd/snapshots:/etcd-snapshots:Z` to
+  `etcd.container`, then `systemctl daemon-reload && systemctl restart
+  etcd.service`. Patroni restarts with it, so follow the replica-first order.
+
+Then `chown 42782:42782 /opt/etcd/snapshots && chmod 0700 /opt/etcd/snapshots`
+(`patroni_etcd_uid`/`gid`; the script also does this on every run). Run the
+provision to install the new script and unit.
+
+**Recreating etcd also clears an old leak.** Deployments from before the
+systemd timer wrote snapshots to the etcd container's `/tmp` and couldn't
+delete them. Check with `du -sh` on the container's writable layer, or just
+watch disk usage. A recreated container starts with an empty writable
+layer, so those files go with it.
+
 ### Breaking — `s3_retain_days` removed
 
 The `s3_retain_days` variable is gone. S3 backup retention now always follows

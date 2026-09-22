@@ -30,8 +30,9 @@
       {%- endfor -%}
       {{ ips }}
     s3_enabled: "{{ patroni_s3_bucket | length > 0 }}"
-    # Does the SELECTED WAL-G backend have a bucket? etcd snapshots stay on S3
-    # regardless, so s3_enabled above is deliberately separate from this.
+    # Does the SELECTED WAL-G backend have a bucket? etcd snapshots upload to
+    # S3 whenever patroni_s3_bucket is set, whatever the WAL-G backend, so
+    # s3_enabled above is deliberately separate from this.
     walg_storage_configured: >-
       {{ (patroni_walg_gcs_bucket | default('') | length > 0)
          if (patroni_walg_storage_type | default('s3')) == 'gcs'

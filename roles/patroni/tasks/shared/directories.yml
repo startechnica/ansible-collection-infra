@@ -29,7 +29,6 @@
     - { path: "{{ patroni_pgbouncer_dir }}" }
     - { path: "{{ patroni_keepalived_dir }}" }
     - { path: "{{ patroni_vip_manager_dir }}" }
-    - { path: "{{ patroni_etcd_snapshot_dir }}" }
     - { path: "{{ patroni_walg_dir }}" }
     - { path: "{{ patroni_walg_dir }}/bin" }
 
@@ -44,8 +43,11 @@
     # to gcs. Only populated by shared/walg.yml when gcs is the active backend.
     - { path: "{{ patroni_walg_gcs_service_account_dir }}", owner: "{{ patroni_uid }}", group: "{{ patroni_gid }}", mode: "0700" }
 
-    # ── etcd-owned (data directory) ──
+    # ── etcd-owned (data directory, and the snapshot directory etcdctl writes
+    #    into through its bind mount). Snapshots are not recursed: older ones
+    #    may be root's, and root on the host prunes them either way. ──
     - { path: "{{ patroni_etcd_data_dir }}", owner: "{{ patroni_etcd_uid }}", group: "{{ patroni_etcd_gid }}", mode: "0700", recurse: true }
+    - { path: "{{ patroni_etcd_snapshot_dir }}", owner: "{{ patroni_etcd_uid }}", group: "{{ patroni_etcd_gid }}", mode: "0700" }
   loop_control:
     label: "{{ item.path }}"
 

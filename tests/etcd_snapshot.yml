@@ -1,0 +1,297 @@
+---
+# Regression coverage for etcd snapshots: where they are written, how they
+# are rotated, and that a failure is reported.
+#
+# Two failures this guards against, both silent:
+#   - An earlier script wrote each snapshot to the etcd container's /tmp and
+#     tried `exec etcd rm` afterwards. The image is distroless, the rm failed
+#     every time with the error discarded, and the copies grew with the etcd
+#     database until they filled the host disk (220 GB on one production node).
+#   - A failed snapshot exited 0, so the unit never showed as failed.
+#
+# Play 1 renders every template involved. Play 2 runs the rendered script for
+# real against a stand-in container engine and checks what it leaves on disk.
+#
+# Run from collection root:
+#   ansible-playbook tests/etcd_snapshot.yml
+
+- name: "Snapshot :: render the mount, unit and script"
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  vars:
+    _es_dir: /tmp/etcd-snapshot-test/render
+    # Node identity the etcd/patroni templates expect from the inventory.
+    node_ip: 10.0.0.11
+    node_ips: [10.0.0.11, 10.0.0.12, 10.0.0.13]
+    etcd_cluster_state: new
+    patroni_postgresql_postgres_password: test-only
+    # Normally derived by shared/_computed_vars.yml.
+    patroni_vip_enabled: true
+    use_vip_manager: true
+    s3_enabled: false
+    patroni_walg_enabled: false
+
+  tasks:
+    # Loads every file in patroni's defaults/main/ and vars/main/, the same
+    # variables the role sees. Runs no tasks.
+    - name: "Snapshot :: import patroni role variables"
+      ansible.builtin.import_role:
+        name: patroni
+        tasks_from: export_vars
+
+    - name: "Snapshot :: recreate render directory"
+      ansible.builtin.file:
+        path: "{{ _es_dir }}"
+        state: "{{ _es_state }}"
+        mode: "0755"
+      loop: [absent, directory]
+      loop_control:
+        loop_var: _es_state
+
+    - name: "Snapshot :: render the etcd container definitions"
+      ansible.builtin.template:
+        src: "../roles/patroni/templates/{{ item.src }}"
+        dest: "{{ _es_dir }}/{{ item.dest }}"
+        mode: "0644"
+      loop:
+        - {src: compose/docker-compose.yml.j2, dest: docker-compose.yml}
+        - {src: quadlets/etcd.container.j2, dest: etcd.container}
+      loop_control:
+        label: "{{ item.dest }}"
+
+    - name: "Snapshot :: verify both engines mount the snapshot directory into etcd"
+      ansible.builtin.assert:
+        that:
+          - _mount ~ ':Z' in _compose.services.etcd.volumes
+          - ('Volume=' ~ _mount ~ ':Z') in _quadlet.splitlines()
+          # The patroni container must not get it: only etcd writes snapshots.
+          - _compose.services.patroni.volumes | select('search', patroni_etcd_snapshot_mount) | list | length == 0
+        fail_msg: >-
+          etcd must see {{ patroni_etcd_snapshot_dir }} at
+          {{ patroni_etcd_snapshot_mount }}. Without the mount etcdctl has
+          nowhere on the host to write, and the script fails every run.
+      vars:
+        _mount: "{{ patroni_etcd_snapshot_dir }}:{{ patroni_etcd_snapshot_mount }}"
+        _compose: "{{ lookup('file', _es_dir ~ '/docker-compose.yml') | from_yaml }}"
+        _quadlet: "{{ lookup('file', _es_dir ~ '/etcd.container') }}"
+
+    - name: "Snapshot :: render etcd-snapshot.service for each engine"
+      ansible.builtin.template:
+        src: ../roles/patroni/templates/etcd-snapshot.service.j2
+        dest: "{{ _es_dir }}/etcd-snapshot-{{ item }}.service"
+        mode: "0644"
+      loop: [podman, docker]
+      vars:
+        patroni_container_engine: "{{ item }}"
+
+    - name: "Snapshot :: verify the unit orders after the engine's etcd"
+      ansible.builtin.assert:
+        that:
+          - _unit | regex_findall('^After=(.*)$', multiline=True) == [item.value]
+          # A failed snapshot must not take etcd, or anything else, with it.
+          - "'Requires=' not in _unit"
+          - "'ExecStart=' ~ patroni_dir ~ '/etcd-snapshot.sh' in _unit"
+      loop: "{{ {'podman': 'etcd.service', 'docker': 'docker.service'} | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+      vars:
+        _unit: "{{ lookup('file', _es_dir ~ '/etcd-snapshot-' ~ item.key ~ '.service') }}"
+
+    # One task per upload mode, with literal booleans: the template tests
+    # s3_enabled and patroni_walg_enabled directly.
+    - name: "Snapshot :: render the script with no upload"
+      ansible.builtin.template:
+        src: ../roles/patroni/templates/etcd-snapshot.sh.j2
+        dest: "{{ _es_dir }}/etcd-snapshot-local.sh"
+        mode: "0755"
+
+    - name: "Snapshot :: render the script with S3 upload"
+      ansible.builtin.template:
+        src: ../roles/patroni/templates/etcd-snapshot.sh.j2
+        dest: "{{ _es_dir }}/etcd-snapshot-s3.sh"
+        mode: "0755"
+      vars:
+        s3_enabled: true
+        patroni_s3_bucket: test-bucket
+
+    - name: "Snapshot :: render the script with GCS upload"
+      ansible.builtin.template:
+        src: ../roles/patroni/templates/etcd-snapshot.sh.j2
+        dest: "{{ _es_dir }}/etcd-snapshot-gcs.sh"
+        mode: "0755"
+      vars:
+        patroni_walg_enabled: true
+        patroni_walg_storage_type: gcs
+        patroni_walg_gcs_bucket: test-bucket
+        patroni_etcd_gcs_prefix: etcd-test/
+
+    - name: "Snapshot :: syntax-check each rendered script"
+      ansible.builtin.command: "bash -n {{ _es_dir }}/etcd-snapshot-{{ item }}.sh"
+      loop: [local, s3, gcs]
+      changed_when: false
+
+    - name: "Snapshot :: verify where each script writes and uploads"
+      ansible.builtin.assert:
+        that:
+          # etcd writes through the mount, never to its own /tmp, and the
+          # script never tries to clean up inside the container. Checked on
+          # the code only: the header comment explains the old approach.
+          - "'snapshot save \"${SNAPSHOT_MOUNT}/${NAME}\"' in _code"
+          - "'/tmp/' not in _code"
+          - "'exec etcd rm' not in _code"
+          - "'exit \"${RC}\"' in _s.local"
+          # Uploads appear only when configured.
+          - "'s3_upload' not in _s.local and 'st put' not in _s.local"
+          - "'s3_upload' in _s.s3 and 'st put' not in _s.s3"
+          - "'st put' in _s.gcs and 's3_upload' not in _s.gcs"
+          # GCS: bucket root as the WAL-G prefix, the cluster prefix (trailing
+          # slash trimmed) in the destination path.
+          - "'WALG_GS_PREFIX=gs://test-bucket ' in _s.gcs or 'WALG_GS_PREFIX=gs://test-bucket\n' in _s.gcs"
+          # One folder per member: they all run at the same moment.
+          - "'\"etcd-test/${GCS_HOST}/${NAME}\"' in _s.gcs"
+          - "'--security-opt label=disable' in _s.gcs"
+      vars:
+        _s:
+          local: "{{ lookup('file', _es_dir ~ '/etcd-snapshot-local.sh') }}"
+          s3: "{{ lookup('file', _es_dir ~ '/etcd-snapshot-s3.sh') }}"
+          gcs: "{{ lookup('file', _es_dir ~ '/etcd-snapshot-gcs.sh') }}"
+        _code: "{{ _s.local | regex_replace('(?m)^\\s*#.*$', '') }}"
+
+- name: "Snapshot :: run the script and check rotation"
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  vars:
+    _er_root: /tmp/etcd-snapshot-test/run
+    _er_snaps: "{{ _er_root }}/snapshots"
+    _er_data: "{{ _er_root }}/data"
+    # The script runs as whoever runs the test, so it can only chown to them.
+    patroni_etcd_uid: "{{ lookup('ansible.builtin.pipe', 'id -u') }}"
+    patroni_etcd_gid: "{{ lookup('ansible.builtin.pipe', 'id -g') }}"
+    patroni_etcd_snapshot_dir: "{{ _er_snaps }}"
+    patroni_etcd_data_dir: "{{ _er_data }}"
+    # Stand-in engine: see the stub below.
+    patroni_container_engine: "{{ _er_root }}/fake-engine"
+    s3_enabled: false
+    patroni_walg_enabled: false
+
+  tasks:
+    - name: "Rotation :: import patroni role variables"
+      ansible.builtin.import_role:
+        name: patroni
+        tasks_from: export_vars
+
+    - name: "Rotation :: recreate work directories"
+      ansible.builtin.file:
+        path: "{{ item.0 }}"
+        state: "{{ item.1 }}"
+        mode: "0755"
+      loop: "{{ [_er_root] | product(['absent']) + [_er_root, _er_snaps, _er_data] | product(['directory']) }}"
+
+    # Handles only `exec etcd etcdctl snapshot save <path> ...`, mapping the
+    # container path under the mount onto the host directory, as the bind
+    # mount would. FAKE_ENGINE_FAIL makes etcdctl fail; FAKE_ENGINE_NOWRITE
+    # makes it "succeed" without a file, as when the mount is missing.
+    - name: "Rotation :: install the stand-in container engine"
+      ansible.builtin.copy:
+        dest: "{{ patroni_container_engine }}"
+        mode: "0755"
+        content: |
+          #!/bin/bash
+          set -eu
+          [ "${FAKE_ENGINE_FAIL:-0}" = 1 ] && { echo "fake engine: forced failure" >&2; exit 1; }
+          [ "$1 $2 $3 $4 $5" = "exec etcd etcdctl snapshot save" ] || { echo "unexpected: $*" >&2; exit 2; }
+          case "$6" in {{ patroni_etcd_snapshot_mount }}/*) ;; *) echo "not under the mount: $6" >&2; exit 3;; esac
+          [ "${FAKE_ENGINE_NOWRITE:-0}" = 1 ] && exit 0
+          printf 'fake snapshot\n' > "{{ _er_snaps }}/${6#{{ patroni_etcd_snapshot_mount }}/}"
+
+    - name: "Rotation :: render the script"
+      ansible.builtin.template:
+        src: ../roles/patroni/templates/etcd-snapshot.sh.j2
+        dest: "{{ _er_root }}/etcd-snapshot.sh"
+        mode: "0755"
+
+    # 9 old snapshots + the new one = 10; retention 7 must drop the 3 oldest.
+    # Partial and legacy staging files straddle their age cut-offs.
+    - name: "Rotation :: seed snapshots and leftovers"
+      ansible.builtin.shell: |
+        set -eu
+        for i in 1 2 3 4 5 6 7 8 9; do : > "{{ _er_snaps }}/etcd-snapshot-20260101-00000$i.db"; done
+        : > "{{ _er_snaps }}/etcd-snapshot-20251231-000000.db.part"
+        touch -d '2 days ago' "{{ _er_snaps }}/etcd-snapshot-20251231-000000.db.part"
+        : > "{{ _er_snaps }}/etcd-snapshot-20260102-000000.db.part"
+        : > "{{ _er_data }}/.snap-20260101-000000.db"
+        touch -d '2 hours ago' "{{ _er_data }}/.snap-20260101-000000.db"
+        : > "{{ _er_data }}/.snap-20260102-000000.db"
+      changed_when: true
+
+    - name: "Rotation :: run a successful snapshot"
+      ansible.builtin.command: "{{ _er_root }}/etcd-snapshot.sh"
+      register: _er_ok
+      changed_when: true
+
+    - name: "Rotation :: list what is left"
+      ansible.builtin.find:
+        paths: ["{{ _er_snaps }}", "{{ _er_data }}"]
+        patterns: ["etcd-snapshot-*", ".snap-*"]
+        hidden: true
+      register: _er_left
+
+    - name: "Rotation :: verify rotation and cleanup"
+      ansible.builtin.assert:
+        that:
+          - _er_ok.rc == 0
+          - "'etcd snapshot saved' in _er_ok.stdout"
+          - _snaps | length == patroni_etcd_snapshot_retain | int
+          # The 3 oldest went, the new one (today's timestamp) stayed.
+          - "'etcd-snapshot-20260101-000001.db' not in _snaps"
+          - "'etcd-snapshot-20260101-000003.db' not in _snaps"
+          - "'etcd-snapshot-20260101-000004.db' in _snaps"
+          - _snaps | select('match', 'etcd-snapshot-' ~ lookup('ansible.builtin.pipe', 'date +%Y%m%d')) | list | length == 1
+          # A day-old partial is swept; a fresh one may still be in progress.
+          - "'etcd-snapshot-20251231-000000.db.part' not in _names"
+          - "'etcd-snapshot-20260102-000000.db.part' in _names"
+          # Legacy staging files go once they're an hour old.
+          - "'.snap-20260101-000000.db' not in _names"
+          - "'.snap-20260102-000000.db' in _names"
+        fail_msg: "stdout: {{ _er_ok.stdout_lines }} / left: {{ _names }}"
+      vars:
+        _names: "{{ _er_left.files | map(attribute='path') | map('basename') | list }}"
+        _snaps: "{{ _names | select('match', '^etcd-snapshot-.*\\.db$') | list }}"
+
+    - name: "Rotation :: run with etcdctl failing"
+      ansible.builtin.command: "{{ _er_root }}/etcd-snapshot.sh"
+      environment:
+        FAKE_ENGINE_FAIL: "1"
+      register: _er_fail
+      failed_when: false
+      changed_when: false
+
+    - name: "Rotation :: run with no file appearing (mount missing)"
+      ansible.builtin.command: "{{ _er_root }}/etcd-snapshot.sh"
+      environment:
+        FAKE_ENGINE_NOWRITE: "1"
+      register: _er_nowrite
+      failed_when: false
+      changed_when: false
+
+    - name: "Rotation :: list snapshots after the failed runs"
+      ansible.builtin.find:
+        paths: ["{{ _er_snaps }}"]
+        patterns: ["etcd-snapshot-*.db"]
+      register: _er_after
+
+    - name: "Rotation :: verify failures are reported and prune nothing"
+      ansible.builtin.assert:
+        that:
+          - _er_fail.rc == 1
+          - "'FAILED' in _er_fail.stdout"
+          - _er_nowrite.rc == 1
+          - "'missing or empty' in _er_nowrite.stdout"
+          # A run without a new snapshot must not rotate out a good one.
+          - _er_after.files | length == patroni_etcd_snapshot_retain | int
+        fail_msg: >-
+          A failed snapshot must exit non-zero and leave the kept snapshots
+          alone. fail: rc={{ _er_fail.rc }} {{ _er_fail.stdout_lines }};
+          no-write: rc={{ _er_nowrite.rc }} {{ _er_nowrite.stdout_lines }}

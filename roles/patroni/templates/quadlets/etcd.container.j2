@@ -40,6 +40,8 @@ Exec=etcd \
 
 Volume={{ patroni_etcd_data_dir }}:/etcd-data:Z
 Volume={{ patroni_etcd_certs_dir }}:/etc/certs:ro,Z
+# etcdctl writes snapshots here; etcd-snapshot.sh rotates them on the host.
+Volume={{ patroni_etcd_snapshot_dir }}:{{ patroni_etcd_snapshot_mount }}:Z
 
 # Most strongly protected container in the stack: losing the DCS makes Patroni
 # demote the primary cluster-wide. See patroni_etcd_oom_score_adj in defaults.
