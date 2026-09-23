@@ -262,6 +262,27 @@ argument_specs:
       mongodb_exporter_port:
         type: int
         default: 9216
+      mongodb_exporter_shard_enabled:
+        type: bool
+        default: false
+        description: >-
+          Sharded clusters: also run mongodb-exporter-shard, connected directly
+          to this node's shard mongod. Needs mongodb_exporter_enabled. The role
+          creates the exporter's X.509 user on the shard replica set.
+      mongodb_exporter_shard_port:
+        type: int
+        default: 9217
+        description: Port the shard exporter serves /metrics on.
+      mongodb_exporter_configsvr_enabled:
+        type: bool
+        default: false
+        description: >-
+          Sharded clusters: also run mongodb-exporter-configsvr, connected
+          directly to this node's config server. Needs mongodb_exporter_enabled.
+      mongodb_exporter_configsvr_port:
+        type: int
+        default: 9218
+        description: Port the configsvr exporter serves /metrics on.
 
       # ── Percona Backup for MongoDB (PBM) ──
       mongodb_backup_pbm_enabled:

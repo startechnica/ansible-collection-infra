@@ -492,6 +492,11 @@
   run_once: true
   when: mongodb_exporter_enabled | bool
 
+# Per-member shard exporter: the same user, created on the shard replica set.
+- name: Create shard-local exporter user (per-member shard exporter)
+  ansible.builtin.include_tasks: exporter_users.yml
+  when: mongodb_exporter_members | length > 0
+
 # ── Create application databases and users ──
 
 - name: Create application databases and users

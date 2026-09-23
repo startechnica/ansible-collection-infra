@@ -189,7 +189,9 @@ services:
       - --compatible-mode
     network_mode: service:{{ 'mongos' if mongodb_cluster_type == 'sharded' else 'mongod' }}
     volumes:
-      - {{ mongodb_tls_dir }}/exporter.pem:/etc/mongo/ssl/exporter.pem:ro,Z
+{# Shared (z) label once several exporters mount the same cert: a private (Z)
+   label is rewritten by whichever container starts last, locking out the rest. #}
+      - {{ mongodb_tls_dir }}/exporter.pem:/etc/mongo/ssl/exporter.pem:ro,{{ 'z' if mongodb_exporter_members | length > 0 else 'Z' }}
       - {{ mongodb_tls_dir }}/ca.pem:/etc/mongo/ssl/ca.pem:ro,z
     depends_on:
       - {{ 'mongos' if mongodb_cluster_type == 'sharded' else 'mongod' }}
@@ -203,6 +205,39 @@ services:
         limits:
           memory: {{ mongodb_exporter_mem_limit_mb }}m
     oom_score_adj: {{ mongodb_exporter_oom_score_adj }}
+{% for _member in mongodb_exporter_members %}
+
+  # Per-member exporter for this node's {{ _member.compose_svc }} — see
+  # mongodb_exporter_{{ _member.name }}_enabled. Host network: it reaches
+  # {{ _member.compose_svc }} on its published port {{ _member.node_port }} and serves
+  # /metrics on the host's :{{ _member.port }}.
+  mongodb-exporter-{{ _member.name }}:
+    image: {{ mongodb_exporter_image }}
+    container_name: mongodb-exporter-{{ _member.name }}
+    restart: unless-stopped
+    user: "{{ mongodb_uid }}:{{ mongodb_gid }}"
+    command:
+      - --mongodb.uri=mongodb://localhost:{{ _member.node_port }}/?tls=true&tlsCertificateKeyFile=/etc/mongo/ssl/exporter.pem&tlsCAFile=/etc/mongo/ssl/ca.pem&authMechanism=MONGODB-X509&authSource=$$external
+      - --web.listen-address=:{{ _member.port }}
+      - --collect-all
+      - --compatible-mode
+    network_mode: host
+    volumes:
+      - {{ mongodb_tls_dir }}/exporter.pem:/etc/mongo/ssl/exporter.pem:ro,z
+      - {{ mongodb_tls_dir }}/ca.pem:/etc/mongo/ssl/ca.pem:ro,z
+    depends_on:
+      - {{ _member.compose_svc }}
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          memory: {{ mongodb_exporter_mem_limit_mb }}m
+    oom_score_adj: {{ mongodb_exporter_oom_score_adj }}
+{% endfor %}
 {% endif %}
 
 networks:

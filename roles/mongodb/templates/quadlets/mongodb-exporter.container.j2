@@ -33,7 +33,10 @@ Exec=--mongodb.uri=mongodb://localhost:{{ _peer_port }}/?tls=true&tlsCertificate
   --collect-all \
   --compatible-mode
 
-Volume={{ mongodb_tls_dir }}/exporter.pem:/etc/mongo/ssl/exporter.pem:ro,Z
+{# Shared (z) label once the per-member exporters mount the same cert: a
+   private (Z) label is rewritten by whichever container starts last, locking
+   out the rest. #}
+Volume={{ mongodb_tls_dir }}/exporter.pem:/etc/mongo/ssl/exporter.pem:ro,{{ 'z' if mongodb_exporter_members | length > 0 else 'Z' }}
 Volume={{ mongodb_tls_dir }}/ca.pem:/etc/mongo/ssl/ca.pem:ro,z
 
 Memory={{ mongodb_exporter_mem_limit_mb }}m

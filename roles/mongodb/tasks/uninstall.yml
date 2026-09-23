@@ -95,6 +95,8 @@
         - mongodb-configsvr.service
         - mongodb-mongos.service
         - mongodb-exporter.service
+        - mongodb-exporter-shard.service
+        - mongodb-exporter-configsvr.service
       loop_control:
         label: "{{ item }}"
       failed_when: false
@@ -110,6 +112,8 @@
         - mongodb-configsvr.container
         - mongodb-mongos.container
         - mongodb-exporter.container
+        - mongodb-exporter-shard.container
+        - mongodb-exporter-configsvr.container
       loop_control:
         label: "{{ item }}"
 
@@ -129,6 +133,8 @@
         - mongodb-configsvr.service
         - mongodb-mongos.service
         - mongodb-exporter.service
+        - mongodb-exporter-shard.service
+        - mongodb-exporter-configsvr.service
       loop_control:
         label: "{{ item }}"
       failed_when: false
@@ -149,6 +155,8 @@
         - mongodb-configsvr
         - mongodb-mongos
         - mongodb-exporter
+        - mongodb-exporter-shard
+        - mongodb-exporter-configsvr
       loop_control:
         label: "{{ item }}"
       failed_when: false

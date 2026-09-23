@@ -1,0 +1,169 @@
+---
+# Regression coverage for the per-member MongoDB exporters
+# (mongodb_exporter_shard_enabled / mongodb_exporter_configsvr_enabled).
+#
+# What it guards:
+#   1. Off by default: nothing renders, and the existing exporter's Quadlet and
+#      compose service render exactly as before (a changed unit restarts it).
+#   2. On (sharded): one exporter per process, each connected directly to
+#      localhost:<that process's host port> and serving /metrics on its own
+#      port, bound to the process it scrapes. The Exec= continuation must end
+#      at the last flag, or systemd glues the next directive onto the command.
+#   3. SELinux: with several exporters mounting the same client cert, every
+#      mount uses the shared label (z). A private label (Z) is rewritten by
+#      whichever container starts last and locks out the others.
+#   4. Replica sets get none: their only exporter already talks to mongod.
+#
+# Run from collection root:
+#   ansible-playbook tests/mongodb_member_exporters.yml
+
+- name: Render per-member MongoDB exporters
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  vars:
+    _me_dir: /tmp/mongodb-member-exporters-test
+    _me_templates: "{{ playbook_dir }}/../roles/mongodb/templates"
+    mongodb_nodes:
+      - { name: m-1, ipv4: 10.0.0.11 }
+      - { name: m-2, ipv4: 10.0.0.12 }
+      - { name: m-3, ipv4: 10.0.0.13 }
+
+  tasks:
+    # Loads every file in mongodb's defaults/main/ and vars/main/, the same
+    # variables the role sees. Runs no tasks.
+    - name: Import mongodb role variables
+      ansible.builtin.import_role:
+        name: mongodb
+        tasks_from: export_vars
+
+    - name: Verify per-member exporters are off by default
+      ansible.builtin.assert:
+        that:
+          - not (mongodb_exporter_shard_enabled | bool)
+          - not (mongodb_exporter_configsvr_enabled | bool)
+          - mongodb_exporter_shard_port | int == 9217
+          - mongodb_exporter_configsvr_port | int == 9218
+          - mongodb_exporter_members == []
+
+    # mongodb_exporter_members is computed lazily, so each item's vars decide it.
+    - name: Verify which cluster shapes get member exporters
+      ansible.builtin.assert:
+        that:
+          - (mongodb_exporter_members | map(attribute='name') | list) == item.want
+        fail_msg: "{{ item.name }}: got {{ mongodb_exporter_members | map(attribute='name') | list }}"
+      loop:
+        - { name: sharded both, type: sharded, exporter: true, shard: true, cfg: true, want: [shard, configsvr] }
+        - { name: sharded shard only, type: sharded, exporter: true, shard: true, cfg: false, want: [shard] }
+        - { name: replicaset, type: replicaset, exporter: true, shard: true, cfg: true, want: [] }
+        - { name: mongos exporter off, type: sharded, exporter: false, shard: true, cfg: true, want: [] }
+      loop_control:
+        label: "{{ item.name }}"
+      vars:
+        mongodb_cluster_type: "{{ item.type }}"
+        mongodb_exporter_enabled: "{{ item.exporter }}"
+        mongodb_exporter_shard_enabled: "{{ item.shard }}"
+        mongodb_exporter_configsvr_enabled: "{{ item.cfg }}"
+
+    - name: Recreate render directory
+      ansible.builtin.file:
+        path: "{{ _me_dir }}"
+        state: "{{ _me_state }}"
+        mode: "0755"
+      loop: [absent, directory]
+      loop_control:
+        loop_var: _me_state
+
+    - name: Render the mongos exporter Quadlet and compose file, members off and on
+      ansible.builtin.template:
+        src: "{{ _me_templates }}/{{ item.1.src }}"
+        dest: "{{ _me_dir }}/{{ item.0.name }}-{{ item.1.dest }}"
+        mode: "0644"
+      loop: "{{ [{'name': 'off', 'on': false}, {'name': 'on', 'on': true}]
+                | product([{'src': 'quadlets/mongodb-exporter.container.j2', 'dest': 'mongodb-exporter.container'},
+                           {'src': 'docker-compose.yml.j2', 'dest': 'docker-compose.yml'}]) | list }}"
+      loop_control:
+        label: "{{ item.0.name }}/{{ item.1.dest }}"
+      vars:
+        mongodb_cluster_type: sharded
+        mongodb_exporter_shard_enabled: "{{ item.0.on }}"
+        mongodb_exporter_configsvr_enabled: "{{ item.0.on }}"
+
+    - name: Render each member exporter Quadlet
+      ansible.builtin.template:
+        src: "{{ _me_templates }}/quadlets/mongodb-exporter-member.container.j2"
+        dest: "{{ _me_dir }}/mongodb-exporter-{{ _member.name }}.container"
+        mode: "0644"
+      loop: "{{ mongodb_exporter_members }}"
+      loop_control:
+        loop_var: _member
+        label: "{{ _member.name }}"
+      vars:
+        mongodb_cluster_type: sharded
+        mongodb_exporter_shard_enabled: true
+        mongodb_exporter_configsvr_enabled: true
+
+    - name: Verify members off leaves the mongos exporter as it was
+      ansible.builtin.assert:
+        that:
+          # Private label, as before this feature.
+          - "'exporter.pem:/etc/mongo/ssl/exporter.pem:ro,Z' in _quadlet"
+          - _compose.services | select('match', '^mongodb-exporter-') | list | length == 0
+          - "(_compose.services['mongodb-exporter'].volumes | select('search', 'exporter.pem:ro,Z') | list | length) == 1"
+      vars:
+        _quadlet: "{{ lookup('file', _me_dir ~ '/off-mongodb-exporter.container') }}"
+        _compose: "{{ lookup('file', _me_dir ~ '/off-docker-compose.yml') | from_yaml }}"
+
+    - name: Verify each member Quadlet connects to its own process
+      ansible.builtin.assert:
+        that:
+          - "'ContainerName=mongodb-exporter-' ~ item.name in _unit"
+          - "'Requires=' ~ item.service ~ '.service' in _unit"
+          - "'Network=host' in _unit"
+          - _argv[0] is match('--mongodb.uri=mongodb://localhost:' ~ item.node_port ~ '/\\?tls=true&')
+          - _argv[0] is search('authMechanism=MONGODB-X509&authSource=\$\$external$')
+          - "'--web.listen-address=:' ~ item.port in _argv"
+          - "'--collect-all' in _argv"
+          # The continuation ends exactly at the last flag.
+          - _argv[-1] == '--compatible-mode'
+          - "'exporter.pem:/etc/mongo/ssl/exporter.pem:ro,z' in _unit"
+        fail_msg: "{{ item.name }} Exec argv: {{ _argv }}"
+      loop:
+        - { name: shard, service: mongodb-mongod, node_port: 27019, port: 9217 }
+        - { name: configsvr, service: mongodb-configsvr, node_port: 27018, port: 9218 }
+      loop_control:
+        label: "{{ item.name }}"
+      vars:
+        _unit: "{{ lookup('file', _me_dir ~ '/mongodb-exporter-' ~ item.name ~ '.container') }}"
+        _argv: "{{ (_unit | regex_replace('\\\\\\n\\s*', ' ') | regex_search('^Exec=(.*)$', '\\1', multiline=True) | first).split() }}"
+
+    - name: Verify members on switch every exporter mount to the shared label
+      ansible.builtin.assert:
+        that:
+          - "'exporter.pem:/etc/mongo/ssl/exporter.pem:ro,z' in _quadlet"
+          - "'exporter.pem:ro,Z' not in _quadlet"
+          - _exporters | length == 3
+          - _exporters | map(attribute='volumes') | flatten | select('search', 'exporter.pem:ro,Z') | list | length == 0
+      vars:
+        _quadlet: "{{ lookup('file', _me_dir ~ '/on-mongodb-exporter.container') }}"
+        _compose: "{{ lookup('file', _me_dir ~ '/on-docker-compose.yml') | from_yaml }}"
+        _exporters: "{{ _compose.services | dict2items | selectattr('key', 'match', '^mongodb-exporter') | map(attribute='value') | list }}"
+
+    - name: Verify the compose member exporters
+      ansible.builtin.assert:
+        that:
+          - _svc.network_mode == 'host'
+          - _svc.depends_on == [item.compose_svc]
+          - _svc.command[0] is match('--mongodb.uri=mongodb://localhost:' ~ item.node_port ~ '/\\?tls=true&')
+          - "'--web.listen-address=:' ~ item.port in _svc.command"
+          # The mongos exporter keeps sharing mongos' network namespace.
+          - _compose.services['mongodb-exporter'].network_mode == 'service:mongos'
+        fail_msg: "{{ item.name }}: {{ _svc }}"
+      loop:
+        - { name: shard, compose_svc: mongod, node_port: 27019, port: 9217 }
+        - { name: configsvr, compose_svc: configsvr, node_port: 27018, port: 9218 }
+      loop_control:
+        label: "{{ item.name }}"
+      vars:
+        _compose: "{{ lookup('file', _me_dir ~ '/on-docker-compose.yml') | from_yaml }}"
+        _svc: "{{ _compose.services['mongodb-exporter-' ~ item.name] }}"

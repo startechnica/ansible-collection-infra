@@ -393,6 +393,16 @@
           configsvr: 512
           mongos: 1024
           want: 3712
+        # Per-member shard + configsvr exporters: one more exporter cap each.
+        - name: sharded with PBM, exporter and both member exporters
+          sharded: true
+          pbm: true
+          exporter: true
+          members: 2
+          mongod: 2048
+          configsvr: 512
+          mongos: 1024
+          want: 4480
       loop_control:
         loop_var: _case
         label: "{{ _case.name }}"
@@ -405,4 +415,5 @@
                 * (2 if _case.sharded else 1)
                 if _case.pbm else 0)
              + ((mongodb_exporter_mem_limit_mb | int)
-                if _case.exporter else 0) }}
+                if _case.exporter else 0)
+             + ((mongodb_exporter_mem_limit_mb | int) * (_case.members | default(0) | int)) }}

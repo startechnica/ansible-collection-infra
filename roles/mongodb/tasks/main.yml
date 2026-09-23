@@ -139,7 +139,8 @@
             * (2 if mongodb_cluster_type == 'sharded' else 1)
             if mongodb_backup_pbm_enabled | bool else 0)
          + ((mongodb_exporter_mem_limit_mb | int)
-            if mongodb_exporter_enabled | bool else 0) }}
+            if mongodb_exporter_enabled | bool else 0)
+         + ((mongodb_exporter_mem_limit_mb | int) * (mongodb_exporter_members | length)) }}
     # What something OTHER than this role commits on the same node. Patroni's
     # share is read from the role itself (imported above) so there's no second
     # copy of the number to keep in step; mongodb_mem_reserved_mb is the manual
