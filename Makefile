@@ -73,7 +73,7 @@ check-inv:
 
 # ─── Full-stack deploys ────────────────────────────────────────────────────
 
-.PHONY: deploy deploy-patroni deploy-mongodb
+.PHONY: deploy deploy-patroni deploy-mongodb deploy-alloy
 
 deploy: check-inv  ## Full deploy (everything in inventory)
 	$(PLAY) $(PLAYBOOK_DIR)/deploy.yml $(extra)
@@ -83,6 +83,9 @@ deploy-patroni: check-inv  ## Full Patroni stack (VMs + cluster)
 
 deploy-mongodb: check-inv  ## Full MongoDB stack (VMs + cluster)
 	$(PLAY) $(PLAYBOOK_DIR)/deploy_mongodb.yml $(extra)
+
+deploy-alloy: check-inv  ## Grafana Alloy telemetry only (grafana_alloy_enabled=true hosts)
+	$(PLAY) $(PLAYBOOK_DIR)/deploy.yml --tags alloy $(extra)
 
 # ─── Patroni day-2 actions ─────────────────────────────────────────────────
 # Each maps to patroni_action=<x>. Use deploy_patroni playbook with --tags

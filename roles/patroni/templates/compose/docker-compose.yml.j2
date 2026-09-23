@@ -36,6 +36,10 @@ services:
       - --auto-compaction-mode={{ patroni_etcd_auto_compaction_mode }}
       - --auto-compaction-retention={{ patroni_etcd_auto_compaction_retention }}
 {% endif %}
+{% if patroni_etcd_listen_metrics_urls | length > 0 %}
+      # Plain-HTTP /metrics + /health; see patroni_etcd_listen_metrics_urls.
+      - --listen-metrics-urls={{ patroni_etcd_listen_metrics_urls }}
+{% endif %}
     volumes:
       - {{ patroni_etcd_data_dir }}:/etcd-data:Z
       - {{ patroni_etcd_certs_dir }}:/etc/certs:ro,Z

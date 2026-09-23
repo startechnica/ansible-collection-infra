@@ -1,0 +1,50 @@
+---
+# Shard-local X.509 user for the per-member shard exporter
+# (mongodb_exporter_shard_enabled).
+#
+# init_cluster.yml creates the exporter user through mongos, which stores it on
+# the config servers. That covers the mongos exporter and the configsvr
+# exporter, whose direct connection reads the config replica set's own users.
+# A direct connection to a shard mongod sees only the shard replica set's
+# users, so the shard exporter needs the same user created there.
+#
+# Authenticates with this node's MEMBER certificate (MONGODB-X509 → the
+# internal __system identity), which can createUser on a running auth-mode
+# replica set without the cluster admin password, the same approach as
+# pbm_setup.yml. Runs on every node: the shard primary creates the user and
+# replication carries it to the others, where the attempt ends in "not primary"
+# and reports no change. Idempotent: "already exists" also reports no change.
+
+- name: Create exporter x509 user on shard replica set (member-cert auth)
+  ansible.builtin.include_tasks: _container_exec.yml
+  vars:
+    _ce_purpose: "create exporter x509 user on shard mongod"
+    _ce_container: mongodb-mongod
+    _ce_changed_marker: USER_CREATED
+    _ce_retries: 12
+    _ce_delay: 5
+    _ce_until_rc0: true
+    _ce_command: >
+      mongosh --port {{ mongodb_mongod_exec_port }} --tls
+      --tlsCertificateKeyFile /etc/mongo/ssl/mongodb-mongod.pem
+      --tlsCAFile /etc/mongo/ssl/ca.pem
+      --authenticationMechanism MONGODB-X509
+      --authenticationDatabase '$external'
+      --quiet --eval "
+      try {
+        db.getSiblingDB('\$external').createUser({
+          user: '{{ mongodb_exporter_x509_subject }}',
+          roles: [
+            { role: 'clusterMonitor', db: 'admin' },
+            { role: 'read', db: 'local' }
+          ]
+        });
+        print('USER_CREATED');
+      } catch(e) {
+        if (e.message.includes('already exists') || e.message.includes('not primary')) {
+          print('USER_EXISTS');
+        } else {
+          throw e;
+        }
+      }"
+  when: "'shard' in (mongodb_exporter_members | map(attribute='name'))"

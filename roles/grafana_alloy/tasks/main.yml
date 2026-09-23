@@ -80,6 +80,10 @@
     quiet: "{{ not (debug | bool) }}"
   when: grafana_alloy_action | default('provision') == 'provision'
 
+- name: Validate external labels, host_metrics module and extra scrapes
+  ansible.builtin.include_tasks: validate_metrics.yml
+  when: grafana_alloy_action | default('provision') == 'provision'
+
 # ── Preflight role (system + container engine + venv) ──
 - name: Run preflight role (system + container engine + venv)
   ansible.builtin.include_role:

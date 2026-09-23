@@ -11,6 +11,10 @@ services:
       - --storage.path=/var/lib/alloy/data
       - --server.http.listen-addr={{ grafana_alloy_listen_address }}:{{ grafana_alloy_listen_port }}
     network_mode: {{ grafana_alloy_network_mode }}
+{% if grafana_alloy_host_metrics_module_active | bool %}
+    # The host_metrics module requires the host PID namespace.
+    pid: host
+{% endif %}
 {% if grafana_alloy_env_has_secrets | bool %}
     env_file:
       - {{ grafana_alloy_env_file }}
@@ -25,7 +29,17 @@ services:
       - /etc/machine-id:/etc/machine-id:ro
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
+{% if grafana_alloy_host_metrics_module_active | bool %}
+      # host_metrics module: host / at /host/root; rslave so the host's /run
+      # tmpfs (udev data for diskstats) is visible beneath it.
+      - /:/host/root:ro,rslave
+{% if grafana_alloy_module_password_file_active | bool %}
+      # The module's Prometheus password, read by local.file as a secret.
+      - {{ grafana_alloy_secrets_dir }}:/etc/alloy/secrets:ro,Z
+{% endif %}
+{% else %}
       - /:/rootfs:ro
+{% endif %}
     deploy:
       resources:
         limits:

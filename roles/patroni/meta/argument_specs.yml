@@ -690,6 +690,17 @@ argument_specs:
           - etcd `--auto-compaction-retention`. A duration for `periodic`
             (for example `1h`), a revision count for `revision` (for example `1000`).
 
+      # ── etcd metrics listener ──
+      patroni_etcd_listen_metrics_urls:
+        type: str
+        default: ""
+        description:
+          - etcd `--listen-metrics-urls`, a plain-HTTP listener for /metrics and
+            /health only, e.g. `http://127.0.0.1:2381`. The client port requires a
+            client certificate, so this is how a local Prometheus scraper reads
+            etcd. Empty omits the flag.
+          - Changing it recreates the etcd container; roll it out one member at a time.
+
       # ── etcd snapshots ──
       patroni_etcd_snapshot_schedule:
         type: str

@@ -61,6 +61,63 @@ Disable a pipeline you don't need:
 grafana_alloy_traces_enabled: false
 ```
 
+## Database VM: host_metrics module, tenant, labels, local scrapes
+
+These options are off by default; with none of them set, the rendered files
+are unchanged. Together they give a VM the same metric shape as Kubernetes
+nodes running the `startechnica/grafana` modules, plus its local exporters:
+
+```yaml
+grafana_alloy_traces_enabled: false
+grafana_alloy_prometheus_url: https://mimir.example/api/v1/push
+grafana_alloy_prometheus_tenant_id: my-tenant          # X-Scope-OrgID
+grafana_alloy_prometheus_username: my-tenant
+grafana_alloy_prometheus_password: "{{ vault_telemetry_password }}"
+
+# Host metrics from host_metrics.unix (import.git): job integrations/unix,
+# instance and node = host name. No cluster_name unless you add one below.
+grafana_alloy_host_metrics_module_enabled: true
+grafana_alloy_external_labels: { region: id-central-1, zone: idcentral1-az1 }
+
+# Alloy's own /metrics as job integrations/alloy.
+grafana_alloy_self_metrics_enabled: true
+
+# Local exporters. instance is always the host name, never 127.0.0.1:<port>.
+grafana_alloy_extra_scrapes:
+  - job: integrations/patroni
+    targets: ["127.0.0.1:8008"]
+    scheme: https
+    tls_insecure_skip_verify: true
+  - name: mongodb_shardsvr               # set name when jobs repeat
+    job: integrations/mongodb
+    targets: ["127.0.0.1:9217"]
+    labels: { mongodb_process: shardsvr } # tells apart targets sharing job + instance
+    metric_drop_regex: "mongodb_dbstats_raw_.*"
+```
+
+- **Module mode.** The module owns the remote_write: the tenant, credentials
+  and `grafana_alloy_external_labels` are passed to it, and the extra scrapes
+  forward into its exported receiver. `grafana_alloy_external_labels` replaces
+  the module's `region`/`zone`/`cluster_name` defaults as a whole, so only the
+  labels you list are sent (plus `cluster` when `grafana_alloy_cluster_label` is
+  set). The role's `host` external label is not added in this mode: `instance`
+  and `node` carry the host name, as on the Kubernetes nodes. The host must reach the
+  module repository over HTTPS; pin `grafana_alloy_host_metrics_module_revision`
+  to a tag or commit to stop upstream changes arriving on their own.
+  Alloy's web UI and API show module arguments unless they are secret-typed, so
+  the Prometheus password reaches the module through a `local.file` with
+  `is_secret = true`: the role writes it to
+  `{{ '{{' }} grafana_alloy_root_dir {{ '}}' }}/secrets/prometheus_password` (0600) and mounts that
+  directory read-only at `/etc/alloy/secrets`.
+- **Extra scrapes** keys: `job` and `targets` (required), `name` (component
+  label; default the job with non-`[A-Za-z0-9_]` as `_`; must be unique),
+  `scheme`, `tls_insecure_skip_verify`, `metrics_path`, `scrape_interval`
+  (keep it at 10s or more, the scrape timeout), `metric_drop_regex`, `labels`.
+- **Validation.** On provision, `tasks/validate_metrics.yml` rejects invalid
+  label names, `instance`/`job`/`__*` static labels, duplicate component names,
+  the module without a tenant, and a password that references an undefined
+  variable.
+
 ## Day-2 actions
 
 ```bash
@@ -82,8 +139,13 @@ On a normal re-run, a changed `config.alloy` / `alloy.env` triggers the
 
 The container uses host networking and bind-mounts (read-only) the host
 journal, `/etc/machine-id`, and `/proc`, `/sys`, `/` (exposed to the unix
-exporter as `/host/proc`, `/host/sys`, `/rootfs`). The Alloy web UI is served
-on `http://<host>:{{ '{{' }} grafana_alloy_listen_port {{ '}}' }}` (default 12345).
+exporter as `/host/proc`, `/host/sys`, `/rootfs`). In module mode `/` is
+mounted at `/host/root` (`ro,rslave`, so the host's `/run` tmpfs is visible for
+udev data) instead of `/rootfs`, and the container shares the host PID
+namespace, as the module requires. The Alloy web UI is served
+on `http://<host>:{{ '{{' }} grafana_alloy_listen_port {{ '}}' }}` (default 12345, all interfaces); set
+`grafana_alloy_listen_address: "127.0.0.1"` when nothing needs it remotely and the
+host has no firewall.
 
 ## Key variables
 
@@ -99,6 +161,12 @@ on `http://<host>:{{ '{{' }} grafana_alloy_listen_port {{ '}}' }}` (default 1234
 | `grafana_alloy_*_username` / `*_password` | `""` | Basic auth (password via `alloy.env`/`sys.env`) |
 | `grafana_alloy_tempo_protocol` | `grpc` | `grpc` or `http` OTLP transport |
 | `grafana_alloy_cluster_label` | `""` | `cluster` label on all telemetry |
+| `grafana_alloy_external_labels` | `{}` | Extra labels on every metric and log line (e.g. `region`, `zone`) |
+| `grafana_alloy_prometheus_tenant_id` | `""` | `X-Scope-OrgID` on the metrics remote_write |
+| `grafana_alloy_host_metrics_module_enabled` | `false` | Host metrics from `startechnica/grafana` `host_metrics.unix` instead of the built-in exporter |
+| `grafana_alloy_host_metrics_module_{repository,revision,path,pull_frequency}` | startechnica/grafana, `main`, `alloy/modules/host_metrics.alloy`, `1h` | Where the module comes from |
+| `grafana_alloy_extra_scrapes` | `[]` | Local Prometheus scrapes; `instance` = host name |
+| `grafana_alloy_self_metrics_enabled` | `false` | Scrape Alloy's own `/metrics` as job `integrations/alloy` |
 | `grafana_alloy_listen_port` | `12345` | Alloy HTTP server / UI |
 | `grafana_alloy_mem_limit_mb` | `256` | Container memory limit |
 

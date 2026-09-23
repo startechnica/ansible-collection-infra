@@ -29,6 +29,17 @@ patroni_etcd_data_dir: "{{ patroni_etcd_dir }}/data"
 patroni_etcd_auto_compaction_mode: periodic
 patroni_etcd_auto_compaction_retention: "1h"
 
+# Separate plain-HTTP listener for etcd's /metrics and /health, e.g.
+# "http://127.0.0.1:2381". The client port requires a client certificate
+# (--client-cert-auth), so a Prometheus scraper can't use it without one;
+# this listener serves only metrics and health, and binding it to loopback
+# keeps it off the network. etcd runs with host networking on both engines, so
+# a host-networked scraper (the grafana_alloy role) reaches it on 127.0.0.1.
+# Empty (default) omits --listen-metrics-urls. Changing it recreates the etcd
+# container on the next provision run; roll it out one member at a time, as
+# for the compaction flags (docs/UPGRADING.md).
+patroni_etcd_listen_metrics_urls: ""
+
 # etcd snapshots — driven by a systemd timer (no cron dependency; FCOS
 # doesn't ship crond). `patroni_etcd_snapshot_schedule` is a systemd OnCalendar
 # expression; see `man systemd.time` (section "CALENDAR EVENTS"). Examples:

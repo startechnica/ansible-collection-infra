@@ -92,6 +92,14 @@ listen stats
     #   haproxy_server_current_sessions / haproxy_server_limit_sessions > 0.8
     #   non-zero queue depth (backend saturation, directly)
     #   backend server state flapping (a flapping /primary check reads as a DB outage)
+{# Jinja-only note, not rendered (a comment change would restart HAProxy on
+    every existing cluster). `stats uri /` matches every path, yet /metrics
+    still reaches the exporter: HAProxy evaluates http-request rules before
+    it matches the stats URI, and the stats match is skipped once a
+    use-service rule has set the stream's target (http_process_req_common in
+    src/http_ana.c, checked against v3.3.0). A host whose /metrics returns the
+    HTML stats page is running a haproxy.cfg rendered before this line was
+    added (2026-09-13). Covered by tests/patroni_metrics_endpoints.yml. #}
     http-request use-service prometheus-exporter if { path /metrics }
 
     # READING THIS PAGE — the "Session limit" column means DIFFERENT things per row:

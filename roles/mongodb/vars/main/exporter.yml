@@ -1,0 +1,27 @@
+---
+# Computed: the per-member exporters switched on for this node (see
+# mongodb_exporter_shard_enabled / _configsvr_enabled in
+# defaults/main/exporter.yml), one entry per mongodb-exporter-<name>
+# container. Sharded clusters only, and only alongside the mongos exporter,
+# whose client cert they reuse. Empty by default.
+#   name          container / unit suffix
+#   service       Quadlet unit of the process it connects to
+#   compose_svc   docker compose service of that process
+#   node_port     host port of that process (the exporter runs on the host
+#                 network on both engines and connects to localhost:<node_port>)
+#   port          port the exporter serves /metrics on
+# Every per-member exporter the role knows. tasks/quadlet.yml removes the Quadlets
+# of the ones not switched on (not in mongodb_exporter_members).
+_mongodb_exporter_member_names: [shard, configsvr]
+
+mongodb_exporter_members: >-
+  {{ (([{'name': 'shard', 'service': 'mongodb-mongod', 'compose_svc': 'mongod',
+         'node_port': mongodb_mongod_node_port | int,
+         'port': mongodb_exporter_shard_port | int}]
+        if mongodb_exporter_shard_enabled | bool else [])
+      + ([{'name': 'configsvr', 'service': 'mongodb-configsvr', 'compose_svc': 'configsvr',
+           'node_port': mongodb_configsvr_node_port | int,
+           'port': mongodb_exporter_configsvr_port | int}]
+         if mongodb_exporter_configsvr_enabled | bool else []))
+     if (mongodb_exporter_enabled | bool) and mongodb_cluster_type == 'sharded'
+     else [] }}

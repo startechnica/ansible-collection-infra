@@ -136,6 +136,9 @@ Certs generated on the controller, distributed to each node at `{{ mongodb_root_
 X.509 client auth users (auto-created):
 - `{{ mongodb_healthcheck_x509_subject }}` → `clusterMonitor`
 - `{{ mongodb_exporter_x509_subject }}` → `clusterMonitor` + `read` on `local`
+  (created through mongos, so it lives on the config servers; with
+  `mongodb_exporter_shard_enabled` the role also creates it on the shard
+  replica set, which a direct connection to the shard mongod needs)
 
 ### Backup flow
 
@@ -289,7 +292,7 @@ Highlights:
 | Backup local | `mongodb_backup_type`, `mongodb_backup_dir`, `mongodb_backup_retain_days`, `mongodb_backup_pitr_enabled`, `mongodb_backup_enabled`, `mongodb_backup_schedule`, `mongodb_backup_mode` |
 | Backup S3 | `mongodb_s3_bucket`, `mongodb_s3_endpoint`, `mongodb_s3_access_key`, `mongodb_s3_secret_key`, `mongodb_backup_s3_prefix` |
 | PBM (sharded PITR) | `mongodb_backup_pbm_enabled`, `mongodb_backup_init`, `mongodb_backup_pbm_image`, `mongodb_backup_storage_type`, `mongodb_backup_gcs_bucket`, `mongodb_backup_gcs_service_account`, `mongodb_backup_gcs_prefix`, `mongodb_backup_compression_type`, `mongodb_backup_compression_level`, `mongodb_backup_pbm_mem_limit_mb` (schedule/retention via `mongodb_backup_schedule`/`mongodb_backup_retain_days`) |
-| Monitoring | `mongodb_exporter_enabled`, `mongodb_exporter_port` |
+| Monitoring | `mongodb_exporter_enabled`, `mongodb_exporter_port` (9216, connects to mongos when sharded). Sharded only, off by default: `mongodb_exporter_shard_enabled` / `mongodb_exporter_shard_port` (9217) and `mongodb_exporter_configsvr_enabled` / `mongodb_exporter_configsvr_port` (9218) add one exporter each, connected directly to this node's shard mongod / config server, for the replication, oplog and WiredTiger metrics mongos doesn't report. When scraping several on one host, give each target a distinct label (they share job and instance) |
 | Container memory | `mongodb_mongod_mem_limit_mb`, `mongodb_configsvr_mem_limit_mb`, `mongodb_mongos_mem_limit_mb`, `mongodb_exporter_mem_limit_mb`, `mongodb_backup_pbm_mem_limit_mb` (mongod/configsvr also get `--wiredTigerCacheSizeGB` at 50% of their cap; mongos has no such knob, so its cap is a hard cliff) |
 | Memory budget | `mongodb_mem_reserved_mb` — *additive* escape hatch for memory the collection can't introspect. When `patroni_enabled` is true this role imports patroni's own `patroni_mem_request_mb`, so a plain mongodb+patroni node needs no number here |
 | OOM victim order | `mongodb_mongod_oom_score_adj` / `mongodb_configsvr_oom_score_adj` (0), `mongodb_mongos_oom_score_adj` (500), `mongodb_backup_pbm_oom_score_adj` (800), `mongodb_exporter_oom_score_adj` (1000) — applies when the **host** runs out of memory, not when one container hits its own cap |

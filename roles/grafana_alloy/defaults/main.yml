@@ -48,6 +48,11 @@ grafana_alloy_log_level: info
 
 # ── Common labels stamped on all telemetry ──
 grafana_alloy_cluster_label: ""
+# Extra labels added to every metric (remote_write external_labels) and every
+# log line (loki.write external_labels), e.g. the environment topology:
+#   grafana_alloy_external_labels: { region: id-central-1, zone: idcentral1-az1 }
+# Keys must be valid Prometheus label names. Empty (default) adds nothing.
+grafana_alloy_external_labels: {}
 
 # ── Logs → Loki ──
 grafana_alloy_logs_enabled: true
@@ -62,8 +67,52 @@ grafana_alloy_metrics_enabled: true
 grafana_alloy_prometheus_url: "" # e.g. https://prometheus-prod-xxx.grafana.net/api/prom/push
 grafana_alloy_prometheus_username: ""
 grafana_alloy_prometheus_password: "" # → alloy.env, read via sys.env()
+grafana_alloy_prometheus_tenant_id: "" # X-Scope-OrgID for multi-tenant Mimir (optional)
 grafana_alloy_scrape_interval: "60s"
 grafana_alloy_node_exporter_enabled: true
+
+# Host metrics from the startechnica/grafana `host_metrics.unix` module
+# (import.git) instead of the built-in unix exporter above. Series then have
+# the same shape as Kubernetes nodes running that module: job
+# "integrations/unix", instance and node set to this host's name. The
+# module owns the remote_write, so the tenant, credentials and external
+# labels above are passed to it, and the extra scrapes below forward into
+# it. It adds no cluster_name label unless grafana_alloy_external_labels has
+# one. The container also gets the host's / at /host/root (rslave) and
+# --pid=host, as the module requires. The host must reach the repository
+# over HTTPS. grafana_alloy_node_exporter_enabled is ignored in this mode.
+grafana_alloy_host_metrics_module_enabled: false
+grafana_alloy_host_metrics_module_repository: "https://github.com/startechnica/grafana.git"
+grafana_alloy_host_metrics_module_revision: main # branch, tag or commit
+grafana_alloy_host_metrics_module_path: "alloy/modules/host_metrics.alloy"
+grafana_alloy_host_metrics_module_pull_frequency: "1h"
+
+# Extra Prometheus scrapes of local exporters, shipped through the same
+# remote_write. Every scrape sets `instance` to this host's name (Alloy's
+# constants.hostname), never the scrape address, so these series join the
+# host metrics on instance. One entry per scrape:
+#   - job: integrations/patroni          # job label (required)
+#     targets: ["127.0.0.1:8008"]        # host:port list (required)
+#     name: patroni                      # component label; default: job with
+#                                        #   non-[A-Za-z0-9_] as "_". Must be
+#                                        #   unique, so set it when jobs repeat.
+#     scheme: https                      # default http
+#     tls_insecure_skip_verify: true     # default false
+#     metrics_path: /metrics             # default /metrics
+#     scrape_interval: 60s               # default grafana_alloy_scrape_interval
+#     metric_drop_regex: "go_.*"         # drop matching metric names (optional)
+#     labels: { mongodb_process: mongos }  # static target labels (optional);
+#                                        #   tells apart several targets that
+#                                        #   share job and instance
+grafana_alloy_extra_scrapes: []
+
+# Scrape Alloy's own /metrics (alloy_* component health, remote_write queue,
+# config reload status) as job "integrations/alloy", instance = this host's
+# name — the job name prometheus.exporter.self uses, so the collector-health
+# alerts cover these hosts too. Rendered as one more extra scrape, of
+# 127.0.0.1:<grafana_alloy_listen_port> (or grafana_alloy_listen_address when
+# that is a specific address).
+grafana_alloy_self_metrics_enabled: false
 
 # ── Traces → Tempo (OTLP) ──
 grafana_alloy_traces_enabled: true

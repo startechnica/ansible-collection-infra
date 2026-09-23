@@ -25,6 +25,7 @@
 #   --tags patroni      Install Docker + Patroni
 #   --tags firewall     Apply firewall only (requires firewall_enabled=true)
 #   --tags routeros     Push cluster IPs to MikroTik address-list (requires routeros_enabled=true)
+#   --tags alloy        Deploy the Grafana Alloy telemetry collector (requires grafana_alloy_enabled=true)
 
 # ── Stage 0: Inventory preconditions ─────────────────────────────────────────
 # Runs on every invocation (tag: always). Use `--skip-tags always` to bypass
@@ -61,7 +62,7 @@
 - name: "Stage 1: Query NetBox for VMs"
   hosts: localhost
   gather_facts: false
-  tags: [netbox, provision, docker, mongodb, patroni, firewall, routeros]
+  tags: [netbox, provision, docker, mongodb, patroni, firewall, routeros, alloy]
   tasks:
     - name: Query NetBox for VMs
       ansible.builtin.include_role:
@@ -106,7 +107,7 @@
 - name: "Stage 3: Build host groups"
   hosts: localhost
   gather_facts: false
-  tags: [docker, mongodb, patroni, firewall, routeros]
+  tags: [docker, mongodb, patroni, firewall, routeros, alloy]
   tasks:
     - name: Build host groups from instances (tag-based)
       ansible.builtin.include_role:
@@ -361,6 +362,28 @@
       ansible.builtin.include_role:
         name: firewall
       when: firewall_enabled | default(false) | bool
+
+# ── Stage 7.5: Telemetry (Grafana Alloy) ─────────────────────────────────────
+# No-op unless grafana_alloy_enabled=true. Runs after the data services so the
+# local endpoints it scrapes (Patroni, postgres_exporter, HAProxy, etcd,
+# mongodb_exporter) already exist. `--tags alloy` re-applies only this stage.
+
+- name: "Stage 7.5: Deploy Grafana Alloy"
+  hosts: cluster_nodes
+  become: true
+  gather_facts: true
+  tags: [alloy]
+  tasks:
+    - name: Inherit localhost vars
+      ansible.builtin.include_role:
+        name: common
+        tasks_from: inherit_localhost_vars
+      when: grafana_alloy_enabled | default(false) | bool
+
+    - name: Apply grafana_alloy role
+      ansible.builtin.include_role:
+        name: grafana_alloy
+      when: grafana_alloy_enabled | default(false) | bool
 
 # ── Stage 8: RouterOS address-list ───────────────────────────────────────────
 # No-op unless routeros_enabled=true. Controller-side; pushes VM IPs + VIP to
