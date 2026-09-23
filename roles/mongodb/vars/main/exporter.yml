@@ -10,6 +10,10 @@
 #   node_port     host port of that process (the exporter runs on the host
 #                 network on both engines and connects to localhost:<node_port>)
 #   port          port the exporter serves /metrics on
+# Every per-member exporter the role knows. tasks/quadlet.yml removes the Quadlets
+# of the ones not switched on (not in mongodb_exporter_members).
+_mongodb_exporter_member_names: [shard, configsvr]
+
 mongodb_exporter_members: >-
   {{ (([{'name': 'shard', 'service': 'mongodb-mongod', 'compose_svc': 'mongod',
          'node_port': mongodb_mongod_node_port | int,

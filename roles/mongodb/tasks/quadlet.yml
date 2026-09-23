@@ -100,7 +100,7 @@
   ansible.builtin.file:
     path: "/etc/containers/systemd/mongodb-exporter-{{ item }}.container"
     state: absent
-  loop: "{{ ['shard', 'configsvr'] | difference(mongodb_exporter_members | map(attribute='name')) }}"
+  loop: "{{ _mongodb_exporter_member_names | difference(mongodb_exporter_members | map(attribute='name')) }}"
   register: _q_exporter_members_removed
 
 - name: Stop per-member exporters whose Quadlet was removed
