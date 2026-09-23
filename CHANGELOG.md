@@ -81,6 +81,61 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`deploy.yml` Stage 7.5 applies `grafana_alloy`** on `cluster_nodes` where
+  `grafana_alloy_enabled=true`, after the data services and the firewall.
+  `--tags alloy` (or `make deploy-alloy INV=<inventory>`) re-applies only the
+  collector. Previously no playbook included the role.
+- **`grafana_alloy` can ship a database VM's full telemetry.** All new options
+  are off by default, and with none of them set `config.alloy`, the Quadlet and
+  the compose file render byte-for-byte as before (golden files in
+  `tests/fixtures/grafana_alloy/`).
+  - `grafana_alloy_host_metrics_module_enabled` takes host metrics from the
+    `startechnica/grafana` `host_metrics.unix` module (`import.git`) instead of
+    the built-in unix exporter, so VMs and Kubernetes nodes running the module
+    produce the same series: job `integrations/unix`, `instance` and `node` =
+    host name. The module owns the remote_write; tenant, credentials and
+    external labels are passed to it. It sends no `cluster_name` unless
+    `grafana_alloy_external_labels` has one. The container gets the host `/` at
+    `/host/root` (`ro,rslave`) and `--pid=host`, as the module requires.
+    Repository, revision, path and pull frequency are variables.
+  - `grafana_alloy_prometheus_tenant_id` sets `X-Scope-OrgID` on the metrics
+    remote_write (the counterpart of `grafana_alloy_loki_tenant_id`).
+  - `grafana_alloy_external_labels` adds labels (e.g. `region`, `zone`) to every
+    metric and every log line.
+  - `grafana_alloy_extra_scrapes` adds local Prometheus scrapes (`job`,
+    `targets`, `scheme`, `tls_insecure_skip_verify`, `metrics_path`,
+    `scrape_interval`, `metric_drop_regex`, static `labels`, `name`). Every one
+    sets `instance` to the host name, never `127.0.0.1:<port>`, so exporter
+    series join the host metrics on `instance`. Static `labels` tell apart
+    several targets that share a job and instance, e.g. three MongoDB exporters.
+  - `grafana_alloy_self_metrics_enabled` scrapes Alloy's own `/metrics` as job
+    `integrations/alloy`, so collector-health alerts cover the host.
+  - `tasks/validate_metrics.yml` checks these inputs on provision (label names,
+    unique component names, tenant with the module), so a mistake fails the
+    play instead of Alloy's config load on the host.
+- **`patroni_etcd_listen_metrics_urls`**: a plain-HTTP listener for etcd's
+  `/metrics` and `/health`, e.g. `http://127.0.0.1:2381`. The client port
+  requires a client certificate, so this is how a local scraper reads etcd.
+  Empty (default) leaves the etcd command unchanged. Setting it recreates etcd,
+  so roll it out one member at a time.
+- **Per-member MongoDB exporters** for sharded clusters:
+  `mongodb_exporter_shard_enabled` (`:9217`, the shard mongod) and
+  `mongodb_exporter_configsvr_enabled` (`:9218`, the config server), each
+  connected directly to its process instead of `mongos`, which reports router
+  state only. Off by default. The role creates the exporter's X.509 user on the
+  shard replica set, where a direct connection can see it
+  (`tasks/exporter_users.yml`, member-cert auth like `pbm_setup.yml`). While
+  they are on, every exporter mounts `exporter.pem` with the shared SELinux
+  label (`z`): a private label (`Z`) is rewritten by whichever container starts
+  last and locks the others out. The preflight memory budget counts them. Not
+  `--discovering-mode`: that auto-discovers collections, not cluster members.
+- **The Patroni stack's HAProxy `/metrics` is regression-tested**
+  (`tests/patroni_metrics_endpoints.yml`). The stats listener's
+  `use-service prometheus-exporter` rule has been in the template since
+  2026-09-13 and routes `/metrics` to the exporter even under `stats uri /`,
+  because HAProxy runs `http-request` rules before it matches the stats URI.
+  A host whose `/metrics` still returns the HTML stats page has a `haproxy.cfg`
+  rendered before that date; re-running the role fixes it.
 - **etcd snapshots upload to GCS.** On clusters where WAL-G uses the native
   GCS backend (`patroni_walg_storage_type: gcs`), each snapshot now also goes to
   `patroni_walg_gcs_bucket` under `patroni_etcd_gcs_prefix` (default
@@ -265,6 +320,13 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **`grafana_alloy`: a password that references an undefined variable now
+  fails the play.** `grafana_alloy_env_has_secrets` reads each password through
+  `default('')`, which also swallowed an unresolvable reference such as
+  `"{{ vault_x }}"` with the vault file not loaded. The role then removed
+  `alloy.env` and Alloy sent an empty password, which surfaced only as rejected
+  writes. Provision now resolves each password first and fails, naming the
+  missing variable.
 - **etcd snapshots could fill the host disk, and a failed snapshot looked
   like a success.** Clusters deployed with older versions of the role write
   each snapshot to the etcd container's `/tmp` and then run `exec etcd rm`.
