@@ -23,7 +23,16 @@ Volume=/run/log/journal:/run/log/journal:ro,z
 Volume=/etc/machine-id:/etc/machine-id:ro
 Volume=/proc:/host/proc:ro
 Volume=/sys:/host/sys:ro
+{% if grafana_alloy_host_metrics_module_active | bool %}
+# host_metrics module: host / at /host/root. rslave so the host's /run tmpfs
+# (udev data for the diskstats collector) is visible beneath it. Never add z/Z
+# here: that would relabel the whole host filesystem.
+Volume=/:/host/root:ro,rslave
+# The module requires the host PID namespace alongside host networking.
+PodmanArgs=--pid=host
+{% else %}
 Volume=/:/rootfs:ro
+{% endif %}
 
 Memory={{ grafana_alloy_mem_limit_mb }}m
 LogDriver=journald

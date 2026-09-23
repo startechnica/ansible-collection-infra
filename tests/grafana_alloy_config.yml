@@ -1,0 +1,431 @@
+---
+# Render coverage for the grafana_alloy role's config.alloy, Quadlet and
+# compose templates.
+#
+# What it guards:
+#   1. Defaults render byte-for-byte as before the host_metrics module, tenant,
+#      external-label and extra-scrape options existed (golden files in
+#      fixtures/grafana_alloy/, captured from the templates before those
+#      options were added). An inventory that sets none of them must not see
+#      its config change, or Alloy restarts for nothing.
+#   2. Module mode (a Patroni + MongoDB database VM): host metrics come from
+#      host_metrics.unix, no cluster_name label, the tenant and region/zone
+#      reach the module, every extra scrape sets instance to the host name,
+#      and three MongoDB exporters that share job and instance get distinct
+#      mongodb_process labels, so their label-less series (mongodb_up, go_*,
+#      process_*) don't collide.
+#   3. Built-in mode with the new options: X-Scope-OrgID header, external
+#      labels, extra scrapes into the role's own remote_write.
+#   4. Every rendered config.alloy parses (`alloy fmt`), when an alloy binary
+#      is available: ALLOY_BIN=/path/to/alloy, or `alloy` on PATH. Skipped
+#      with a message otherwise.
+#   5. tasks/validate_metrics.yml rejects the inputs that would otherwise fail
+#      only on the host, as an Alloy config error.
+#
+# Run from collection root:
+#   ansible-playbook tests/grafana_alloy_config.yml
+#   ALLOY_BIN=/path/to/alloy ansible-playbook tests/grafana_alloy_config.yml
+
+- name: Render grafana_alloy templates per case
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  vars_files:
+    - ../roles/grafana_alloy/defaults/main.yml
+    - ../roles/grafana_alloy/vars/main.yml
+  vars:
+    _ga_dir: /tmp/grafana-alloy-config-test
+    _ga_fixtures: "{{ playbook_dir }}/fixtures/grafana_alloy"
+    _ga_templates: "{{ playbook_dir }}/../roles/grafana_alloy/templates"
+    # config.alloy, Quadlet, compose — rendered per case as <case>.<name>.
+    _ga_files:
+      - { src: config.alloy.j2, name: config.alloy }
+      - { src: quadlets/grafana-alloy.container.j2, name: grafana-alloy.container }
+      - { src: docker-compose.yml.j2, name: docker-compose.yml }
+    # A Patroni + MongoDB database VM's local exporters.
+    _ga_db_scrapes:
+      - job: integrations/patroni
+        targets: ["127.0.0.1:8008"]
+        scheme: https
+        tls_insecure_skip_verify: true
+      - job: integrations/postgres
+        targets: ["127.0.0.1:9187"]
+      - job: integrations/haproxy
+        targets: ["127.0.0.1:7000"]
+        metrics_path: /metrics
+      - job: integrations/etcd-dcs
+        targets: ["127.0.0.1:2381"]
+      - name: mongodb_mongos
+        job: integrations/mongodb
+        targets: ["127.0.0.1:9216"]
+        labels: { mongodb_process: mongos }
+        metric_drop_regex: "mongodb_dbstats_raw_.*"
+      - name: mongodb_shardsvr
+        job: integrations/mongodb
+        targets: ["127.0.0.1:9217"]
+        labels: { mongodb_process: shardsvr }
+        metric_drop_regex: "mongodb_dbstats_raw_.*"
+      - name: mongodb_configsvr
+        job: integrations/mongodb
+        targets: ["127.0.0.1:9218"]
+        labels: { mongodb_process: configsvr }
+        metric_drop_regex: "mongodb_dbstats_raw_.*"
+
+  tasks:
+    - name: Recreate render directory
+      ansible.builtin.file:
+        path: "{{ _ga_dir }}"
+        state: "{{ _ga_state }}"
+        mode: "0755"
+      loop: [absent, directory]
+      loop_control:
+        loop_var: _ga_state
+
+    - name: Verify the new options default to off
+      ansible.builtin.assert:
+        that:
+          - not (grafana_alloy_host_metrics_module_enabled | bool)
+          - not (grafana_alloy_host_metrics_module_active | bool)
+          - grafana_alloy_prometheus_tenant_id == ''
+          - grafana_alloy_external_labels == {}
+          - grafana_alloy_extra_scrapes == []
+
+    # One task per case, looping over the templates: the case's overrides sit
+    # in the task's vars, which outrank the play's vars_files.
+    - name: Render case default (role defaults)
+      ansible.builtin.template:
+        src: "{{ _ga_templates }}/{{ item.src }}"
+        dest: "{{ _ga_dir }}/default.{{ item.name }}"
+        mode: "0644"
+      loop: "{{ _ga_files }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Render case legacy (every pre-existing option set, none of the new)
+      ansible.builtin.template:
+        src: "{{ _ga_templates }}/{{ item.src }}"
+        dest: "{{ _ga_dir }}/legacy.{{ item.name }}"
+        mode: "0644"
+      loop: "{{ _ga_files }}"
+      loop_control:
+        label: "{{ item.name }}"
+      vars:
+        grafana_alloy_cluster_label: legacy-pg
+        grafana_alloy_loki_url: https://logs.example/loki/api/v1/push
+        grafana_alloy_loki_username: "111"
+        grafana_alloy_loki_password: dummy-l
+        grafana_alloy_loki_tenant_id: t1
+        grafana_alloy_prometheus_url: https://prom.example/api/prom/push
+        grafana_alloy_prometheus_username: "222"
+        grafana_alloy_prometheus_password: dummy-p
+        grafana_alloy_tempo_url: tempo.example:443
+        grafana_alloy_tempo_username: "333"
+        grafana_alloy_tempo_password: dummy-t
+
+    - name: Render case module (database VM on the host_metrics module)
+      ansible.builtin.template:
+        src: "{{ _ga_templates }}/{{ item.src }}"
+        dest: "{{ _ga_dir }}/module.{{ item.name }}"
+        mode: "0644"
+      loop: "{{ _ga_files }}"
+      loop_control:
+        label: "{{ item.name }}"
+      vars:
+        grafana_alloy_traces_enabled: false
+        grafana_alloy_loki_url: https://loki.example/loki/api/v1/push
+        grafana_alloy_loki_username: tenant-a
+        grafana_alloy_loki_password: test-only-secret
+        grafana_alloy_loki_tenant_id: tenant-a
+        grafana_alloy_prometheus_url: https://mimir.example/api/v1/push
+        grafana_alloy_prometheus_username: tenant-a
+        grafana_alloy_prometheus_password: test-only-secret
+        grafana_alloy_prometheus_tenant_id: tenant-a
+        grafana_alloy_host_metrics_module_enabled: true
+        grafana_alloy_external_labels: { region: id-central-1, zone: idcentral1-az1 }
+        grafana_alloy_self_metrics_enabled: true
+        grafana_alloy_extra_scrapes: "{{ _ga_db_scrapes }}"
+
+    - name: Render case plain (built-in exporter with tenant, labels, a scrape)
+      ansible.builtin.template:
+        src: "{{ _ga_templates }}/{{ item.src }}"
+        dest: "{{ _ga_dir }}/plain.{{ item.name }}"
+        mode: "0644"
+      loop: "{{ _ga_files }}"
+      loop_control:
+        label: "{{ item.name }}"
+      vars:
+        grafana_alloy_traces_enabled: false
+        grafana_alloy_logs_enabled: false
+        grafana_alloy_cluster_label: legacy-pg
+        grafana_alloy_prometheus_url: https://mimir.example/api/v1/push
+        grafana_alloy_prometheus_username: tenant-a
+        grafana_alloy_prometheus_password: test-only-secret
+        grafana_alloy_prometheus_tenant_id: tenant-a
+        grafana_alloy_external_labels: { region: id-central-1 }
+        grafana_alloy_extra_scrapes:
+          - job: integrations/etcd-dcs
+            targets: ["127.0.0.1:2381"]
+            metric_drop_regex: 'etcd_debugging_.*|go_gc_\w+'
+
+    # ── 1. Defaults unchanged ──
+    - name: Verify defaults and legacy options render byte-for-byte as before
+      ansible.builtin.command:
+        argv: [diff, -u, "{{ _ga_fixtures }}/{{ item.golden }}", "{{ _ga_dir }}/{{ item.rendered }}"]
+      changed_when: false
+      loop:
+        - { golden: default.config.alloy.golden, rendered: default.config.alloy }
+        - { golden: default.grafana-alloy.container.golden, rendered: default.grafana-alloy.container }
+        - { golden: default.docker-compose.yml.golden, rendered: default.docker-compose.yml }
+        - { golden: legacy.config.alloy.golden, rendered: legacy.config.alloy }
+      loop_control:
+        label: "{{ item.rendered }}"
+
+    # ── 2. Module mode ──
+    - name: Verify module mode config.alloy
+      ansible.builtin.assert:
+        that:
+          # Host metrics from the module, not the built-in exporter.
+          - "'import.git \"host_metrics\"' in _cfg"
+          - "'host_metrics.unix \"node\"' in _cfg"
+          - "'prometheus.exporter.unix' not in _cfg"
+          # The module owns the remote_write; everything forwards into it.
+          - "'prometheus.remote_write' not in _cfg"
+          - _forward | reject('in', _allowed_forward) | list | length == 0
+          # Self scrape + 4 direct scrapes + the 3 MongoDB drop relabels.
+          - _forward | select('equalto', 'host_metrics.unix.node.receiver') | list | length == 8
+          # Tenant and credentials: tenant literal, password only via sys.env.
+          - _cfg is search('tenant_id\s+= "tenant-a"')
+          - _cfg is search('endpoint_basic_auth_password = sys\.env\("ALLOY_PROMETHEUS_PASSWORD"\)')
+          - "'test-only-secret' not in _cfg"
+          # region/zone replace the module's defaults; no cluster_name at all.
+          - _cfg is search('(?s)host_metrics\.unix "node" \{.*external_labels = \{\s*region = "id-central-1",\s*zone = "idcentral1-az1",\s*\}')
+          - _cfg is not search('cluster_name\s*=')
+          # Loki gets the same region/zone.
+          - _cfg is search('(?s)loki\.write "default" \{.*?external_labels = \{\s*region = "id-central-1",\s*zone = "idcentral1-az1",\s*\}')
+          # Every scrape target sets instance to the host name.
+          - _cfg | regex_findall('"__address__"') | length == 8
+          - _cfg | regex_findall('"instance"\s+= constants\.hostname,') | length == 8
+          - _jobs == ['integrations/alloy', 'integrations/patroni', 'integrations/postgres', 'integrations/haproxy', 'integrations/etcd-dcs',
+                      'integrations/mongodb', 'integrations/mongodb', 'integrations/mongodb']
+          # Alloy scrapes its own /metrics on the default listen port.
+          - _cfg is search('(?s)prometheus\.scrape "integrations_alloy" \{\s*targets = \[\s*\{\s*"__address__" = "127\.0\.0\.1:12345",\s*"instance"\s+= constants\.hostname,')
+          # Patroni over HTTPS with its self-signed cert.
+          - _cfg is search('(?s)prometheus\.scrape "integrations_patroni" \{.*?scheme\s+= "https".*?insecure_skip_verify = true')
+          # Three MongoDB exporters, three distinct label sets.
+          - _mongo_labels == ['mongos', 'shardsvr', 'configsvr']
+          - _cfg | regex_findall('regex\s+= "mongodb_dbstats_raw_\.\*"') | length == 3
+        fail_msg: "module config.alloy is wrong; see {{ _ga_dir }}/module.config.alloy"
+      vars:
+        _cfg: "{{ lookup('file', _ga_dir ~ '/module.config.alloy') }}"
+        _forward: "{{ _cfg | regex_findall('forward_to\\s+= \\[([^\\]]+)\\]') }}"
+        _allowed_forward:
+          - host_metrics.unix.node.receiver
+          - prometheus.relabel.mongodb_mongos.receiver
+          - prometheus.relabel.mongodb_shardsvr.receiver
+          - prometheus.relabel.mongodb_configsvr.receiver
+          - loki.write.default.receiver
+        _jobs: "{{ _cfg | regex_findall('job_name\\s+= \"([^\"]+)\"') }}"
+        _mongo_labels: "{{ _cfg | regex_findall('\"mongodb_process\" = \"([^\"]+)\"') }}"
+
+    - name: Verify module mode mounts / at /host/root and shares the host PID namespace
+      ansible.builtin.assert:
+        that:
+          - "'Volume=/:/host/root:ro,rslave' in _quadlet"
+          - "'PodmanArgs=--pid=host' in _quadlet"
+          - "'Volume=/:/rootfs' not in _quadlet"
+          - _compose.services.alloy.pid == 'host'
+          - "'/:/host/root:ro,rslave' in _compose.services.alloy.volumes"
+          - "'/:/rootfs:ro' not in _compose.services.alloy.volumes"
+          # /proc and /sys stay where the module reads them.
+          - "'/proc:/host/proc:ro' in _compose.services.alloy.volumes"
+          - "'/sys:/host/sys:ro' in _compose.services.alloy.volumes"
+      vars:
+        _quadlet: "{{ lookup('file', _ga_dir ~ '/module.grafana-alloy.container') }}"
+        _compose: "{{ lookup('file', _ga_dir ~ '/module.docker-compose.yml') | from_yaml }}"
+
+    # ── 3. Built-in mode with the new options ──
+    - name: Verify built-in mode config.alloy with tenant, labels and a scrape
+      ansible.builtin.assert:
+        that:
+          - "'host_metrics' not in _cfg"
+          - "'prometheus.exporter.unix \"node\"' in _cfg"
+          - _cfg is search('"X-Scope-OrgID" = "tenant-a",')
+          - _cfg is search('(?s)external_labels = \{\s*host = constants\.hostname,\s*cluster = "legacy-pg",\s*region = "id-central-1",\s*\}')
+          - _cfg is search('(?s)prometheus\.scrape "integrations_etcd_dcs" \{.*?"instance"\s+= constants\.hostname,.*?forward_to\s+= \[prometheus\.relabel\.integrations_etcd_dcs\.receiver\]')
+          - _cfg is search('(?s)prometheus\.relabel "integrations_etcd_dcs" \{\s*forward_to = \[prometheus\.remote_write\.default\.receiver\]')
+          # Backslashes in a regex are escaped for the Alloy string literal.
+          - _cfg is search('regex\s+= "etcd_debugging_\.\*\|go_gc_\\\\\\\\w\+"')
+          - "'test-only-secret' not in _cfg"
+          - _cfg is not search('cluster_name\s*=')
+        fail_msg: "plain config.alloy is wrong; see {{ _ga_dir }}/plain.config.alloy"
+      vars:
+        _cfg: "{{ lookup('file', _ga_dir ~ '/plain.config.alloy') }}"
+
+    # ── 4. Syntax ──
+    - name: Find an alloy binary for the syntax check (ALLOY_BIN, else PATH)
+      ansible.builtin.command:
+        argv: [sh, -c, 'command -v "$1"', sh, "{{ lookup('env', 'ALLOY_BIN') | default('alloy', true) }}"]
+      register: _ga_alloy
+      changed_when: false
+      failed_when: false
+
+    - name: Check every rendered config.alloy parses (alloy fmt)
+      ansible.builtin.command:
+        argv: ["{{ _ga_alloy.stdout }}", fmt, "{{ _ga_dir }}/{{ item }}.config.alloy"]
+      changed_when: false
+      loop: [default, legacy, module, plain]
+      when: _ga_alloy.rc == 0
+
+    - name: Report that the syntax check was skipped
+      ansible.builtin.debug:
+        msg: "No alloy binary (set ALLOY_BIN or put alloy on PATH): skipped `alloy fmt` on {{ _ga_dir }}/*.config.alloy."
+      when: _ga_alloy.rc != 0
+
+# ── 5. Validation ──
+- name: Validate grafana_alloy metrics settings
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  vars:
+    _gv_scrapes:
+      - job: integrations/patroni
+        targets: ["127.0.0.1:8008"]
+        scheme: https
+      - name: mongodb_mongos
+        job: integrations/mongodb
+        targets: ["127.0.0.1:9216"]
+        labels: { mongodb_process: mongos }
+      - name: mongodb_shardsvr
+        job: integrations/mongodb
+        targets: ["127.0.0.1:9217"]
+        labels: { mongodb_process: shardsvr }
+
+  tasks:
+    - name: Accept role defaults
+      ansible.builtin.include_role:
+        name: grafana_alloy
+        tasks_from: validate_metrics
+
+    - name: Accept the database VM settings
+      ansible.builtin.include_role:
+        name: grafana_alloy
+        tasks_from: validate_metrics
+      vars:
+        grafana_alloy_host_metrics_module_enabled: true
+        grafana_alloy_prometheus_tenant_id: tenant-a
+        grafana_alloy_prometheus_password: "{{ _gv_loaded_secret }}"
+        grafana_alloy_external_labels: { region: id-central-1, zone: idcentral1-az1 }
+        grafana_alloy_self_metrics_enabled: true
+        grafana_alloy_extra_scrapes: "{{ _gv_scrapes }}"
+        _gv_loaded_secret: test-only-secret
+
+    - name: Verify the component names derived from name / job
+      ansible.builtin.assert:
+        that:
+          - _ga_scrape_names == ['integrations_alloy', 'integrations_patroni', 'mongodb_mongos', 'mongodb_shardsvr']
+          - _ga_scrape_label_keys == ['mongodb_process', 'mongodb_process']
+
+    # Each rejection: the include must fail in validate_metrics' assert. The
+    # `fail` after it only runs if validation wrongly passed.
+    - name: Reject two scrapes sharing a job without a name (duplicate components)
+      block:
+        - name: Run validation (duplicate components)
+          ansible.builtin.include_role:
+            name: grafana_alloy
+            tasks_from: validate_metrics
+          vars:
+            grafana_alloy_extra_scrapes:
+              - { job: integrations/mongodb, targets: ["127.0.0.1:9216"] }
+              - { job: integrations/mongodb, targets: ["127.0.0.1:9217"] }
+        - name: Validation accepted duplicate components
+          ansible.builtin.fail:
+            msg: validate_metrics accepted two scrapes with the same component name
+      rescue:
+        - name: Confirm the validation rejected it (duplicate components)
+          ansible.builtin.assert:
+            that: ansible_failed_task.name is search('Validate external labels')
+
+    - name: Reject an extra scrape that reuses the self scrape's name
+      block:
+        - name: Run validation (self scrape collision)
+          ansible.builtin.include_role:
+            name: grafana_alloy
+            tasks_from: validate_metrics
+          vars:
+            grafana_alloy_self_metrics_enabled: true
+            grafana_alloy_extra_scrapes:
+              - { job: integrations/alloy, targets: ["127.0.0.1:12346"] }
+        - name: Validation accepted the self scrape collision
+          ansible.builtin.fail:
+            msg: validate_metrics accepted an extra scrape named like the self scrape
+      rescue:
+        - name: Confirm the validation rejected it (self scrape collision)
+          ansible.builtin.assert:
+            that: ansible_failed_task.name is search('Validate external labels')
+
+    # A vault reference whose variable isn't loaded must fail, not render an
+    # empty password (grafana_alloy_env_has_secrets would read it as unset).
+    - name: Reject a password that references an undefined variable
+      block:
+        - name: Run validation (unresolvable password)
+          ansible.builtin.include_role:
+            name: grafana_alloy
+            tasks_from: validate_metrics
+          vars:
+            grafana_alloy_prometheus_password: "{{ vault_not_loaded_in_this_test }}"
+        - name: Validation accepted an unresolvable password
+          ansible.builtin.fail:
+            msg: validate_metrics accepted a password referencing an undefined variable
+      rescue:
+        - name: Confirm the validation rejected it (unresolvable password)
+          ansible.builtin.assert:
+            that: ansible_failed_task.name is search('Resolve backend passwords')
+
+    - name: Reject a static label named instance
+      block:
+        - name: Run validation (instance label)
+          ansible.builtin.include_role:
+            name: grafana_alloy
+            tasks_from: validate_metrics
+          vars:
+            grafana_alloy_extra_scrapes:
+              - { job: integrations/postgres, targets: ["127.0.0.1:9187"], labels: { instance: other } }
+        - name: Validation accepted an instance label
+          ansible.builtin.fail:
+            msg: validate_metrics accepted a static instance label
+      rescue:
+        - name: Confirm the validation rejected it (instance label)
+          ansible.builtin.assert:
+            that: ansible_failed_task.name is search('Validate external labels')
+
+    - name: Reject the host_metrics module without a tenant
+      block:
+        - name: Run validation (module without tenant)
+          ansible.builtin.include_role:
+            name: grafana_alloy
+            tasks_from: validate_metrics
+          vars:
+            grafana_alloy_host_metrics_module_enabled: true
+        - name: Validation accepted the module without a tenant
+          ansible.builtin.fail:
+            msg: validate_metrics accepted the host_metrics module without a tenant
+      rescue:
+        - name: Confirm the validation rejected it (module without tenant)
+          ansible.builtin.assert:
+            that: ansible_failed_task.name is search('Validate external labels')
+
+    - name: Reject an external label key that is not a label name
+      block:
+        - name: Run validation (bad label key)
+          ansible.builtin.include_role:
+            name: grafana_alloy
+            tasks_from: validate_metrics
+          vars:
+            grafana_alloy_external_labels: { availability-zone: az1 }
+        - name: Validation accepted a bad label key
+          ansible.builtin.fail:
+            msg: validate_metrics accepted an external label key with a dash
+      rescue:
+        - name: Confirm the validation rejected it (bad label key)
+          ansible.builtin.assert:
+            that: ansible_failed_task.name is search('Validate external labels')

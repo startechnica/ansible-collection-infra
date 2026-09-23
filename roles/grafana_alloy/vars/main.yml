@@ -12,3 +12,21 @@ grafana_alloy_env_has_secrets: >-
   {{ (grafana_alloy_loki_password | default('') | length > 0)
      or (grafana_alloy_prometheus_password | default('') | length > 0)
      or (grafana_alloy_tempo_password | default('') | length > 0) }}
+
+# True when host metrics come from the startechnica/grafana host_metrics
+# module: switches config.alloy to the module and adds the /host/root mount and
+# --pid=host to the container. String "True"/"False"; consume with `| bool`.
+grafana_alloy_host_metrics_module_active: >-
+  {{ (grafana_alloy_metrics_enabled | bool)
+     and (grafana_alloy_host_metrics_module_enabled | bool) }}
+
+# Every scrape config.alloy renders besides host metrics: Alloy's own /metrics
+# when grafana_alloy_self_metrics_enabled, then grafana_alloy_extra_scrapes.
+# Rendered and validated as one list, so a user scrape can't reuse the self
+# scrape's component name. Empty by default.
+grafana_alloy_scrapes: >-
+  {{ ([{'job': 'integrations/alloy',
+        'targets': [('127.0.0.1' if grafana_alloy_listen_address in ['0.0.0.0', '::', '']
+                     else grafana_alloy_listen_address) ~ ':' ~ grafana_alloy_listen_port]}]
+      if grafana_alloy_self_metrics_enabled | bool else [])
+     + grafana_alloy_extra_scrapes }}

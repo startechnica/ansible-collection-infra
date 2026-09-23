@@ -85,6 +85,12 @@ argument_specs:
         type: str
         default: ""
         description: Optional `cluster` label stamped on all logs and metrics.
+      grafana_alloy_external_labels:
+        type: dict
+        default: {}
+        description: >-
+          Extra labels added to every metric (remote_write external_labels) and every log line (loki.write external_labels), e.g. region and zone. Keys must be
+          Prometheus label names.
 
       # ── Logs → Loki ──
       grafana_alloy_logs_enabled:
@@ -130,13 +136,82 @@ argument_specs:
         default: ""
         no_log: true
         description: Written to alloy.env, read via sys.env().
+      grafana_alloy_prometheus_tenant_id:
+        type: str
+        default: ""
+        description: X-Scope-OrgID header on the metrics remote_write, for multi-tenant Mimir (optional). Required with grafana_alloy_host_metrics_module_enabled.
       grafana_alloy_scrape_interval:
         type: str
         default: "60s"
+        description: Scrape interval of the built-in node scrape and the default for each extra scrape.
       grafana_alloy_node_exporter_enabled:
         type: bool
         default: true
-        description: Enable the built-in unix/node exporter (reads bind-mounted /host/proc, /host/sys, /rootfs).
+        description: Enable the built-in unix/node exporter (reads bind-mounted /host/proc, /host/sys, /rootfs). Ignored when the host_metrics module is enabled.
+
+      grafana_alloy_host_metrics_module_enabled:
+        type: bool
+        default: false
+        description:
+          - Take host metrics from the startechnica/grafana `host_metrics.unix` module (import.git) instead of the built-in unix exporter. Series match Kubernetes
+            nodes running the module (job integrations/unix, instance and node = hostname).
+          - The module owns the remote_write; the tenant, credentials and grafana_alloy_external_labels are passed to it and the extra scrapes forward into it.
+            No cluster_name label is sent unless grafana_alloy_external_labels has one.
+          - The container gets the host / at /host/root (ro,rslave) and --pid=host. The host must reach the module repository over HTTPS.
+      grafana_alloy_host_metrics_module_repository:
+        type: str
+        default: "https://github.com/startechnica/grafana.git"
+      grafana_alloy_host_metrics_module_revision:
+        type: str
+        default: main
+        description: Branch, tag or commit of the module repository.
+      grafana_alloy_host_metrics_module_path:
+        type: str
+        default: "alloy/modules/host_metrics.alloy"
+      grafana_alloy_host_metrics_module_pull_frequency:
+        type: str
+        default: "1h"
+
+      grafana_alloy_extra_scrapes:
+        type: list
+        elements: dict
+        default: []
+        description:
+          - Extra Prometheus scrapes of local exporters, sent through the same remote_write. Every scrape sets `instance` to the host name (Alloy's
+            constants.hostname), never the scrape address.
+          - Entry keys are job (required), targets (required, host:port list), name (component label; default the job with non-[A-Za-z0-9_] as "_", must be
+            unique), scheme (http|https), tls_insecure_skip_verify, metrics_path, scrape_interval, metric_drop_regex, and labels (static target labels that
+            tell apart several targets sharing a job).
+        options:
+          job:
+            type: str
+            required: true
+          targets:
+            type: list
+            elements: str
+            required: true
+          name:
+            type: str
+          scheme:
+            type: str
+            choices: [http, https]
+          tls_insecure_skip_verify:
+            type: bool
+          metrics_path:
+            type: str
+          scrape_interval:
+            type: str
+          metric_drop_regex:
+            type: str
+          labels:
+            type: dict
+      grafana_alloy_self_metrics_enabled:
+        type: bool
+        default: false
+        description: >-
+          Scrape Alloy's own /metrics as job integrations/alloy (instance = host name), so collector-health alerts cover this host. Rendered as one more
+          extra scrape of 127.0.0.1:grafana_alloy_listen_port (or grafana_alloy_listen_address when that is a specific address); its component name is
+          integrations_alloy.
 
       # ── Traces → Tempo ──
       grafana_alloy_traces_enabled:
