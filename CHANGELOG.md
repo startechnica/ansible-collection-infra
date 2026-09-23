@@ -97,14 +97,18 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
     external labels are passed to it. It sends no `cluster_name` unless
     `grafana_alloy_external_labels` has one. The container gets the host `/` at
     `/host/root` (`ro,rslave`) and `--pid=host`, as the module requires.
-    Repository, revision, path and pull frequency are variables.
+    Repository, revision, path and pull frequency are variables. The module
+    gets the Prometheus password from a `local.file` with `is_secret = true`
+    (`<root>/secrets/prometheus_password`, 0600, mounted read-only), because
+    Alloy's UI and API show a module argument read with `sys.env()` in clear.
   - `grafana_alloy_prometheus_tenant_id` sets `X-Scope-OrgID` on the metrics
     remote_write (the counterpart of `grafana_alloy_loki_tenant_id`).
   - `grafana_alloy_external_labels` adds labels (e.g. `region`, `zone`) to every
     metric and every log line.
   - `grafana_alloy_extra_scrapes` adds local Prometheus scrapes (`job`,
     `targets`, `scheme`, `tls_insecure_skip_verify`, `metrics_path`,
-    `scrape_interval`, `metric_drop_regex`, static `labels`, `name`). Every one
+    `scrape_interval`, `metric_drop_regex`, static `labels`, `name`; an empty
+    `name` falls back to `job`). Every one
     sets `instance` to the host name, never `127.0.0.1:<port>`, so exporter
     series join the host metrics on `instance`. Static `labels` tell apart
     several targets that share a job and instance, e.g. three MongoDB exporters.

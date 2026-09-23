@@ -89,11 +89,25 @@ import.git "host_metrics" {
   pull_frequency = {{ q(grafana_alloy_host_metrics_module_pull_frequency) }}
 }
 
+{% if grafana_alloy_module_password_file_active | bool %}
+// Alloy shows module arguments in its UI and API unless they are secret-typed,
+// and sys.env() returns a plain string, so the module gets its password from a
+// secret local.file (grafana_alloy_secrets_dir, mounted read-only).
+local.file "prometheus_password" {
+  filename  = "/etc/alloy/secrets/prometheus_password"
+  is_secret = true
+}
+
+{% endif %}
 host_metrics.unix "node" {
   tenant_id                    = {{ q(grafana_alloy_prometheus_tenant_id) }}
   endpoint_url                 = {{ q(grafana_alloy_prometheus_url) }}
   endpoint_basic_auth_username = {{ q(grafana_alloy_prometheus_username) }}
+{% if grafana_alloy_module_password_file_active | bool %}
+  endpoint_basic_auth_password = local.file.prometheus_password.content
+{% else %}
   endpoint_basic_auth_password = sys.env("ALLOY_PROMETHEUS_PASSWORD")
+{% endif %}
 {% if _module_labels | length > 0 %}
 
   // The complete external label set: replaces the module's region / zone /
@@ -155,7 +169,7 @@ prometheus.scrape "node" {
 {% endif %}
 {% endif %}
 {% for _s in grafana_alloy_scrapes %}
-{% set _name = (_s.name | default(_s.job)) | regex_replace('[^A-Za-z0-9_]', '_') %}
+{% set _name = (_s.name | default(_s.job, true)) | regex_replace('[^A-Za-z0-9_]', '_') %}
 {% set _drop = _s.metric_drop_regex | default('') | length > 0 %}
 
 // Extra scrape: {{ _s.job }}

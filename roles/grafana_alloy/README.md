@@ -104,6 +104,11 @@ grafana_alloy_extra_scrapes:
   and `node` carry the host name, as on the Kubernetes nodes. The host must reach the
   module repository over HTTPS; pin `grafana_alloy_host_metrics_module_revision`
   to a tag or commit to stop upstream changes arriving on their own.
+  Alloy's web UI and API show module arguments unless they are secret-typed, so
+  the Prometheus password reaches the module through a `local.file` with
+  `is_secret = true`: the role writes it to
+  `{{ '{{' }} grafana_alloy_root_dir {{ '}}' }}/secrets/prometheus_password` (0600) and mounts that
+  directory read-only at `/etc/alloy/secrets`.
 - **Extra scrapes** keys: `job` and `targets` (required), `name` (component
   label; default the job with non-`[A-Za-z0-9_]` as `_`; must be unique),
   `scheme`, `tls_insecure_skip_verify`, `metrics_path`, `scrape_interval`
@@ -138,7 +143,9 @@ exporter as `/host/proc`, `/host/sys`, `/rootfs`). In module mode `/` is
 mounted at `/host/root` (`ro,rslave`, so the host's `/run` tmpfs is visible for
 udev data) instead of `/rootfs`, and the container shares the host PID
 namespace, as the module requires. The Alloy web UI is served
-on `http://<host>:{{ '{{' }} grafana_alloy_listen_port {{ '}}' }}` (default 12345).
+on `http://<host>:{{ '{{' }} grafana_alloy_listen_port {{ '}}' }}` (default 12345, all interfaces); set
+`grafana_alloy_listen_address: "127.0.0.1"` when nothing needs it remotely and the
+host has no firewall.
 
 ## Key variables
 

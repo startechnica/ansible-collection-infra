@@ -166,6 +166,10 @@
           - job: integrations/etcd-dcs
             targets: ["127.0.0.1:2381"]
             metric_drop_regex: 'etcd_debugging_.*|go_gc_\w+'
+          # An empty name falls back to job, as validate_metrics.yml assumes.
+          - name: ""
+            job: integrations/haproxy
+            targets: ["127.0.0.1:7000"]
 
     # ── 1. Defaults unchanged ──
     - name: Verify defaults and legacy options render byte-for-byte as before
@@ -193,9 +197,12 @@
           - _forward | reject('in', _allowed_forward) | list | length == 0
           # Self scrape + 4 direct scrapes + the 3 MongoDB drop relabels.
           - _forward | select('equalto', 'host_metrics.unix.node.receiver') | list | length == 8
-          # Tenant and credentials: tenant literal, password only via sys.env.
+          # Tenant and credentials: tenant literal; the module's password comes from a
+          # secret local.file (a module argument from sys.env shows in the Alloy UI).
           - _cfg is search('tenant_id\s+= "tenant-a"')
-          - _cfg is search('endpoint_basic_auth_password = sys\.env\("ALLOY_PROMETHEUS_PASSWORD"\)')
+          - _cfg is search('(?s)local\.file "prometheus_password" \{\s*filename\s+= "/etc/alloy/secrets/prometheus_password",?\s*is_secret = true')
+          - _cfg is search('endpoint_basic_auth_password = local\.file\.prometheus_password\.content')
+          - "'sys.env(\"ALLOY_PROMETHEUS_PASSWORD\")' not in _cfg"
           - "'test-only-secret' not in _cfg"
           # region/zone replace the module's defaults; no cluster_name at all.
           - _cfg is search('(?s)host_metrics\.unix "node" \{.*external_labels = \{\s*region = "id-central-1",\s*zone = "idcentral1-az1",\s*\}')
@@ -232,6 +239,9 @@
         that:
           - "'Volume=/:/host/root:ro,rslave' in _quadlet"
           - "'PodmanArgs=--pid=host' in _quadlet"
+          # The module's password file, read-only.
+          - "'Volume=/opt/grafana-alloy/secrets:/etc/alloy/secrets:ro,Z' in _quadlet"
+          - "'/opt/grafana-alloy/secrets:/etc/alloy/secrets:ro,Z' in _compose.services.alloy.volumes"
           - "'Volume=/:/rootfs' not in _quadlet"
           - _compose.services.alloy.pid == 'host'
           - "'/:/host/root:ro,rslave' in _compose.services.alloy.volumes"
@@ -257,6 +267,11 @@
           - _cfg is search('regex\s+= "etcd_debugging_\.\*\|go_gc_\\\\\\\\w\+"')
           - "'test-only-secret' not in _cfg"
           - _cfg is not search('cluster_name\s*=')
+          # name: "" renders the job-derived component name, never an empty label.
+          - "'prometheus.scrape \"integrations_haproxy\" {' in _cfg"
+          - "'prometheus.scrape \"\" {' not in _cfg"
+          # Built-in mode keeps the password in sys.env: no secrets file or mount.
+          - "'local.file \"prometheus_password\"' not in _cfg"
         fail_msg: "plain config.alloy is wrong; see {{ _ga_dir }}/plain.config.alloy"
       vars:
         _cfg: "{{ lookup('file', _ga_dir ~ '/plain.config.alloy') }}"
@@ -324,6 +339,19 @@
         that:
           - _ga_scrape_names == ['integrations_alloy', 'integrations_patroni', 'mongodb_mongos', 'mongodb_shardsvr']
           - _ga_scrape_label_keys == ['mongodb_process', 'mongodb_process']
+
+    - name: Accept an empty name (falls back to job, like config.alloy.j2)
+      ansible.builtin.include_role:
+        name: grafana_alloy
+        tasks_from: validate_metrics
+      vars:
+        grafana_alloy_extra_scrapes:
+          - { name: "", job: integrations/haproxy, targets: ["127.0.0.1:7000"] }
+
+    - name: Verify the empty name resolved to the job-derived component name
+      ansible.builtin.assert:
+        that:
+          - _ga_scrape_names == ['integrations_haproxy']
 
     # Each rejection: the include must fail in validate_metrics' assert. The
     # `fail` after it only runs if validation wrongly passed.

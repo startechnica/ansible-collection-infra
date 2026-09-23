@@ -33,6 +33,10 @@ services:
       # host_metrics module: host / at /host/root; rslave so the host's /run
       # tmpfs (udev data for diskstats) is visible beneath it.
       - /:/host/root:ro,rslave
+{% if grafana_alloy_module_password_file_active | bool %}
+      # The module's Prometheus password, read by local.file as a secret.
+      - {{ grafana_alloy_secrets_dir }}:/etc/alloy/secrets:ro,Z
+{% endif %}
 {% else %}
       - /:/rootfs:ro
 {% endif %}

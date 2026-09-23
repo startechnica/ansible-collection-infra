@@ -20,6 +20,17 @@ grafana_alloy_host_metrics_module_active: >-
   {{ (grafana_alloy_metrics_enabled | bool)
      and (grafana_alloy_host_metrics_module_enabled | bool) }}
 
+# True when the host_metrics module gets its Prometheus password from a file.
+# Alloy shows a module's arguments in its UI and API unless they are
+# secret-typed, and sys.env() returns a plain string; local.file with
+# is_secret = true does not. String "True"/"False"; consume with `| bool`.
+grafana_alloy_module_password_file_active: >-
+  {{ (grafana_alloy_host_metrics_module_active | bool)
+     and (grafana_alloy_prometheus_password | default('') | length > 0) }}
+
+# Holds that password file (0600, root); mounted at /etc/alloy/secrets.
+grafana_alloy_secrets_dir: "{{ grafana_alloy_root_dir }}/secrets"
+
 # Every scrape config.alloy renders besides host metrics: Alloy's own /metrics
 # when grafana_alloy_self_metrics_enabled, then grafana_alloy_extra_scrapes.
 # Rendered and validated as one list, so a user scrape can't reuse the self

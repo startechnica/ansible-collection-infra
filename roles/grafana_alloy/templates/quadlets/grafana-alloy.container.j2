@@ -28,6 +28,10 @@ Volume=/sys:/host/sys:ro
 # (udev data for the diskstats collector) is visible beneath it. Never add z/Z
 # here: that would relabel the whole host filesystem.
 Volume=/:/host/root:ro,rslave
+{% if grafana_alloy_module_password_file_active | bool %}
+# The module's Prometheus password, read by local.file as a secret.
+Volume={{ grafana_alloy_secrets_dir }}:/etc/alloy/secrets:ro,Z
+{% endif %}
 # The module requires the host PID namespace alongside host networking.
 PodmanArgs=--pid=host
 {% else %}
