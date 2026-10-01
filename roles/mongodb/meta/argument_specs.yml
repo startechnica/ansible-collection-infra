@@ -78,9 +78,10 @@ argument_specs:
             plus vm.overcommit_memory=1) or off (never/never). THP is host-wide; the role applies it now and at
             every boot through mongodb-thp.service.
           - Defaults to on for mongodb_version 8.0 and later, which is MongoDB's recommendation for its upgraded
-            TCMalloc, and off for 7.0 and earlier. Next to Patroni (patroni_enabled) it defaults to off,
-            PostgreSQL's recommendation; set it to true to opt in, and the patroni role then leaves THP alone.
-            vm.overcommit_memory is never set next to Patroni, which owns it.
+            TCMalloc, and off for 7.0 and earlier. Next to Patroni (patroni_enabled) it defaults to off, to
+            spare memory on a node shared by two stacks; set it to true to opt in. The patroni role leaves THP
+            alone unless patroni_thp_enabled is set. vm.overcommit_memory is never set next to Patroni, which
+            owns it.
 
       mongodb_image_registry:
         type: str

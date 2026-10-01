@@ -294,6 +294,18 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **`patroni` no longer turns transparent huge pages off by default.** New
+  `patroni_thp_enabled` (`never`, `madvise` or `always`) sets
+  `/sys/kernel/mm/transparent_hugepage/enabled` now and at boot through
+  `patroni-thp.service`. Empty, the default, leaves THP alone. `shared_buffers`
+  is shared memory, which that knob doesn't cover, and the "disable THP" advice
+  dates from RHEL 6-era kernels whose compaction stalls and 2 MB copy-on-write
+  are gone. **Existing hosts keep THP off:** with `patroni_thp_enabled` empty,
+  the role leaves the `disable-thp.service` an earlier version installed in
+  place. Set `patroni_thp_enabled: never` to keep managing it, or remove the
+  unit to fall back to the kernel default (`madvise` on Ubuntu and Fedora
+  CoreOS). On a node that also
+  runs MongoDB, leave it empty; `mongodb_thp_enabled` decides there.
 - **Both roles' defaults and vars are split into one file per topic.**
   `roles/patroni/defaults/main.yml` → `defaults/main/*.yml` (14 files) and
   `roles/mongodb/defaults/main.yml` → `defaults/main/*.yml` (12 files), with
@@ -333,12 +345,11 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   without restarting mongod, and at boot by `mongodb-thp.service`, which
   replaces `disable-thp.service`.
 
-  **Next to Patroni nothing changes by default:** THP stays off, PostgreSQL's
-  advice, because THP is host-wide and can grow other processes' memory on a
-  node already split between two stacks. Setting `mongodb_thp_enabled: true`
-  there turns it on, and the `patroni` role then leaves THP alone instead of
-  turning it back off. `vm.overcommit_memory` is never set next to Patroni,
-  which sets strict overcommit on hosts with swap.
+  **Next to Patroni nothing changes by default:** THP stays off, because it is
+  host-wide and `always` grows every process's resident memory on a node
+  already split between two stacks. Setting `mongodb_thp_enabled: true` there
+  turns it on. `vm.overcommit_memory` is never set next to Patroni, which sets
+  strict overcommit on hosts with swap.
 - **`mongodb`: preflight rejects a mongod or config server memory limit under
   512 MB.** The WiredTiger cache is half the container limit, and mongod refuses
   to start with a cache under 0.25 GB, so a smaller limit deployed and then

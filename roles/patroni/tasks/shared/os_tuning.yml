@@ -3,6 +3,7 @@
 #
 # Variables used:
 #   patroni_postgresql_dir              – PostgreSQL data directory (used for I/O scheduler detection)
+#   patroni_thp_enabled                 – transparent huge pages mode; empty leaves THP alone
 #   ansible_facts['memtotal_mb'] – auto-gathered Ansible fact (total RAM in MiB)
 
 # ##############################################################################
@@ -113,36 +114,57 @@
     mode: "0644"
 
 ###############################################################################
-# 5-6. Disable Transparent Huge Pages, now and at every boot
+# 5-6. Transparent Huge Pages, now and at every boot (when patroni_thp_enabled is set)
 ###############################################################################
-# THP is host-wide, and MongoDB 8.0+ wants it on. When the mongodb role turns it
-# on for this node (mongodb_thp_enabled, imported in main.yml; only ever true
-# next to Patroni when the inventory sets it), it also removes this unit, so
-# leave THP to it rather than undo it on every run.
-- name: Disable Transparent Huge Pages
-  when: not ((mongodb_enabled | bool) and (mongodb_thp_enabled | bool))
+# Empty patroni_thp_enabled leaves THP alone entirely, including a disable-thp
+# unit an earlier version of this role installed.
+- name: Configure Transparent Huge Pages
+  when: patroni_thp_enabled | length > 0
   block:
-    - name: Disable THP - enabled
-      ansible.builtin.shell: echo never > /sys/kernel/mm/transparent_hugepage/enabled
-      changed_when: false
+    # Earlier versions always turned THP off through disable-thp.service. Left in
+    # place it would race patroni-thp.service at boot.
+    - name: Check for the disable-thp unit
+      ansible.builtin.stat:
+        path: /etc/systemd/system/disable-thp.service
+      register: _patroni_legacy_thp_unit
 
-    - name: Disable THP - defrag
-      ansible.builtin.shell: echo never > /sys/kernel/mm/transparent_hugepage/defrag
-      changed_when: false
+    - name: Remove the disable-thp unit
+      when: _patroni_legacy_thp_unit.stat.exists
+      block:
+        - name: Disable the disable-thp unit
+          ansible.builtin.systemd:
+            name: disable-thp
+            enabled: false
 
-    - name: Create disable-thp systemd unit
+        - name: Delete the disable-thp unit file
+          ansible.builtin.file:
+            path: /etc/systemd/system/disable-thp.service
+            state: absent
+
+    # The file lists every mode with the active one in brackets, e.g.
+    # "always [madvise] never". A kernel built without THP doesn't have it.
+    - name: Apply THP setting now
+      ansible.builtin.shell: |
+        f=/sys/kernel/mm/transparent_hugepage/enabled
+        [ -f "$f" ] || exit 0
+        [ "$(sed -n 's/.*\[\(.*\)\].*/\1/p' "$f")" = '{{ patroni_thp_enabled }}' ] && exit 0
+        echo '{{ patroni_thp_enabled }}' > "$f"
+        echo changed
+      register: _patroni_thp_apply
+      changed_when: "'changed' in _patroni_thp_apply.stdout"
+
+    - name: Deploy the THP unit
       ansible.builtin.template:
-        src: disable-thp.service.j2
-        dest: /etc/systemd/system/disable-thp.service
+        src: patroni-thp.service.j2
+        dest: /etc/systemd/system/patroni-thp.service
         owner: root
         group: root
         mode: "0644"
 
-    - name: Enable disable-thp service
+    - name: Enable the THP unit
       ansible.builtin.systemd:
-        name: disable-thp
+        name: patroni-thp
         enabled: true
-        state: started
         daemon_reload: true
 
 ###############################################################################

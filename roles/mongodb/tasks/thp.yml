@@ -5,20 +5,16 @@
 # now, without restarting mongod, and again at every boot by mongodb-thp.service,
 # before any container starts.
 
-# Earlier versions of this role always turned THP off through disable-thp.service,
-# and the patroni role writes a unit of the same name. Left in place it would
-# race this role's unit at boot. Next to Patroni with THP off, the unit is
-# Patroni's and agrees with this role, so it stays; removing it would only have
-# Patroni write it back on its next run.
+# Earlier versions of this role, and of the patroni role, always turned THP off
+# through disable-thp.service. Left in place it would race this role's unit at
+# boot.
 - name: Check for the disable-thp unit
   ansible.builtin.stat:
     path: /etc/systemd/system/disable-thp.service
   register: _mongodb_legacy_thp_unit
 
 - name: Remove the disable-thp unit
-  when:
-    - _mongodb_legacy_thp_unit.stat.exists
-    - (mongodb_thp_enabled | bool) or not (patroni_enabled | default(false) | bool)
+  when: _mongodb_legacy_thp_unit.stat.exists
   block:
     - name: Disable the disable-thp unit
       ansible.builtin.systemd:

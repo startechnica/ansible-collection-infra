@@ -64,11 +64,24 @@
     state: absent
   notify: reload sysctl
 
-# Transparent HugePages disable IS preserved — `/etc/systemd/system/disable-thp.service`
-# is a single shared file used by multiple roles (mongodb installs the same path).
-# Removing it on patroni uninstall would also disable THP suppression for any
-# other DB stack co-located on the host. Operator can clean up manually if
-# this is the last DB service on the box.
+# patroni-thp.service exists only when patroni_thp_enabled was set, and is this
+# role's alone.
+- name: Disable the THP unit
+  ansible.builtin.systemd:
+    name: patroni-thp
+    enabled: false
+    state: stopped
+  failed_when: false
+
+- name: Delete the THP unit file
+  ansible.builtin.file:
+    path: /etc/systemd/system/patroni-thp.service
+    state: absent
+
+# The older disable-thp.service IS preserved: earlier versions of both this role
+# and mongodb installed that same path, so removing it could lift THP
+# suppression another stack on the host still relies on. The operator can clean
+# it up manually if this is the last DB service on the box.
 
 - name: Stat THP disable service
   ansible.builtin.stat:
@@ -81,9 +94,9 @@
       - "╔══════════════════════════════════════════════════════════════════╗"
       - "║  THP DISABLE SERVICE PRESERVED                                   ║"
       - "╠══════════════════════════════════════════════════════════════════╣"
-      - "║  /etc/systemd/system/disable-thp.service is shared with other    ║"
-      - "║  database roles (mongodb installs the same file). It was NOT     ║"
-      - "║  removed by this uninstall.                                      ║"
+      - "║  /etc/systemd/system/disable-thp.service was installed by older  ║"
+      - "║  versions of the patroni and mongodb roles. It was NOT removed   ║"
+      - "║  by this uninstall.                                              ║"
       - "║                                                                  ║"
       - "║  To remove manually after confirming no other DB on this host    ║"
       - "║  needs THP suppression:                                          ║"

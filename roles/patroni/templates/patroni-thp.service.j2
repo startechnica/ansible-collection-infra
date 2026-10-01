@@ -1,0 +1,13 @@
+[Unit]
+Description=Transparent huge pages {{ patroni_thp_enabled }} (for PostgreSQL)
+DefaultDependencies=no
+After=sysinit.target local-fs.target
+Before=basic.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c '[ ! -f /sys/kernel/mm/transparent_hugepage/enabled ] || echo {{ patroni_thp_enabled }} > /sys/kernel/mm/transparent_hugepage/enabled'
+RemainAfterExit=yes
+
+[Install]
+WantedBy=basic.target

@@ -168,18 +168,6 @@
   ansible.builtin.include_tasks: shared/directories.yml
   when: patroni_action == 'provision'
 
-# Whether the mongodb role runs THP on this node, which shared/os_tuning.yml
-# then leaves alone. Narrow on purpose: main/mongodb.yml holds mongodb_enabled
-# and mongodb_thp_enabled (and the mongodb_version the latter reads), and
-# empty.yml skips mongodb's computed vars. A static import, so the variables are
-# there whether or not MongoDB is deployed; mongodb_enabled is what gates them.
-- name: Import MongoDB's THP choice (co-located stacks)
-  ansible.builtin.import_role:
-    name: mongodb
-    tasks_from: export_vars
-    defaults_from: main/mongodb.yml
-    vars_from: empty.yml
-
 - name: Apply OS tuning
   ansible.builtin.include_tasks: shared/os_tuning.yml
   when: patroni_action == 'provision'

@@ -9,10 +9,7 @@
 #      defer+madvise, max_ptes_none=0 and vm.overcommit_memory=1; off is
 #      never/never. Next to Patroni, overcommit is left out even when THP is on,
 #      because the patroni role sets strict overcommit on hosts with swap.
-#   3. The patroni role's narrow import (main/mongodb.yml only) is enough to
-#      resolve mongodb_thp_enabled, and Patroni leaves THP alone only when the
-#      inventory turns it on next to MongoDB.
-#   4. Preflight rejects a mongod or config server memory limit under 512 MB,
+#   3. Preflight rejects a mongod or config server memory limit under 512 MB,
 #      whose half-size WiredTiger cache mongod would refuse at start.
 #
 # Run from collection root:
@@ -98,54 +95,6 @@
         # "ExecStart=/bin/sh -c '[ ! -f P ] || echo V > P'" -> "echo V > P"
         _thp_exec: >-
           {{ _thp_unit | regex_findall("(?m)^ExecStart=/bin/sh -c '\[ ! -f \S+ \] \|\| (.*)'$") }}
-
-- name: "THP :: patroni's narrow import of mongodb's choice"
-  hosts: localhost
-  gather_facts: false
-  connection: local
-  vars:
-    # Inside the patroni role, patroni_enabled is always true by the time
-    # os_tuning runs: main.yml ends the role otherwise.
-    patroni_enabled: true
-  tasks:
-    - name: Import main/mongodb.yml the way roles/patroni/tasks/main.yml does
-      ansible.builtin.import_role:
-        name: mongodb
-        tasks_from: export_vars
-        defaults_from: main/mongodb.yml
-        vars_from: empty.yml
-
-    - name: Only main/mongodb.yml is visible
-      ansible.builtin.assert:
-        that:
-          - not (mongodb_enabled | bool)
-          - mongodb_version is defined
-          - mongodb_thp_settings is not defined
-          - mongodb_mongod_mem_limit_mb is not defined
-
-    # The condition on roles/patroni/tasks/shared/os_tuning.yml's THP block.
-    - name: Verify Patroni keeps THP off next to MongoDB by default
-      ansible.builtin.assert:
-        that:
-          - not (mongodb_thp_enabled | bool)
-          - not ((mongodb_enabled | bool) and (mongodb_thp_enabled | bool))
-      vars:
-        mongodb_enabled: true
-
-    - name: Verify Patroni leaves THP alone only on opt-in next to MongoDB
-      ansible.builtin.assert:
-        that:
-          - (not ((mongodb_enabled | bool) and (mongodb_thp_enabled | bool))) == item.patroni_disables
-        fail_msg: "{{ item.name }}: expected patroni_disables={{ item.patroni_disables }}"
-      loop:
-        - { name: co-located opt-in, mongodb: true, thp: true, patroni_disables: false }
-        - { name: co-located opt-out, mongodb: true, thp: false, patroni_disables: true }
-        - { name: opt-in without mongodb, mongodb: false, thp: true, patroni_disables: true }
-      loop_control:
-        label: "{{ item.name }}"
-      vars:
-        mongodb_enabled: "{{ item.mongodb }}"
-        mongodb_thp_enabled: "{{ item.thp }}"
 
 - name: "Cache floor :: limits at the floor pass"
   hosts: localhost

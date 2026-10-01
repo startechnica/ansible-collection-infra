@@ -30,6 +30,17 @@ argument_specs:
           Patroni clusters share one etcd DCS. Default is a placeholder — set
           per project (e.g., `startechnica-pg`).
 
+      # ── Transparent huge pages ──
+      patroni_thp_enabled:
+        type: str
+        default: ""
+        choices: ["", never, madvise, always]
+        description: >-
+          Value for /sys/kernel/mm/transparent_hugepage/enabled, applied now and
+          at every boot by patroni-thp.service. Empty leaves THP alone. THP is
+          host-wide, so keep this empty on a node that also runs MongoDB, where
+          mongodb_thp_enabled decides.
+
       # ── Standby cluster (DR / off-site read replica) ──
       patroni_standby_enabled:
         type: bool

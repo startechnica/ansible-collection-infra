@@ -1,0 +1,64 @@
+---
+# Regression coverage for the patroni role's transparent huge page (THP) knob.
+#
+# What it guards:
+#   1. patroni_thp_enabled defaults to empty, which skips every THP task in
+#      shared/os_tuning.yml, and the role reads no mongodb variable to decide.
+#   2. patroni-thp.service writes exactly the chosen mode to
+#      /sys/kernel/mm/transparent_hugepage/enabled, before basic.target.
+#
+# Run from collection root:
+#   ansible-playbook tests/patroni_thp.yml
+
+- name: "THP :: patroni_thp_enabled default and unit"
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  vars:
+    _thp_dir: /tmp/patroni-thp-test
+  tasks:
+    - name: Import patroni's main/patroni.yml defaults
+      ansible.builtin.import_role:
+        name: patroni
+        tasks_from: export_vars
+        defaults_from: main/patroni.yml
+        vars_from: empty.yml
+
+    # The condition on shared/os_tuning.yml's THP block.
+    - name: Verify THP is left alone by default
+      ansible.builtin.assert:
+        that:
+          - patroni_thp_enabled == ''
+          - not (patroni_thp_enabled | length > 0)
+          - mongodb_thp_enabled is not defined
+
+    - name: Recreate render directory
+      ansible.builtin.file:
+        path: "{{ _thp_dir }}"
+        state: "{{ _thp_state }}"
+        mode: "0755"
+      loop: [absent, directory]
+      loop_control:
+        loop_var: _thp_state
+
+    - name: Render patroni-thp.service
+      ansible.builtin.template:
+        src: ../roles/patroni/templates/patroni-thp.service.j2
+        dest: "{{ _thp_dir }}/{{ patroni_thp_enabled }}.service"
+        mode: "0644"
+      loop: [never, madvise, always]
+      loop_control:
+        loop_var: patroni_thp_enabled
+
+    - name: Verify each unit writes only the chosen mode
+      ansible.builtin.assert:
+        that:
+          - _thp_exec == ['echo ' ~ item ~ ' > /sys/kernel/mm/transparent_hugepage/enabled']
+          - _thp_unit is search('(?m)^Before=basic.target$')
+          - _thp_unit is search('(?m)^WantedBy=basic.target$')
+        fail_msg: "{{ item }}: got {{ _thp_exec }}"
+      loop: [never, madvise, always]
+      vars:
+        _thp_unit: "{{ lookup('ansible.builtin.file', _thp_dir ~ '/' ~ item ~ '.service') }}"
+        _thp_exec: >-
+          {{ _thp_unit | regex_findall("(?m)^ExecStart=/bin/sh -c '\[ ! -f \S+ \] \|\| (.*)'$") }}

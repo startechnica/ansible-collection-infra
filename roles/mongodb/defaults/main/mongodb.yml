@@ -47,10 +47,11 @@ mongodb_skip_kernel_check: false
 # off. https://www.mongodb.com/docs/manual/administration/tcmalloc-performance/
 #
 # THP is host-wide. Next to Patroni it stays off unless set to true here:
-# PostgreSQL's advice is still "off", and THP can grow the resident memory of
-# every other process on a node whose memory is already split between two
-# stacks. The patroni role imports this file and skips its own THP tasks when
-# this is true, so the two roles don't undo each other.
+# `always` backs any 2 MB-aligned region a process touches with a whole 2 MB
+# page, which grows the resident memory of every process on a node already
+# split between two stacks (kernels before 6.12 can't split underused ones
+# back). The patroni role leaves THP alone unless patroni_thp_enabled is set,
+# so on a shared node this setting decides.
 mongodb_thp_enabled: >-
   {{ mongodb_version is version('8.0', '>=')
      and not (patroni_enabled | default(false) | bool) }}
