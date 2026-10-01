@@ -282,6 +282,13 @@ postgres_exporter :9187 (optional Prometheus target)
 Default is `vip-manager` because it integrates with Patroni's own leader
 election semantics and doesn't require network-layer multicast.
 
+vip-manager runs from a prebuilt image, `patroni_vip_manager_image`
+(`ghcr.io/firmansyahn/containers/vip-manager:5.0.0-debian-13-r0`), published for
+amd64 only. The image runs as uid 1001 with group 0: it reads its etcd client
+key through the key's `0440` `root:root` mode, and raises `NET_ADMIN`/`NET_RAW`
+through a file capability, which `no-new-privileges` would cancel. keepalived is
+always built on the node.
+
 ### Scheduling verification
 
 Backup verification is only useful if it runs periodically — a backup you
@@ -452,7 +459,7 @@ Highlights:
 | Category | Key variables |
 |---|---|
 | Identity | `patroni_scope`, `patroni_postgresql_version` |
-| VIP | `patroni_vip_engine`, `patroni_vip_address`, `patroni_vip_mask`, `patroni_vip_iface` |
+| VIP | `patroni_vip_engine`, `patroni_vip_address`, `patroni_vip_mask`, `patroni_vip_iface`, `patroni_vip_manager_image` |
 | Passwords | `patroni_postgresql_postgres_password` (auto-gen), `patroni_postgresql_replication_password` (empty = cert auth) |
 | Ports | `patroni_postgresql_port` (55432), `patroni_haproxy_primary_port` (5432), `patroni_haproxy_direct_port` (5434, bypasses PgBouncer), `patroni_pgbouncer_port` (6543), `patroni_api_port` (8008), `patroni_etcd_client_port` (2379) |
 | TLS | `patroni_tls_key_type`, `patroni_tls_key_curve`, `patroni_tls_signature_digest`, `patroni_tls_cert_days` |

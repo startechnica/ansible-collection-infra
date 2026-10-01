@@ -1,39 +1,10 @@
 ---
 # Per-service restart handlers. Each one listens on a stable name
-# (`restart stack`, `restart patroni`, etc.) and dispatches to the
+# (`restart patroni`, `restart haproxy`, etc.) and dispatches to the
 # matching engine implementation. Tasks `notify:` the listen-name
 # without caring which engine is in play.
 #
 # Pattern matches roles/mongodb/handlers/main.yml.
-
-# ── restart stack (whole patroni deploy) ────────────────────────────
-
-- name: Restart stack (docker)
-  listen: restart stack
-  community.docker.docker_compose_v2:
-    project_src: "{{ patroni_dir }}"
-    state: restarted
-    remove_orphans: true
-  when: patroni_container_engine == 'docker'
-
-- name: Restart stack (podman, systemd-managed)
-  listen: restart stack
-  ansible.builtin.systemd:
-    name: "{{ item }}"
-    state: restarted
-  loop:
-    - etcd.service
-    - walg-init.service
-    - patroni.service
-    - haproxy.service
-    - pgbouncer.service
-    - postgres-exporter.service
-    - vip-manager.service
-    - keepalived.service
-  loop_control:
-    label: "{{ item }}"
-  when: patroni_container_engine == 'podman'
-  failed_when: false
 
 # ── restart etcd ────────────────────────────────────────────────────
 

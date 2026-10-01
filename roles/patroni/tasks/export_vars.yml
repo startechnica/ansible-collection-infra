@@ -20,8 +20,7 @@
 # haproxy, pgbouncer, walg, s3, vip, vip_manager, keepalived,
 # postgres_exporter, tls, standby, artifacts. To import only the variables you
 # use, name one with `defaults_from`, and pass `vars_from: empty.yml` to skip
-# the computed vars in vars/main/ (services.yml, vip_manager.yml, memory.yml,
-# connections.yml):
+# the computed vars in vars/main/ (services.yml, memory.yml, connections.yml):
 #
 #   - ansible.builtin.import_role:
 #       name: patroni

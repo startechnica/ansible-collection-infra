@@ -1,12 +1,13 @@
 ---
-# vip-manager — docker path. Build the local image via docker compose.
+# vip-manager — docker path. Pull the prebuilt image.
 # Caller (docker/deploy.yml) gates on `patroni_vip_enabled and use_vip_manager`.
 
-- name: Build vip-manager image (etcd-aware VIP)
-  community.docker.docker_compose_v2:
-    project_src: "{{ patroni_dir }}"
-    state: present
-    build: always
-    pull: never
-    services:
-      - vip-manager
+# Retried like the other image pulls (see docker/preflight.yml).
+- name: Pull vip-manager image (etcd-aware VIP)
+  community.docker.docker_image:
+    name: "{{ patroni_vip_manager_image }}"
+    source: pull
+  register: _image_pull
+  retries: 10
+  delay: 20
+  until: _image_pull is succeeded

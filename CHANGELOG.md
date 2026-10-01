@@ -79,6 +79,16 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   deployment has always run. The new default preserves that. Wiring the old name
   up as-is would instead have cut anyone who set it from 50 to 20.
 
+- **`patroni`: vip-manager 5.0.0, pulled as a prebuilt image.** New
+  `patroni_vip_manager_image` defaults to
+  `ghcr.io/firmansyahn/containers/vip-manager:5.0.0-debian-13-r0` (amd64 only);
+  the image is no longer built on the node, and `patroni_vip_manager_version`
+  and `patroni_vip_manager_arch` are removed. 4.x can leave the VIP up on two
+  nodes after an etcd watch is cancelled, fixed in 5.0.0 only. The vip-manager
+  etcd client key is now mode `0440` (`root:root`), so the image's uid 1001 can
+  read it through group 0. The next run recreates vip-manager on every node. See
+  [docs/UPGRADING.md](docs/UPGRADING.md).
+
 ### Added
 
 - **`deploy.yml` Stage 7.5 applies `grafana_alloy`** on `cluster_nodes` where
@@ -336,6 +346,32 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **`patroni`: a docker-compose.yml change no longer restarts every container
+  on every node at once.** Rendering a changed compose file notified a handler
+  that ran `docker compose restart` across the whole stack, so any change to
+  the file, a single image tag included, restarted PostgreSQL on all nodes at
+  the same time. `docker compose up` already recreates exactly the services
+  whose definition changed, so the handler is gone.
+- **`patroni`: deploy restarts etcd one node at a time.** A changed etcd
+  definition (docker) or Quadlet (podman) restarted every member at once,
+  losing quorum. Each member is now restarted on its own and must report healthy
+  before the next one goes; if it doesn't, the play stops. A new cluster still
+  starts all members without waiting.
+- **`patroni`: uninstall, disabling the VIP and switching `patroni_vip_engine`
+  release the VIP.** vip-manager removes the VIP only on SIGINT, and both
+  engines stop it with SIGTERM, so a node whose vip-manager was removed kept the
+  address on its interface for good, and answered on it next to the new leader.
+  The role now removes the VIP from the node once vip-manager is stopped, taking
+  the address from vip-manager's config on disk. On podman, switching engines
+  also stops and removes the old engine's Quadlet, which used to keep running
+  next to the new one.
+- **`patroni` (podman): stopping etcd no longer stops vip-manager.** Its Quadlet
+  required `etcd.service`, so stopping this node's etcd stopped vip-manager and
+  left the VIP with nothing to move it. vip-manager reads every etcd member, so
+  it now only orders itself after the local one.
+- **`patroni`: `renew-certs` restarts vip-manager.** It reads its etcd client
+  certificate only at start, so it kept the old one, and once that expired it
+  could no longer reach etcd.
 - **`mongodb`: transparent huge pages follow MongoDB's advice for the deployed
   version.** The role always turned THP off, which is right for 7.0 and earlier,
   but since 8.0 MongoDB's TCMalloc wants it on. New `mongodb_thp_enabled` is

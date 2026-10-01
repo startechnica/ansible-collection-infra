@@ -27,8 +27,7 @@
           - patroni_vip_address == ''
           - patroni_vip_mask | int == 32
           - patroni_vip_iface == 'ens192'
-          - patroni_vip_manager_version is not defined
-          - _vip_manager_arch is not defined
+          - patroni_vip_manager_image is not defined
           - patroni_postgresql_port is not defined
           - patroni_services is not defined
 
@@ -117,11 +116,10 @@
           - patroni_walg_enabled is defined                   # walg.yml
           - patroni_s3_bucket is defined                      # s3.yml
           - patroni_vip_engine == 'vip-manager'       # vip.yml
-          - patroni_vip_manager_version is defined            # vip_manager.yml
+          - patroni_vip_manager_image is defined              # vip_manager.yml
           - patroni_keepalived_dir is defined                 # keepalived.yml
           - patroni_postgres_exporter_port is defined         # postgres_exporter.yml
           - patroni_tls_cert_days is defined                  # tls.yml
           - patroni_standby_enabled is defined        # standby.yml
           - query('ansible.builtin.varnames', '^patroni_credentials_file$') | length == 1  # artifacts.yml
           - patroni_services is defined               # vars/main/services.yml
-          - _vip_manager_arch is defined              # vars/main/vip_manager.yml

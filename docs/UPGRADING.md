@@ -317,15 +317,70 @@ next run switches the cluster to vip-manager:
 
 - **docker:** keepalived drops out of the rendered compose file and is removed
   as an orphan; vip-manager takes over the VIP.
-- **podman:** the existing `keepalived.container` Quadlet is not removed, so
-  keepalived keeps running alongside the new vip-manager, both managing the
-  same address.
+- **podman:** keepalived is stopped and its Quadlet removed; vip-manager takes
+  over the VIP.
+
+The switch is the same in the other direction, and when the VIP is disabled,
+except that vip-manager leaves its VIP on the interface when stopped, so the
+role removes it once vip-manager is gone.
 
 **Action:** rename the key in inventory before running the role:
 
 ```yaml
 patroni_vip_engine: keepalived   # was: vip_manager: keepalived
 ```
+
+### Breaking — vip-manager 5.0.0 runs from a prebuilt amd64 image (recreates vip-manager)
+
+vip-manager now runs from a prebuilt image, `patroni_vip_manager_image`
+(default `ghcr.io/firmansyahn/containers/vip-manager:5.0.0-debian-13-r0`),
+instead of an image built on each node from the upstream release tarball. The
+local build is gone, and with it `patroni_vip_manager_version` and
+`patroni_vip_manager_arch`. vip-manager moves from 4.0.0 to 5.0.0.
+
+The image is published for amd64 only. On any other architecture, point
+`patroni_vip_manager_image` at an image you build, or use
+`patroni_vip_engine: keepalived`.
+
+**Why 5.x:** 4.2.0, the last 4.x release, can leave the VIP up on two nodes
+after an etcd watch is cancelled
+([vip-manager#394](https://github.com/cybertec-postgresql/vip-manager/issues/394)),
+and the fix shipped in 5.0.0 only. 5.0.0 drops the deprecated parameter names;
+the config the role renders already uses the current ones.
+
+**What you'll see on the next run:**
+
+- vip-manager is recreated on every node. The old container stops with
+  SIGTERM, which leaves the VIP on the interface, so the leader keeps it apart
+  from a possible moment at startup, before the new vip-manager's first answer
+  from etcd.
+- Nothing else restarts. On docker, earlier versions restarted every container
+  on every node at once after any change to `docker-compose.yml`, PostgreSQL
+  included; this version no longer does, so the changed image tag recreates
+  vip-manager alone.
+- New in 5.0.0: vip-manager removes the VIP when it loses etcd, about 5 seconds
+  into an etcd quorum loss (etcd cancels its watch after 3 election timeouts
+  without a leader). Patroni demotes the primary only after `retry_timeout`, 10
+  seconds, so a quorum loss between the two now takes the VIP down for a few
+  seconds with no failover, where 4.0.0 kept it up.
+- The vip-manager etcd client key goes from mode `0400` to `0440`, still
+  `root:root`. The image runs as uid 1001 with group 0 and reads the key through
+  the group; so does its `curl` healthcheck.
+- `<patroni_vip_manager_dir>/Dockerfile` is deleted, and the previously built
+  `vip-manager:v4.0.0` image (podman: `localhost/vip-manager:v4.0.0`) stays
+  behind; uninstall doesn't remove it either. Remove it with `docker rmi` or
+  `podman rmi` if you want the space back.
+
+**Action:**
+
+- Delete `patroni_vip_manager_version` and `patroni_vip_manager_arch` from
+  inventory; nothing reads them now. To change the release, set
+  `patroni_vip_manager_image`, pinned with a `-r<revision>` tag or a digest,
+  never a branch tag or `latest`.
+- Don't set `no-new-privileges` for the vip-manager container (including
+  `"no-new-privileges": true` in Docker's `daemon.json`): it cancels the file
+  capability the image needs as uid 1001. Where it's forced, point
+  `patroni_vip_manager_image` at an image that runs as root.
 
 ## 1.0.2 (2026-06-08)
 

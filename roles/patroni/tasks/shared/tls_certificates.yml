@@ -261,7 +261,9 @@
       - { dir: "{{ patroni_certs_dir }}", owner: "{{ patroni_uid }}", group: "{{ patroni_gid }}", leaves: [patroni, replicator] }
       - { dir: "{{ patroni_haproxy_certs_dir }}", owner: "{{ patroni_haproxy_uid }}", group: "{{ patroni_haproxy_gid }}", leaves: [haproxy] }
       - { dir: "{{ patroni_pgbouncer_certs_dir }}", owner: "{{ patroni_pgbouncer_uid }}", group: "{{ patroni_pgbouncer_gid }}", leaves: [pgbouncer] }
-      - { dir: "{{ patroni_vip_manager_certs_dir }}", owner: root, group: root, leaves: [vip-manager] }
+      # 0440: the prebuilt vip-manager image runs as uid 1001 with group 0 and
+      # reads its key, like the curl healthcheck, through the root group.
+      - { dir: "{{ patroni_vip_manager_certs_dir }}", owner: root, group: root, leaves: [vip-manager], key_mode: "0440" }
 
 # ##############################################################################
 # 6. Create remote certificate directories with correct per-service ownership
@@ -338,7 +340,7 @@
                   'dest':  svc.dir ~ '/' ~ leaf ~ ext,
                   'owner': svc.owner,
                   'group': svc.group,
-                  'mode':  '0400' if ext == '.key' else '0444'
+                  'mode':  svc.key_mode | default('0400') if ext == '.key' else '0444'
                 }) -%}
       {%-     endfor -%}
       {%-   endfor -%}

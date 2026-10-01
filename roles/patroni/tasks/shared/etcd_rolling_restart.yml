@@ -1,0 +1,53 @@
+---
+# One step of a rolling etcd restart. The deploy includes this file once per
+# node, in play order (loop_var _etcd_node), and each step acts on that node
+# alone. Restarting every member at once loses quorum: Patroni demotes the
+# primary after retry_timeout, and vip-manager drops the VIP within seconds.
+#
+# A member that was running is waited on until it serves again, and a failure
+# ends the play rather than take down the next member too. One that wasn't
+# running isn't waited on: a new cluster has no quorum until enough of its
+# members are up. The caller sets _etcd_was_running.
+
+# `up` starts etcd if it's stopped and recreates it if its definition changed.
+- name: "Start or recreate etcd (docker) — {{ _etcd_node }}"
+  community.docker.docker_compose_v2:
+    project_src: "{{ patroni_dir }}"
+    state: present
+    services: [etcd]
+  register: _etcd_restart_docker
+  any_errors_fatal: true
+  when:
+    - patroni_container_engine == 'docker'
+    - inventory_hostname == _etcd_node
+
+- name: "Restart etcd for its changed Quadlet (podman) — {{ _etcd_node }}"
+  ansible.builtin.systemd:
+    name: etcd.service
+    state: restarted
+  register: _etcd_restart_podman
+  any_errors_fatal: true
+  when:
+    - patroni_container_engine == 'podman'
+    - inventory_hostname == _etcd_node
+    - _q_etcd.changed
+    - _etcd_was_running | bool
+
+# /health answers true once the member has a leader and serves a quorum read.
+- name: "Wait for etcd to rejoin the cluster — {{ _etcd_node }}"  # noqa: command-instead-of-module
+  ansible.builtin.command: >-
+    curl --silent --fail --max-time 5
+    --cacert {{ patroni_ca_dir }}/ca.crt
+    --cert {{ patroni_etcd_certs_dir }}/etcd-healthcheck.crt
+    --key {{ patroni_etcd_certs_dir }}/etcd-healthcheck.key
+    https://127.0.0.1:{{ patroni_etcd_client_port }}/health
+  register: _etcd_health
+  until: _etcd_health.rc == 0
+  retries: 60
+  delay: 2
+  changed_when: false
+  any_errors_fatal: true
+  when:
+    - inventory_hostname == _etcd_node
+    - _etcd_was_running | bool
+    - (_etcd_restart_docker is changed) or (_etcd_restart_podman is changed)
