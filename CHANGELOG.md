@@ -324,6 +324,25 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **`mongodb`: transparent huge pages follow MongoDB's advice for the deployed
+  version.** The role always turned THP off, which is right for 7.0 and earlier,
+  but since 8.0 MongoDB's TCMalloc wants it on. New `mongodb_thp_enabled`
+  defaults to on for `mongodb_version` 8.0+ (`enabled=always`,
+  `defrag=defer+madvise`, `khugepaged/max_ptes_none=0`,
+  `vm.overcommit_memory=1`) and off for 7.0 and earlier. The values are applied
+  without restarting mongod, and at boot by `mongodb-thp.service`, which
+  replaces `disable-thp.service`.
+
+  **Next to Patroni nothing changes by default:** THP stays off, PostgreSQL's
+  advice, because THP is host-wide and can grow other processes' memory on a
+  node already split between two stacks. Setting `mongodb_thp_enabled: true`
+  there turns it on, and the `patroni` role then leaves THP alone instead of
+  turning it back off. `vm.overcommit_memory` is never set next to Patroni,
+  which sets strict overcommit on hosts with swap.
+- **`mongodb`: preflight rejects a mongod or config server memory limit under
+  512 MB.** The WiredTiger cache is half the container limit, and mongod refuses
+  to start with a cache under 0.25 GB, so a smaller limit deployed and then
+  crash-looped.
 - **`grafana_alloy`: a password that references an undefined variable now
   fails the play.** `grafana_alloy_env_has_secrets` reads each password through
   `default('')`, which also swallowed an unresolvable reference such as

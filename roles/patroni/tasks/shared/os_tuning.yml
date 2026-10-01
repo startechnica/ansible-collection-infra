@@ -113,36 +113,37 @@
     mode: "0644"
 
 ###############################################################################
-# 5. Disable Transparent Huge Pages (runtime)
+# 5-6. Disable Transparent Huge Pages, now and at every boot
 ###############################################################################
-- name: Disable THP - enabled
-  ansible.builtin.shell: echo never > /sys/kernel/mm/transparent_hugepage/enabled
-  changed_when: false
+# THP is host-wide, and MongoDB 8.0+ wants it on. When the mongodb role turns it
+# on for this node (mongodb_thp_enabled, imported in main.yml; only ever true
+# next to Patroni when the inventory sets it), it also removes this unit, so
+# leave THP to it rather than undo it on every run.
+- name: Disable Transparent Huge Pages
+  when: not ((mongodb_enabled | bool) and (mongodb_thp_enabled | bool))
+  block:
+    - name: Disable THP - enabled
+      ansible.builtin.shell: echo never > /sys/kernel/mm/transparent_hugepage/enabled
+      changed_when: false
 
-- name: Disable THP - defrag
-  ansible.builtin.shell: echo never > /sys/kernel/mm/transparent_hugepage/defrag
-  changed_when: false
+    - name: Disable THP - defrag
+      ansible.builtin.shell: echo never > /sys/kernel/mm/transparent_hugepage/defrag
+      changed_when: false
 
-###############################################################################
-# 6. Persist THP disable across reboots via systemd unit
-###############################################################################
-- name: Create disable-thp systemd unit
-  ansible.builtin.template:
-    src: disable-thp.service.j2
-    dest: /etc/systemd/system/disable-thp.service
-    owner: root
-    group: root
-    mode: "0644"
-  notify: reload systemd
+    - name: Create disable-thp systemd unit
+      ansible.builtin.template:
+        src: disable-thp.service.j2
+        dest: /etc/systemd/system/disable-thp.service
+        owner: root
+        group: root
+        mode: "0644"
 
-- name: Flush handlers (daemon-reload before enable)
-  ansible.builtin.meta: flush_handlers
-
-- name: Enable disable-thp service
-  ansible.builtin.systemd:
-    name: disable-thp
-    enabled: true
-    state: started
+    - name: Enable disable-thp service
+      ansible.builtin.systemd:
+        name: disable-thp
+        enabled: true
+        state: started
+        daemon_reload: true
 
 ###############################################################################
 # 7. Auto-detect I/O scheduler (none for SSD, mq-deadline for HDD)

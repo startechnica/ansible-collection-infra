@@ -41,6 +41,20 @@ mongodb_kernel_guard_min_version: "8.3"
 mongodb_fixed_kernel: "7.0.14"
 mongodb_skip_kernel_check: false
 
+# Transparent huge pages (THP). MongoDB reversed its advice in 8.0: its
+# upgraded TCMalloc wants THP on (enabled=always, defrag=defer+madvise,
+# khugepaged/max_ptes_none=0, vm.overcommit_memory=1); 7.0 and earlier want it
+# off. https://www.mongodb.com/docs/manual/administration/tcmalloc-performance/
+#
+# THP is host-wide. Next to Patroni it stays off unless set to true here:
+# PostgreSQL's advice is still "off", and THP can grow the resident memory of
+# every other process on a node whose memory is already split between two
+# stacks. The patroni role imports this file and skips its own THP tasks when
+# this is true, so the two roles don't undo each other.
+mongodb_thp_enabled: >-
+  {{ mongodb_version is version('8.0', '>=')
+     and not (patroni_enabled | default(false) | bool) }}
+
 # ── Networking ──
 mongodb_network: mongodb-cluster
 

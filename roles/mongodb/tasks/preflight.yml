@@ -44,6 +44,23 @@
     fail_msg: "mongodb_cluster_type must be 'sharded' or 'replicaset', got '{{ mongodb_cluster_type }}'"
     success_msg: "Cluster type: {{ mongodb_cluster_type }}"
 
+# The templates give mongod and the config server a WiredTiger cache of half
+# their container limit, and mongod refuses to start with a cache under 0.25 GB.
+# A limit under 512 MB would surface as a crash loop after deploy.
+- name: Assert container memory limits allow the minimum WiredTiger cache
+  ansible.builtin.assert:
+    that:
+      - mongodb_mongod_mem_limit_mb | int >= 512
+      - mongodb_cluster_type != 'sharded' or mongodb_configsvr_mem_limit_mb | int >= 512
+    fail_msg: |
+      mongod and the config server need a container memory limit of at least
+      512 MB. Their WiredTiger cache is half the limit, and mongod refuses to
+      start with a cache under 0.25 GB.
+
+        mongodb_mongod_mem_limit_mb    = {{ mongodb_mongod_mem_limit_mb }}
+        mongodb_configsvr_mem_limit_mb = {{ mongodb_configsvr_mem_limit_mb }} (sharded only)
+    success_msg: "Container memory limits allow a WiredTiger cache of at least 0.25 GB."
+
 # Percona Backup for MongoDB (PBM 2.15.x) only certifies against MongoDB LTS
 # releases (7.0.x, 8.0.x). Mid-train rapid releases (8.1, 8.2, 8.3, ...) are
 # rejected by the PBM agent — the backup hangs at "starting" and fails 30s

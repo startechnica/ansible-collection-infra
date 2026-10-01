@@ -1,0 +1,224 @@
+---
+# Regression coverage for MongoDB's transparent huge page (THP) settings and the
+# WiredTiger cache floor.
+#
+# What it guards:
+#   1. mongodb_thp_enabled follows MongoDB's advice per version (on for 8.0+,
+#      off for 7.0 and earlier) and defaults to off next to Patroni.
+#   2. mongodb-thp.service sets exactly MongoDB's values: on is always,
+#      defer+madvise, max_ptes_none=0 and vm.overcommit_memory=1; off is
+#      never/never. Next to Patroni, overcommit is left out even when THP is on,
+#      because the patroni role sets strict overcommit on hosts with swap.
+#   3. The patroni role's narrow import (main/mongodb.yml only) is enough to
+#      resolve mongodb_thp_enabled, and Patroni leaves THP alone only when the
+#      inventory turns it on next to MongoDB.
+#   4. Preflight rejects a mongod or config server memory limit under 512 MB,
+#      whose half-size WiredTiger cache mongod would refuse at start.
+#
+# Run from collection root:
+#   ansible-playbook tests/mongodb_thp.yml
+
+- name: "THP :: mongodb settings and unit"
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  vars:
+    _thp_dir: /tmp/mongodb-thp-test
+    _thp_on:
+      - "echo always > /sys/kernel/mm/transparent_hugepage/enabled"
+      - "echo defer+madvise > /sys/kernel/mm/transparent_hugepage/defrag"
+      - "echo 0 > /sys/kernel/mm/transparent_hugepage/khugepaged/max_ptes_none"
+    _thp_overcommit: "echo 1 > /proc/sys/vm/overcommit_memory"
+    _thp_off:
+      - "echo never > /sys/kernel/mm/transparent_hugepage/enabled"
+      - "echo never > /sys/kernel/mm/transparent_hugepage/defrag"
+  tasks:
+    - name: Import mongodb role variables
+      ansible.builtin.import_role:
+        name: mongodb
+        tasks_from: export_vars
+
+    - name: Verify mongodb_thp_enabled per version and co-location
+      ansible.builtin.assert:
+        that:
+          - (mongodb_thp_enabled | bool) == item.want
+        fail_msg: "{{ item.name }}: got {{ mongodb_thp_enabled }}"
+      loop:
+        - { name: 8.0 default, version: "8.0.28", patroni: false, want: true }
+        - { name: rapid release, version: "8.2.6", patroni: false, want: true }
+        - { name: 7.0, version: "7.0.14", patroni: false, want: false }
+        - { name: 8.0 next to patroni, version: "8.0.28", patroni: true, want: false }
+      loop_control:
+        label: "{{ item.name }}"
+      vars:
+        mongodb_version: "{{ item.version }}"
+        patroni_enabled: "{{ item.patroni }}"
+
+    - name: Recreate render directory
+      ansible.builtin.file:
+        path: "{{ _thp_dir }}"
+        state: "{{ _thp_state }}"
+        mode: "0755"
+      loop: [absent, directory]
+      loop_control:
+        loop_var: _thp_state
+
+    - name: Render mongodb-thp.service
+      ansible.builtin.template:
+        src: ../roles/mongodb/templates/mongodb-thp.service.j2
+        dest: "{{ _thp_dir }}/{{ item.name }}.service"
+        mode: "0644"
+      loop:
+        - { name: thp-on, thp: true, patroni: false }
+        - { name: thp-on-patroni, thp: true, patroni: true }
+        - { name: thp-off, thp: false, patroni: false }
+        - { name: thp-off-patroni, thp: false, patroni: true }
+      loop_control:
+        label: "{{ item.name }}"
+      vars:
+        mongodb_thp_enabled: "{{ item.thp }}"
+        patroni_enabled: "{{ item.patroni }}"
+
+    - name: Verify each unit sets exactly MongoDB's values
+      ansible.builtin.assert:
+        that:
+          - _thp_exec == item.want
+          - _thp_unit is search('(?m)^Before=basic.target$')
+          - _thp_unit is search('(?m)^WantedBy=basic.target$')
+        fail_msg: "{{ item.name }}: got {{ _thp_exec }}"
+      loop:
+        - { name: thp-on, want: "{{ _thp_on + [_thp_overcommit] }}" }
+        - { name: thp-on-patroni, want: "{{ _thp_on }}" }
+        - { name: thp-off, want: "{{ _thp_off }}" }
+        - { name: thp-off-patroni, want: "{{ _thp_off }}" }
+      loop_control:
+        label: "{{ item.name }}"
+      vars:
+        _thp_unit: "{{ lookup('ansible.builtin.file', _thp_dir ~ '/' ~ item.name ~ '.service') }}"
+        # "ExecStart=/bin/sh -c '[ ! -f P ] || echo V > P'" -> "echo V > P"
+        _thp_exec: >-
+          {{ _thp_unit | regex_findall("(?m)^ExecStart=/bin/sh -c '\[ ! -f \S+ \] \|\| (.*)'$") }}
+
+- name: "THP :: patroni's narrow import of mongodb's choice"
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  vars:
+    # Inside the patroni role, patroni_enabled is always true by the time
+    # os_tuning runs: main.yml ends the role otherwise.
+    patroni_enabled: true
+  tasks:
+    - name: Import main/mongodb.yml the way roles/patroni/tasks/main.yml does
+      ansible.builtin.import_role:
+        name: mongodb
+        tasks_from: export_vars
+        defaults_from: main/mongodb.yml
+        vars_from: empty.yml
+
+    - name: Only main/mongodb.yml is visible
+      ansible.builtin.assert:
+        that:
+          - not (mongodb_enabled | bool)
+          - mongodb_version is defined
+          - mongodb_thp_settings is not defined
+          - mongodb_mongod_mem_limit_mb is not defined
+
+    # The condition on roles/patroni/tasks/shared/os_tuning.yml's THP block.
+    - name: Verify Patroni keeps THP off next to MongoDB by default
+      ansible.builtin.assert:
+        that:
+          - not (mongodb_thp_enabled | bool)
+          - not ((mongodb_enabled | bool) and (mongodb_thp_enabled | bool))
+      vars:
+        mongodb_enabled: true
+
+    - name: Verify Patroni leaves THP alone only on opt-in next to MongoDB
+      ansible.builtin.assert:
+        that:
+          - (not ((mongodb_enabled | bool) and (mongodb_thp_enabled | bool))) == item.patroni_disables
+        fail_msg: "{{ item.name }}: expected patroni_disables={{ item.patroni_disables }}"
+      loop:
+        - { name: co-located opt-in, mongodb: true, thp: true, patroni_disables: false }
+        - { name: co-located opt-out, mongodb: true, thp: false, patroni_disables: true }
+        - { name: opt-in without mongodb, mongodb: false, thp: true, patroni_disables: true }
+      loop_control:
+        label: "{{ item.name }}"
+      vars:
+        mongodb_enabled: "{{ item.mongodb }}"
+        mongodb_thp_enabled: "{{ item.thp }}"
+
+- name: "Cache floor :: limits at the floor pass"
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  vars:
+    mongodb_skip_kernel_check: true
+    mongodb_mongod_mem_limit_mb: 512
+    mongodb_configsvr_mem_limit_mb: 512
+  tasks:
+    - name: Import mongodb role variables
+      ansible.builtin.import_role:
+        name: mongodb
+        tasks_from: export_vars
+
+    - name: Run mongodb preflight
+      ansible.builtin.include_tasks: ../roles/mongodb/tasks/preflight.yml
+
+- name: "Cache floor :: a replica set ignores the config server limit"
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  vars:
+    mongodb_skip_kernel_check: true
+    mongodb_cluster_type: replicaset
+    mongodb_configsvr_mem_limit_mb: 256
+  tasks:
+    - name: Import mongodb role variables
+      ansible.builtin.import_role:
+        name: mongodb
+        tasks_from: export_vars
+
+    - name: Run mongodb preflight
+      ansible.builtin.include_tasks: ../roles/mongodb/tasks/preflight.yml
+
+- name: "Cache floor :: limits under the floor fail"
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  vars:
+    mongodb_skip_kernel_check: true
+  tasks:
+    - name: Import mongodb role variables
+      ansible.builtin.import_role:
+        name: mongodb
+        tasks_from: export_vars
+
+    - name: Run preflight with a 384 MB config server
+      vars:
+        mongodb_configsvr_mem_limit_mb: 384
+      block:
+        - name: Run mongodb preflight
+          ansible.builtin.include_tasks: ../roles/mongodb/tasks/preflight.yml
+      rescue:
+        - name: Record the failure
+          ansible.builtin.set_fact:
+            _floor_cfg_msg: "{{ ansible_failed_result.msg }}"
+
+    - name: Run preflight with a 256 MB mongod
+      vars:
+        mongodb_mongod_mem_limit_mb: 256
+      block:
+        - name: Run mongodb preflight
+          ansible.builtin.include_tasks: ../roles/mongodb/tasks/preflight.yml
+      rescue:
+        - name: Record the failure
+          ansible.builtin.set_fact:
+            _floor_mongod_msg: "{{ ansible_failed_result.msg }}"
+
+    - name: Both were rejected, naming the limits
+      ansible.builtin.assert:
+        that:
+          - _floor_cfg_msg is defined
+          - "'mongodb_configsvr_mem_limit_mb = 384' in _floor_cfg_msg"
+          - _floor_mongod_msg is defined
+          - "'mongodb_mongod_mem_limit_mb    = 256' in _floor_mongod_msg"
