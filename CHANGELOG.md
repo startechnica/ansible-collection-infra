@@ -338,17 +338,19 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
 
 - **`mongodb`: transparent huge pages follow MongoDB's advice for the deployed
   version.** The role always turned THP off, which is right for 7.0 and earlier,
-  but since 8.0 MongoDB's TCMalloc wants it on. New `mongodb_thp_enabled`
-  defaults to on for `mongodb_version` 8.0+ (`enabled=always`,
-  `defrag=defer+madvise`, `khugepaged/max_ptes_none=0`,
-  `vm.overcommit_memory=1`) and off for 7.0 and earlier. The values are applied
-  without restarting mongod, and at boot by `mongodb-thp.service`, which
+  but since 8.0 MongoDB's TCMalloc wants it on. New `mongodb_thp_enabled` is
+  the THP mode (`never`, `madvise` or `always`; empty leaves THP alone). It
+  defaults to `always` for `mongodb_version` 8.0+ and `never` for 7.0 and
+  earlier. `madvise` and `always` come with the rest of MongoDB's recipe
+  (`defrag=defer+madvise`, `khugepaged/max_ptes_none=0`,
+  `vm.overcommit_memory=1`); `never` also sets `defrag=never`. The values are
+  applied without restarting mongod, and at boot by `mongodb-thp.service`, which
   replaces `disable-thp.service`.
 
-  **Next to Patroni nothing changes by default:** THP stays off, because it is
-  host-wide and `always` grows every process's resident memory on a node
-  already split between two stacks. Setting `mongodb_thp_enabled: true` there
-  turns it on. `vm.overcommit_memory` is never set next to Patroni, which sets
+  **Next to Patroni nothing changes by default:** the default is `never`,
+  because THP is host-wide and `always` grows every process's resident memory
+  on a node already split between two stacks. Set `madvise` or `always` there
+  to opt in. `vm.overcommit_memory` is never set next to Patroni, which sets
   strict overcommit on hosts with swap.
 - **`mongodb`: preflight rejects a mongod or config server memory limit under
   512 MB.** The WiredTiger cache is half the container limit, and mongod refuses

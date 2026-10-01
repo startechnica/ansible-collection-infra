@@ -1,5 +1,5 @@
 [Unit]
-Description=Transparent huge pages {{ 'on' if mongodb_thp_enabled | bool else 'off' }} for MongoDB
+Description=Transparent huge pages {{ mongodb_thp_enabled }} for MongoDB
 # Run before basic.target so the settings are in place before Docker or the
 # Quadlet units start mongod.
 DefaultDependencies=no

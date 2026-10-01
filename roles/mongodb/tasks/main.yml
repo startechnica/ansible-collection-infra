@@ -179,9 +179,11 @@
   ansible.builtin.include_tasks: sysctl.yml
   when: mongodb_action | default('provision') == 'provision'
 
-- name: Disable Transparent HugePages
+- name: Configure Transparent HugePages
   ansible.builtin.include_tasks: thp.yml
-  when: mongodb_action | default('provision') == 'provision'
+  when:
+    - mongodb_action | default('provision') == 'provision'
+    - mongodb_thp_enabled | length > 0
 
 # Container runtime dispatch. `mongodb_container_engine` is the
 # authoritative selector. The skip-all guard at the top of this file

@@ -3,12 +3,14 @@
 # WiredTiger cache floor.
 #
 # What it guards:
-#   1. mongodb_thp_enabled follows MongoDB's advice per version (on for 8.0+,
-#      off for 7.0 and earlier) and defaults to off next to Patroni.
-#   2. mongodb-thp.service sets exactly MongoDB's values: on is always,
-#      defer+madvise, max_ptes_none=0 and vm.overcommit_memory=1; off is
-#      never/never. Next to Patroni, overcommit is left out even when THP is on,
-#      because the patroni role sets strict overcommit on hosts with swap.
+#   1. mongodb_thp_enabled is a THP mode following MongoDB's advice per version
+#      (always for 8.0+, never for 7.0 and earlier) and defaults to never next
+#      to Patroni.
+#   2. mongodb-thp.service sets exactly MongoDB's values: madvise and always
+#      come with defer+madvise, max_ptes_none=0 and vm.overcommit_memory=1;
+#      never is never/never. Next to Patroni, overcommit is left out, because
+#      the patroni role sets strict overcommit on hosts with swap. Empty sets
+#      nothing, and main.yml skips the THP tasks.
 #   3. Preflight rejects a mongod or config server memory limit under 512 MB,
 #      whose half-size WiredTiger cache mongod would refuse at start.
 #
@@ -21,12 +23,11 @@
   connection: local
   vars:
     _thp_dir: /tmp/mongodb-thp-test
-    _thp_on:
-      - "echo always > /sys/kernel/mm/transparent_hugepage/enabled"
+    _thp_recipe:
       - "echo defer+madvise > /sys/kernel/mm/transparent_hugepage/defrag"
       - "echo 0 > /sys/kernel/mm/transparent_hugepage/khugepaged/max_ptes_none"
     _thp_overcommit: "echo 1 > /proc/sys/vm/overcommit_memory"
-    _thp_off:
+    _thp_never:
       - "echo never > /sys/kernel/mm/transparent_hugepage/enabled"
       - "echo never > /sys/kernel/mm/transparent_hugepage/defrag"
   tasks:
@@ -38,18 +39,25 @@
     - name: Verify mongodb_thp_enabled per version and co-location
       ansible.builtin.assert:
         that:
-          - (mongodb_thp_enabled | bool) == item.want
+          - mongodb_thp_enabled == item.want
         fail_msg: "{{ item.name }}: got {{ mongodb_thp_enabled }}"
       loop:
-        - { name: 8.0 default, version: "8.0.28", patroni: false, want: true }
-        - { name: rapid release, version: "8.2.6", patroni: false, want: true }
-        - { name: 7.0, version: "7.0.14", patroni: false, want: false }
-        - { name: 8.0 next to patroni, version: "8.0.28", patroni: true, want: false }
+        - { name: 8.0 default, version: "8.0.28", patroni: false, want: always }
+        - { name: rapid release, version: "8.2.6", patroni: false, want: always }
+        - { name: 7.0, version: "7.0.14", patroni: false, want: never }
+        - { name: 8.0 next to patroni, version: "8.0.28", patroni: true, want: never }
       loop_control:
         label: "{{ item.name }}"
       vars:
         mongodb_version: "{{ item.version }}"
         patroni_enabled: "{{ item.patroni }}"
+
+    - name: Verify empty sets nothing
+      ansible.builtin.assert:
+        that:
+          - mongodb_thp_settings == {}
+      vars:
+        mongodb_thp_enabled: ""
 
     - name: Recreate render directory
       ansible.builtin.file:
@@ -66,10 +74,12 @@
         dest: "{{ _thp_dir }}/{{ item.name }}.service"
         mode: "0644"
       loop:
-        - { name: thp-on, thp: true, patroni: false }
-        - { name: thp-on-patroni, thp: true, patroni: true }
-        - { name: thp-off, thp: false, patroni: false }
-        - { name: thp-off-patroni, thp: false, patroni: true }
+        - { name: always, thp: always, patroni: false }
+        - { name: always-patroni, thp: always, patroni: true }
+        - { name: madvise, thp: madvise, patroni: false }
+        - { name: madvise-patroni, thp: madvise, patroni: true }
+        - { name: never, thp: never, patroni: false }
+        - { name: never-patroni, thp: never, patroni: true }
       loop_control:
         label: "{{ item.name }}"
       vars:
@@ -80,17 +90,22 @@
       ansible.builtin.assert:
         that:
           - _thp_exec == item.want
+          - _thp_unit is search('(?m)^Description=Transparent huge pages ' ~ item.mode ~ ' for MongoDB$')
           - _thp_unit is search('(?m)^Before=basic.target$')
           - _thp_unit is search('(?m)^WantedBy=basic.target$')
         fail_msg: "{{ item.name }}: got {{ _thp_exec }}"
       loop:
-        - { name: thp-on, want: "{{ _thp_on + [_thp_overcommit] }}" }
-        - { name: thp-on-patroni, want: "{{ _thp_on }}" }
-        - { name: thp-off, want: "{{ _thp_off }}" }
-        - { name: thp-off-patroni, want: "{{ _thp_off }}" }
+        - { name: always, mode: always, want: "{{ _thp_mode_always + _thp_recipe + [_thp_overcommit] }}" }
+        - { name: always-patroni, mode: always, want: "{{ _thp_mode_always + _thp_recipe }}" }
+        - { name: madvise, mode: madvise, want: "{{ _thp_mode_madvise + _thp_recipe + [_thp_overcommit] }}" }
+        - { name: madvise-patroni, mode: madvise, want: "{{ _thp_mode_madvise + _thp_recipe }}" }
+        - { name: never, mode: never, want: "{{ _thp_never }}" }
+        - { name: never-patroni, mode: never, want: "{{ _thp_never }}" }
       loop_control:
         label: "{{ item.name }}"
       vars:
+        _thp_mode_always: ["echo always > /sys/kernel/mm/transparent_hugepage/enabled"]
+        _thp_mode_madvise: ["echo madvise > /sys/kernel/mm/transparent_hugepage/enabled"]
         _thp_unit: "{{ lookup('ansible.builtin.file', _thp_dir ~ '/' ~ item.name ~ '.service') }}"
         # "ExecStart=/bin/sh -c '[ ! -f P ] || echo V > P'" -> "echo V > P"
         _thp_exec: >-
