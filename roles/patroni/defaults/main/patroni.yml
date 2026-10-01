@@ -35,6 +35,16 @@ patroni_skip_confirm: false
 # Cluster
 patroni_scope: "ha-pg-cluster"
 
+# ── Transparent huge pages ──
+# Value for /sys/kernel/mm/transparent_hugepage/enabled: never, madvise or
+# always, applied now and at every boot by patroni-thp.service. Empty (the
+# default) leaves THP alone: shared_buffers is shared memory, which this knob
+# doesn't cover, and the kernel default (madvise on Ubuntu and Fedora CoreOS)
+# is fine for PostgreSQL's private memory on current kernels. THP is host-wide,
+# so keep this empty on a node that also runs MongoDB; mongodb_thp_enabled
+# decides there.
+patroni_thp_enabled: ""
+
 # ── Container engine ──
 # Per-role selector for the container runtime. Falls back to the global
 # `container_engine` (defaults to 'podman' here when neither is set).

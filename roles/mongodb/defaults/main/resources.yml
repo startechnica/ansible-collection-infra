@@ -13,6 +13,7 @@
 # ── Container resources (MB) ──
 # mongod and configsvr get --wiredTigerCacheSizeGB at 50% of their limit, so
 # they self-throttle and the cgroup cap is a backstop they shouldn't reach.
+# mongod refuses a cache under 0.25 GB, so preflight rejects a limit under 512.
 # mongos has no such knob: its footprint is per-connection thread stacks,
 # cross-shard sort/merge buffers and the cached routing table, none of which it
 # will voluntarily shrink. For mongos the limit is a cliff, not a ceiling —

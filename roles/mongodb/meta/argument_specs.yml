@@ -71,6 +71,20 @@ argument_specs:
           - Bypass the kernel-compatibility check. Use only when you have verified MongoDB runs on your kernel — running with this set on an actually-incompatible kernel causes
             containers to crash in a restart loop.
 
+      mongodb_thp_enabled:
+        type: str
+        choices: ["", never, madvise, always]
+        description:
+          - Mode for /sys/kernel/mm/transparent_hugepage/enabled. never also sets defrag=never; madvise and
+            always also set defrag=defer+madvise, khugepaged/max_ptes_none=0 and vm.overcommit_memory=1.
+            THP is host-wide; the role applies it now and at every boot through mongodb-thp.service. Empty
+            skips every THP task.
+          - Defaults to always for mongodb_version 8.0 and later, which is MongoDB's recommendation for its
+            upgraded TCMalloc, and never for 7.0 and earlier. Next to Patroni (patroni_enabled) it defaults to
+            never, to spare memory on a node shared by two stacks. The patroni role leaves THP alone unless
+            patroni_thp_enabled is set; to let that decide instead, set this empty. vm.overcommit_memory is
+            never set next to Patroni, which owns it.
+
       mongodb_image_registry:
         type: str
         default: docker.io
@@ -117,9 +131,16 @@ argument_specs:
       mongodb_mongod_mem_limit_mb:
         type: int
         default: 2048
+        description: >-
+          mongod container memory cap. Its WiredTiger cache is half of this, and
+          mongod refuses a cache under 0.25 GB, so preflight requires at least 512.
       mongodb_configsvr_mem_limit_mb:
         type: int
         default: 512
+        description: >-
+          Config server container memory cap (sharded only). Same rule as
+          mongodb_mongod_mem_limit_mb: half goes to the WiredTiger cache, and
+          preflight requires at least 512.
       mongodb_mongos_mem_limit_mb:
         type: int
         default: 1024

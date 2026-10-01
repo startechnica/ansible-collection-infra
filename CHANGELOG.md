@@ -294,6 +294,18 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **`patroni` no longer turns transparent huge pages off by default.** New
+  `patroni_thp_enabled` (`never`, `madvise` or `always`) sets
+  `/sys/kernel/mm/transparent_hugepage/enabled` now and at boot through
+  `patroni-thp.service`. Empty, the default, leaves THP alone. `shared_buffers`
+  is shared memory, which that knob doesn't cover, and the "disable THP" advice
+  dates from RHEL 6-era kernels whose compaction stalls and 2 MB copy-on-write
+  are gone. **Existing hosts keep THP off:** with `patroni_thp_enabled` empty,
+  the role leaves the `disable-thp.service` an earlier version installed in
+  place. Set `patroni_thp_enabled: never` to keep managing it, or remove the
+  unit to fall back to the kernel default (`madvise` on Ubuntu and Fedora
+  CoreOS). On a node that also
+  runs MongoDB, leave it empty; `mongodb_thp_enabled` decides there.
 - **Both roles' defaults and vars are split into one file per topic.**
   `roles/patroni/defaults/main.yml` → `defaults/main/*.yml` (14 files) and
   `roles/mongodb/defaults/main.yml` → `defaults/main/*.yml` (12 files), with
@@ -324,6 +336,26 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **`mongodb`: transparent huge pages follow MongoDB's advice for the deployed
+  version.** The role always turned THP off, which is right for 7.0 and earlier,
+  but since 8.0 MongoDB's TCMalloc wants it on. New `mongodb_thp_enabled` is
+  the THP mode (`never`, `madvise` or `always`; empty leaves THP alone). It
+  defaults to `always` for `mongodb_version` 8.0+ and `never` for 7.0 and
+  earlier. `madvise` and `always` come with the rest of MongoDB's recipe
+  (`defrag=defer+madvise`, `khugepaged/max_ptes_none=0`,
+  `vm.overcommit_memory=1`); `never` also sets `defrag=never`. The values are
+  applied without restarting mongod, and at boot by `mongodb-thp.service`, which
+  replaces `disable-thp.service`.
+
+  **Next to Patroni nothing changes by default:** the default is `never`,
+  because THP is host-wide and `always` grows every process's resident memory
+  on a node already split between two stacks. Set `madvise` or `always` there
+  to opt in. `vm.overcommit_memory` is never set next to Patroni, which sets
+  strict overcommit on hosts with swap.
+- **`mongodb`: preflight rejects a mongod or config server memory limit under
+  512 MB.** The WiredTiger cache is half the container limit, and mongod refuses
+  to start with a cache under 0.25 GB, so a smaller limit deployed and then
+  crash-looped.
 - **`grafana_alloy`: a password that references an undefined variable now
   fails the play.** `grafana_alloy_env_has_secrets` reads each password through
   `default('')`, which also swallowed an unresolvable reference such as

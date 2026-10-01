@@ -191,17 +191,20 @@
     - /etc/systemd/system/pbm-backup.service
     - "{{ mongodb_root_dir }}/pbm"
 
-- name: Remove THP disable service
+# disable-thp is what earlier versions of this role installed.
+- name: Disable the THP units
   ansible.builtin.systemd:
-    name: disable-thp
+    name: "{{ item }}"
     enabled: false
     state: stopped
   failed_when: false
+  loop: [mongodb-thp, disable-thp]
 
-- name: Delete THP service file
+- name: Delete the THP unit files
   ansible.builtin.file:
-    path: /etc/systemd/system/disable-thp.service
+    path: "/etc/systemd/system/{{ item }}.service"
     state: absent
+  loop: [mongodb-thp, disable-thp]
 
 - name: Remove sysctl config
   ansible.builtin.file:

@@ -41,6 +41,28 @@ mongodb_kernel_guard_min_version: "8.3"
 mongodb_fixed_kernel: "7.0.14"
 mongodb_skip_kernel_check: false
 
+# Transparent huge pages (THP): the mode for
+# /sys/kernel/mm/transparent_hugepage/enabled, never, madvise or always, applied
+# now and at every boot by mongodb-thp.service. Empty skips every THP task,
+# leaving THP and any unit an earlier run installed as they are.
+#
+# MongoDB reversed its advice in 8.0: its upgraded TCMalloc wants `always`, with
+# defrag=defer+madvise, khugepaged/max_ptes_none=0 and vm.overcommit_memory=1,
+# which the role sets alongside any mode but never; 7.0 and earlier want
+# `never`. https://www.mongodb.com/docs/manual/administration/tcmalloc-performance/
+#
+# THP is host-wide. Next to Patroni the default is never: `always` backs any
+# 2 MB-aligned region a process touches with a whole 2 MB page, which grows the
+# resident memory of every process on a node already split between two stacks
+# (kernels before 6.12 can't split underused ones back). `madvise` limits THP to
+# memory a process asks for with madvise(2). The patroni role leaves THP alone
+# unless patroni_thp_enabled is set, so on a shared node this setting decides;
+# set it empty to hand THP to patroni_thp_enabled instead.
+mongodb_thp_enabled: >-
+  {{ 'always' if mongodb_version is version('8.0', '>=')
+                 and not (patroni_enabled | default(false) | bool)
+     else 'never' }}
+
 # ── Networking ──
 mongodb_network: mongodb-cluster
 

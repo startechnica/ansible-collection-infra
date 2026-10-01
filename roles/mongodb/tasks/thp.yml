@@ -1,19 +1,58 @@
 ---
-- name: Disable THP (runtime)
-  ansible.builtin.shell: |
-    [ -f /sys/kernel/mm/transparent_hugepage/enabled ] && echo never > /sys/kernel/mm/transparent_hugepage/enabled || true
-    [ -f /sys/kernel/mm/transparent_hugepage/defrag ] && echo never > /sys/kernel/mm/transparent_hugepage/defrag || true
-  changed_when: false
+# Transparent huge pages in the mode mongodb_thp_enabled names (see
+# defaults/main/mongodb.yml for why it depends on the version and on Patroni);
+# main.yml skips this file when it's empty. mongodb_thp_settings
+# (vars/main/thp.yml) holds the values. They are applied now, without
+# restarting mongod, and again at every boot by mongodb-thp.service, before any
+# container starts.
 
-- name: Deploy THP disable systemd service
+# Earlier versions of this role, and of the patroni role, always turned THP off
+# through disable-thp.service. Left in place it would race this role's unit at
+# boot.
+- name: Check for the disable-thp unit
+  ansible.builtin.stat:
+    path: /etc/systemd/system/disable-thp.service
+  register: _mongodb_legacy_thp_unit
+
+- name: Remove the disable-thp unit
+  when: _mongodb_legacy_thp_unit.stat.exists
+  block:
+    - name: Disable the disable-thp unit
+      ansible.builtin.systemd:
+        name: disable-thp
+        enabled: false
+
+    - name: Delete the disable-thp unit file
+      ansible.builtin.file:
+        path: /etc/systemd/system/disable-thp.service
+        state: absent
+
+# The THP files list every mode with the active one in brackets, e.g.
+# "always defer [defer+madvise] madvise never"; the others hold a plain number.
+# A kernel built without THP has none of these files, so skip what's missing.
+- name: Apply THP settings now
+  ansible.builtin.shell: |
+    f='{{ item.key }}'
+    [ -f "$f" ] || exit 0
+    cur=$(sed -n 's/.*\[\(.*\)\].*/\1/p' "$f")
+    [ -n "$cur" ] || cur=$(cat "$f")
+    [ "$cur" = '{{ item.value }}' ] && exit 0
+    echo '{{ item.value }}' > "$f"
+    echo changed
+  loop: "{{ mongodb_thp_settings | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}={{ item.value }}"
+  register: _mongodb_thp_apply
+  changed_when: "'changed' in _mongodb_thp_apply.stdout"
+
+- name: Deploy the THP unit
   ansible.builtin.template:
-    src: disable-thp.service.j2
-    dest: /etc/systemd/system/disable-thp.service
+    src: mongodb-thp.service.j2
+    dest: /etc/systemd/system/mongodb-thp.service
     mode: "0644"
 
-- name: Enable and start THP disable service
+- name: Enable the THP unit
   ansible.builtin.systemd:
-    name: disable-thp
+    name: mongodb-thp
     enabled: true
-    state: started
     daemon_reload: true
