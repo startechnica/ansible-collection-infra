@@ -4,7 +4,7 @@ All notable changes to this collection are documented in this file. The format
 is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this collection adheres to [Semantic Versioning](https://semver.org/).
 
-## 1.0.3 (unreleased)
+## 1.0.3 (2026-10-02)
 
 ### Breaking changes
 

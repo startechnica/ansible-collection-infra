@@ -5,7 +5,7 @@ caveat: **pre-1.0 minor bumps may contain breaking changes**. Read the release
 notes in [../CHANGELOG.md](../CHANGELOG.md) before upgrading; this file
 documents the migration steps for breaking changes.
 
-## 1.0.3 (unreleased)
+## 1.0.3 (2026-10-02)
 
 ### Breaking — every `patroni` role variable is now `patroni_`-prefixed
 
