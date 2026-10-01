@@ -1,0 +1,38 @@
+---
+# Remove the VIP a stopped vip-manager left on this node. Callers stop
+# vip-manager first.
+#
+# vip-manager takes the VIP down only on SIGINT. Both engines stop it with
+# SIGTERM, which leaves the address on the interface, and with no vip-manager
+# left to manage it, the node keeps answering on it after Patroni's leader moves.
+# Signalling vip-manager instead would race its restart policy (compose
+# `unless-stopped`, Quadlet `Restart=always`), so the address is removed
+# directly. keepalived needs none of this: it removes its VIP when stopped.
+#
+# The address comes from vip-manager's config on disk, so it's found even after
+# patroni_vip_address was cleared. A node that doesn't hold it is untouched.
+
+- name: Read the VIP vip-manager was configured with
+  ansible.builtin.slurp:
+    src: "{{ patroni_vip_manager_dir }}/vip-manager.yml"
+  register: _vm_config
+  failed_when: false
+
+- name: Release the VIP if this node still holds it
+  vars:
+    _vm_vip: >-
+      {{ ((_vm_config.content | b64decode | from_yaml).ip | default('') | string)
+         if _vm_config.content is defined else patroni_vip_address }}
+  ansible.builtin.shell: |
+    set -o pipefail
+    ip -o addr show to '{{ _vm_vip }}' | while read -r _ dev _ cidr _; do
+      ip addr del "$cidr" dev "$dev" || exit 1
+      echo "released $cidr on $dev"
+    done
+  args:
+    executable: /bin/bash
+  register: _vip_release
+  changed_when: _vip_release.stdout | length > 0
+  when:
+    - _vm_vip | length > 0
+    - _vm_vip != node_ip

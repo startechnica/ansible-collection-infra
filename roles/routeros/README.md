@@ -46,7 +46,7 @@ add name=ansible-firewall policy=api,read,write,!local,!telnet,!ssh,!ftp,!reboot
 
 /user
 add name=ansible group=ansible-firewall password="..." \
-    address=10.147.8.0/24 comment="startechnica.infra deployer"
+    address=10.20.8.0/24 comment="startechnica.infra deployer"
 ```
 
 See [docs/TROUBLESHOOTING.md](../../docs/TROUBLESHOOTING.md) for auth-scope

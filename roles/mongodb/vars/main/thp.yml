@@ -1,0 +1,20 @@
+---
+# Computed: the kernel settings tasks/thp.yml applies, as path → value, picked
+# by mongodb_thp_enabled (defaults/main/mongodb.yml). The same map renders the
+# boot-time unit and the runtime apply, so the two can't drift. Empty when
+# mongodb_thp_enabled is, in which case tasks/thp.yml doesn't run.
+#
+# never also turns defrag off; any other mode gets the rest of MongoDB's recipe.
+# vm.overcommit_memory is part of it but is left out next to Patroni: the
+# patroni role sets strict overcommit (2) on hosts with swap, and the two values
+# would otherwise flip on every run.
+mongodb_thp_settings: >-
+  {{ {} if mongodb_thp_enabled | length == 0
+     else {'/sys/kernel/mm/transparent_hugepage/enabled': 'never',
+           '/sys/kernel/mm/transparent_hugepage/defrag': 'never'}
+       if mongodb_thp_enabled == 'never'
+     else ({'/sys/kernel/mm/transparent_hugepage/enabled': mongodb_thp_enabled,
+            '/sys/kernel/mm/transparent_hugepage/defrag': 'defer+madvise',
+            '/sys/kernel/mm/transparent_hugepage/khugepaged/max_ptes_none': '0'}
+           | combine({} if patroni_enabled | default(false) | bool
+                     else {'/proc/sys/vm/overcommit_memory': '1'})) }}

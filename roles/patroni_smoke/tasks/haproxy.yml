@@ -1,0 +1,22 @@
+---
+# HAProxy — load balancer / read-write splitting.
+#   * H1: stats endpoint :5000 reachable
+#   * H2: stats CSV — both postgres-primary and postgres-replica backends UP
+
+- name: "H1. HAProxy stats endpoint :5000 (TCP reachability)"
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: 5000
+    timeout: 10
+    state: started
+  register: _smoke_haproxy_stats
+  failed_when: false
+  when: patroni_smoke_check_haproxy | bool
+
+- name: "H2. HAProxy stats CSV (backends UP)"
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:5000/stats;csv"
+    status_code: 200
+  register: _smoke_haproxy_csv
+  failed_when: false
+  when: patroni_smoke_check_haproxy | bool

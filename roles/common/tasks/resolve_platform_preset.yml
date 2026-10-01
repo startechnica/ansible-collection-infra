@@ -21,6 +21,27 @@
 # Or inside common itself (e.g. validate_inventory, build_host_groups):
 #   - ansible.builtin.include_tasks: resolve_platform_preset.yml
 
+# Capture whether the inventory EXPLICITLY pinned a content library item
+# BEFORE the next line overwrites `content_library_item_name` with the
+# preset fallback. This is the signal `fcos_prepare`'s auto-import gate
+# needs: "did the user pin a specific OVA, or should we auto-import the
+# latest?". It must be computed here (not at gate time) because:
+#   1. This resolver runs at Stage 0 (validate_inventory) — the FIRST time,
+#      `content_library_item_name` still holds the raw inventory value ('' if
+#      unset). After we publish the fallback below, the bare var reads the
+#      preset default, so a length check downstream can no longer tell pin
+#      from fallback.
+#   2. The published fact is precedence #18 (host fact) and persists across
+#      plays, so by the instance role's Stage 2 the original signal is gone.
+# Sticky-by-self-reference: once set on the first resolver call, later calls
+# preserve it (the preset-filled value must not flip pinned false→true).
+- name: Capture explicit content-library-item pin (before fallback overwrites it)
+  ansible.builtin.set_fact:
+    _content_library_item_pinned: >-
+      {{ _content_library_item_pinned
+         if (_content_library_item_pinned is defined)
+         else (content_library_item_name | default('') | length > 0) }}
+
 - name: Publish platform-preset resolved values as host facts
   ansible.builtin.set_fact:
     instance_init_type: "{{ _resolved_instance_init_type }}"
@@ -29,6 +50,7 @@
     content_library_name: "{{ _resolved_content_library_name }}"
     content_library_item_name: "{{ _resolved_content_library_item_name }}"
     ignition_channel: "{{ _resolved_ignition_channel }}"
+    _content_library_item_pinned: "{{ _content_library_item_pinned }}"
     # Also publish the raw `_platform_map` and the matched-row helper
     # `_platform_preset` so consumers (Butane templates, render_ignition,
     # downstream roles) can read `_platform_preset.ignition.<field>` directly

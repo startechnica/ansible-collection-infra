@@ -7,7 +7,7 @@ global_defs {
 }
 
 vrrp_script check_haproxy {
-    script "curl -sf http://127.0.0.1:{{ haproxy_stats_port }}"
+    script "curl -sf http://127.0.0.1:{{ patroni_haproxy_stats_port }}"
     interval 3
     weight -20
     fall 3

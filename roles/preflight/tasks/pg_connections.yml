@@ -1,0 +1,102 @@
+---
+# PostgreSQL's max_connections vs the backends this cluster will actually ask
+# for. The connection analogue of memory.yml, and the same failure shape:
+# several independently-sized consumers of one host resource, with nothing
+# adding them up.
+#
+# Inputs (the whole check is skipped when pg_conn_max is unset, so a caller
+# that isn't running PostgreSQL simply never triggers it):
+#   pg_conn_max           the server's max_connections.
+#   pg_conn_pool_size     PgBouncer default_pool_size — server connections
+#                         PER user/database pair.
+#   pg_conn_reserve_size  PgBouncer reserve_pool_size — burst headroom, also
+#                         per pair, on top of pool_size.
+#   pg_conn_pairs         how many (user, database) pairs PgBouncer will open
+#                         pools for. This is the multiplier people miss.
+#   pg_conn_bypass        connections reachable on the pooler-BYPASS path
+#                         (HAProxy's pg-direct listener). Every one is a real
+#                         backend, not a pooled client.
+#   pg_conn_overhead      everything else holding a backend:
+#                         superuser_reserved_connections, Patroni's monitoring
+#                         connection, the exporter, WAL-G, admin sessions.
+#   pg_conn_strict        fail instead of warning. Default false.
+#
+# Why this is worth a check rather than a comment: the pooled term is a
+# PRODUCT. Adding one application database to an inventory silently adds
+# (pool_size + reserve_size) backends — 60 at the shipped defaults — so a
+# cluster that was comfortable at three pairs (180 of 200) refuses connections
+# at four (240 of 200). Nothing in the config makes that visible, and the
+# symptom at the far end is "FATAL: sorry, too many clients already" in the
+# application, not in PostgreSQL's own startup.
+#
+# The limit of the check: pg_conn_pairs is derived from the DECLARED databases
+# and users, and PgBouncer only creates a pool once a pair actually connects.
+# So this over-estimates a cluster whose declared users are idle, and
+# under-estimates one where clients connect as roles the inventory never
+# declared. It is a budget, not a measurement.
+#
+# One block with block-level `vars` rather than set_fact, for the same reason as
+# memory.yml: facts set by one caller stay in scope for the next, so a second
+# include that passes no inputs would silently report the first one's numbers.
+
+- name: PostgreSQL connection budget check
+  when: pg_conn_max is defined
+  vars:
+    # Per-pair worst case: the steady pool plus its burst reserve.
+    _pg_conn_per_pair: >-
+      {{ (pg_conn_pool_size | default(0) | int)
+         + (pg_conn_reserve_size | default(0) | int) }}
+    # The product that does the damage.
+    _pg_conn_pooled: >-
+      {{ (_pg_conn_per_pair | int) * (pg_conn_pairs | default(1) | int) }}
+    _pg_conn_total: >-
+      {{ (_pg_conn_pooled | int)
+         + (pg_conn_bypass | default(0) | int)
+         + (pg_conn_overhead | default(0) | int) }}
+    _pg_conn_spare: >-
+      {{ (pg_conn_max | int) - (_pg_conn_total | int) }}
+    # Pulled out of the messages below so the arithmetic is stated once.
+    _pg_conn_breakdown: >-
+      {{ _pg_conn_pooled }} pooled
+      ({{ pg_conn_pairs | default(1) }} pair{{ 's' if (pg_conn_pairs | default(1) | int) != 1 else '' }}
+      x {{ _pg_conn_per_pair }})
+      + {{ pg_conn_bypass | default(0) }} bypass
+      + {{ pg_conn_overhead | default(0) }} overhead
+  block:
+    - name: Report the connection budget
+      ansible.builtin.debug:
+        msg: >-
+          Connection budget: {{ _pg_conn_total }} of
+          {{ pg_conn_max }} max_connections — {{ _pg_conn_breakdown }},
+          {{ _pg_conn_spare }} spare.
+
+    # Over the ceiling. Unlike memory there is no "survivable but tight" band:
+    # PostgreSQL refuses connection number max_connections + 1 outright, so
+    # there is one threshold and it is hard.
+    - name: Fail when the connection budget exceeds max_connections (pg_conn_strict)
+      ansible.builtin.assert:
+        that:
+          - (_pg_conn_total | int) <= (pg_conn_max | int)
+        fail_msg: >-
+          Connection budget {{ _pg_conn_total }} exceeds max_connections
+          ({{ pg_conn_max }}) by {{ (_pg_conn_total | int) - (pg_conn_max | int) }}:
+          {{ _pg_conn_breakdown }}. PgBouncer will fill its pools on demand and
+          then clients get "FATAL: sorry, too many clients already". Raise
+          patroni_pg_max_connections (and re-check the memory budget — every
+          backend carries work_mem), or lower
+          patroni_pgbouncer_default_pool_size / patroni_pgbouncer_reserve_pool_size,
+          which are PER user/database pair.
+        success_msg: "Connection budget fits within max_connections."
+      when: pg_conn_strict | default(false) | bool
+
+    - name: Warn when the connection budget exceeds max_connections
+      ansible.builtin.debug:
+        msg: >-
+          WARNING: connection budget {{ _pg_conn_total }} exceeds
+          max_connections ({{ pg_conn_max }}): {{ _pg_conn_breakdown }}.
+          Pools fill on demand, so this surfaces as "FATAL: sorry, too many
+          clients already" in the application rather than at startup. Set
+          patroni_pg_conn_strict=true to make this a hard failure.
+      when:
+        - not (pg_conn_strict | default(false) | bool)
+        - (_pg_conn_total | int) > (pg_conn_max | int)

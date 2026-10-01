@@ -4,17 +4,22 @@
 # Data dirs gated on `patroni_destroy_prune` (default false) so an
 # accidental `patroni_action=uninstall` doesn't wipe production data.
 
+# The engine teardown has stopped vip-manager, which leaves its VIP behind. Runs
+# before the config directories go: the address is read from vip-manager.yml.
+- name: Release the VIP vip-manager left
+  ansible.builtin.include_tasks: vip_manager_release.yml
+
 - name: Remove config directories
   ansible.builtin.file:
     path: "{{ item }}"
     state: absent
   loop:
     - "{{ patroni_dir }}"
-    - "{{ haproxy_dir }}"
-    - "{{ pgbouncer_dir }}"
-    - "{{ keepalived_dir }}"
-    - "{{ vip_manager_dir }}"
-    - "{{ walg_dir }}"
+    - "{{ patroni_haproxy_dir }}"
+    - "{{ patroni_pgbouncer_dir }}"
+    - "{{ patroni_keepalived_dir }}"
+    - "{{ patroni_vip_manager_dir }}"
+    - "{{ patroni_walg_dir }}"
 
 # Second-stage interactive prune confirm. Same dual-gate pattern as
 # instance/destroy.yml: the uninstall_confirm at the top of the play
@@ -25,7 +30,7 @@
   ansible.builtin.pause:
     prompt: >-
       Services and configs removed. Type 'prune' to DELETE the data
-      directories ({{ postgresql_root_dir }}, {{ etcd_data_dir }}, etc.) — IRREVERSIBLE,
+      directories ({{ patroni_postgresql_root_dir }}, {{ patroni_etcd_data_dir }}, etc.) — IRREVERSIBLE,
       anything else to leave data on disk
   register: _prune_confirm
   run_once: true
@@ -38,11 +43,11 @@
     path: "{{ item }}"
     state: absent
   loop:
-    - "{{ postgresql_root_dir }}"
-    - "{{ postgresql_log_dir }}"
-    - "{{ etcd_data_dir }}"
-    - "{{ postgresql_dir }}"
-    - "{{ etcd_dir }}"
+    - "{{ patroni_postgresql_root_dir }}"
+    - "{{ patroni_postgresql_log_dir }}"
+    - "{{ patroni_etcd_data_dir }}"
+    - "{{ patroni_postgresql_dir }}"
+    - "{{ patroni_etcd_dir }}"
   when:
     - patroni_destroy_prune | bool
     - (patroni_skip_confirm | bool) or ((_prune_confirm | default({})).user_input | default('') == 'prune')
@@ -51,7 +56,7 @@
   ansible.builtin.debug:
     msg: >-
       Prune aborted by user — data directories left intact at
-      {{ postgresql_root_dir }} and {{ etcd_data_dir }}. Re-run with
+      {{ patroni_postgresql_root_dir }} and {{ patroni_etcd_data_dir }}. Re-run with
       -e patroni_skip_confirm=true to bypass both confirms in automated flows.
   when:
     - patroni_destroy_prune | bool
@@ -64,11 +69,24 @@
     state: absent
   notify: reload sysctl
 
-# Transparent HugePages disable IS preserved — `/etc/systemd/system/disable-thp.service`
-# is a single shared file used by multiple roles (mongodb installs the same path).
-# Removing it on patroni uninstall would also disable THP suppression for any
-# other DB stack co-located on the host. Operator can clean up manually if
-# this is the last DB service on the box.
+# patroni-thp.service exists only when patroni_thp_enabled was set, and is this
+# role's alone.
+- name: Disable the THP unit
+  ansible.builtin.systemd:
+    name: patroni-thp
+    enabled: false
+    state: stopped
+  failed_when: false
+
+- name: Delete the THP unit file
+  ansible.builtin.file:
+    path: /etc/systemd/system/patroni-thp.service
+    state: absent
+
+# The older disable-thp.service IS preserved: earlier versions of both this role
+# and mongodb installed that same path, so removing it could lift THP
+# suppression another stack on the host still relies on. The operator can clean
+# it up manually if this is the last DB service on the box.
 
 - name: Stat THP disable service
   ansible.builtin.stat:
@@ -81,9 +99,9 @@
       - "╔══════════════════════════════════════════════════════════════════╗"
       - "║  THP DISABLE SERVICE PRESERVED                                   ║"
       - "╠══════════════════════════════════════════════════════════════════╣"
-      - "║  /etc/systemd/system/disable-thp.service is shared with other    ║"
-      - "║  database roles (mongodb installs the same file). It was NOT     ║"
-      - "║  removed by this uninstall.                                      ║"
+      - "║  /etc/systemd/system/disable-thp.service was installed by older  ║"
+      - "║  versions of the patroni and mongodb roles. It was NOT removed   ║"
+      - "║  by this uninstall.                                              ║"
       - "║                                                                  ║"
       - "║  To remove manually after confirming no other DB on this host    ║"
       - "║  needs THP suppression:                                          ║"
@@ -160,4 +178,4 @@
       {{ 'Full uninstall complete — all data removed.'
          if _data_was_pruned
          else 'Soft uninstall complete — data preserved at '
-              ~ postgresql_root_dir ~ ', ' ~ etcd_data_dir }}
+              ~ patroni_postgresql_root_dir ~ ', ' ~ patroni_etcd_data_dir }}

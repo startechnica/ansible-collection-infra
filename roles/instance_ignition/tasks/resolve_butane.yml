@@ -1,0 +1,130 @@
+---
+# Resolve the `butane` CLI that render_ignition.yml runs on the controller to
+# convert Butane (.bu) configs into Ignition JSON, and publish its path as
+# `_butane_bin`:
+#
+#   1. `butane` on PATH          → use it (an operator-installed copy wins).
+#   2. ignition_butane_download  → download the pinned release into
+#                                  ignition_butane_cache_dir, sha256-verified.
+#                                  A cached copy that already matches is
+#                                  reused without downloading.
+#   3. otherwise                 → fail with install instructions.
+#
+# Callers:
+#   instance/tasks/main.yml — before fcos_prepare's OVA import, so a missing
+#     binary or a failed download stops the run before slow or mutating
+#     vCenter work. Only reached when there are VMs to create.
+#   deploy.yml Stage 0 — `butane_resolve_dry_run: true`. Probes only, never
+#     downloads (keeps `--tags validate` side-effect free), and warns when
+#     Stage 2 would fail. Stage 0 can't tell yet whether any VM will be
+#     created, so it doesn't fail.
+#
+# Probes with `butane --version` rather than `which`, which isn't installed
+# on minimal controllers / execution-environment images.
+#
+# Params:
+#   butane_resolve_dry_run [default: false] — probe and warn only.
+
+- name: Probe for the butane CLI on PATH
+  ansible.builtin.command: butane --version
+  register: _butane_path_check
+  changed_when: false
+  failed_when: false
+  delegate_to: localhost
+  run_once: true
+
+- name: Fall back to the pinned butane release
+  when: _butane_path_check.rc | default(1) != 0
+  vars:
+    _dry_run: "{{ butane_resolve_dry_run | default(false) | bool }}"
+    # `uname -sm` → "Linux x86_64", "Darwin arm64". Release assets are named
+    # butane-<arch>-unknown-linux-gnu / butane-<arch>-apple-darwin, with
+    # aarch64 where macOS reports arm64.
+    _uname: "{{ _butane_uname.stdout | default('') | split }}"
+    _asset_suffix: >-
+      {{ (_uname[1] | default('') | replace('arm64', 'aarch64'))
+         ~ ('-apple-darwin' if (_uname[0] | default('')) == 'Darwin' else '-unknown-linux-gnu') }}
+    _can_download: "{{ (ignition_butane_download | bool) and _asset_suffix in ignition_butane_checksums }}"
+    _butane_missing_msg:
+      - >-
+        The `butane` CLI is not on PATH on the Ansible controller, and
+        {{ 'ignition_butane_download is false'
+           if not (ignition_butane_download | bool)
+           else 'ignition_butane_checksums has no butane-' ~ _asset_suffix
+                ~ ' entry for this controller (' ~ (_butane_uname.stdout | default('?')) ~ ')' }}.
+      - "render_ignition.yml needs it to convert Butane (.bu) configs into Ignition JSON."
+      - ""
+      - "Install butane on PATH:"
+      - ""
+      - "    # Linux (single static binary; use aarch64 on ARM controllers)"
+      - "    sudo curl -L -o /usr/local/bin/butane \\"
+      - "      https://github.com/coreos/butane/releases/latest/download/butane-x86_64-unknown-linux-gnu"
+      - "    sudo chmod +x /usr/local/bin/butane"
+      - ""
+      - "    # macOS: brew install butane    Fedora / RHEL: sudo dnf install butane"
+      - ""
+      - "or let the role download it: set ignition_butane_download: true. Air-gapped"
+      - "controllers can mirror the release and set ignition_butane_release_url."
+  block:
+    - name: Detect controller OS and architecture
+      ansible.builtin.command: uname -sm
+      register: _butane_uname
+      changed_when: false
+      delegate_to: localhost
+      run_once: true
+
+    - name: Assert a butane download is possible
+      ansible.builtin.assert:
+        that:
+          - _can_download | bool
+        fail_msg: "{{ _butane_missing_msg }}"
+        quiet: true
+      delegate_to: localhost
+      run_once: true
+      when: not _dry_run
+
+    - name: "WARNING: butane CLI unavailable — provisioning ignition VMs will fail"
+      ansible.builtin.debug:
+        msg: "{{ _butane_missing_msg }}"
+      delegate_to: localhost
+      run_once: true
+      when:
+        - _dry_run
+        - not (_can_download | bool)
+
+    - name: Create the butane cache directory
+      ansible.builtin.file:
+        path: "{{ ignition_butane_cache_dir }}"
+        state: directory
+        mode: "0755"
+      delegate_to: localhost
+      run_once: true
+      when: not _dry_run
+
+    - name: Download the pinned butane release
+      ansible.builtin.get_url:
+        url: "{{ ignition_butane_release_url }}/butane-{{ _asset_suffix }}"
+        dest: "{{ ignition_butane_cache_dir }}/butane"
+        checksum: "sha256:{{ ignition_butane_checksums[_asset_suffix] }}"
+        mode: "0755"
+      delegate_to: localhost
+      run_once: true
+      when: not _dry_run
+
+    - name: Verify the downloaded butane runs
+      ansible.builtin.command:
+        argv:
+          - "{{ ignition_butane_cache_dir }}/butane"
+          - --version
+      changed_when: false
+      delegate_to: localhost
+      run_once: true
+      when: not _dry_run
+
+- name: Publish the butane binary path
+  ansible.builtin.set_fact:
+    _butane_bin: >-
+      {{ 'butane' if (_butane_path_check.rc | default(1)) == 0
+         else ignition_butane_cache_dir ~ '/butane' }}
+  run_once: true
+  when: not (butane_resolve_dry_run | default(false) | bool)

@@ -1,8 +1,8 @@
 ---
 # Podman / Quadlet deploy path. Counterpart to docker.yml. Renders
-# .container files under /etc/containers/systemd/, builds the two
-# locally-built images (vip-manager, keepalived) via `podman build`,
-# daemon-reloads so podman-system-generator materializes the units,
+# .container files under /etc/containers/systemd/, pulls vip-manager
+# or builds keepalived (`podman build`), daemon-reloads so
+# podman-system-generator materializes the units,
 # then enables + starts each service. Service ordering is encoded in
 # the Quadlet [Unit] sections (Requires=/After=), so the loop here
 # can fire them in any order.
@@ -19,14 +19,14 @@
     group: root
     mode: "0755"
 
-# ── VIP failover: build image + render Quadlet (split per engine) ─────
-# The Dockerfile templates are rendered to {{ vip_manager_dir }} /
-# {{ keepalived_dir }} by shared/vip_manager.yml / shared/keepalived.yml
-# as part of provision-time preparation. The two include files below
-# build the image AND render the Quadlet for whichever VIP backend is
-# active, so we skip both entirely when patroni_vip_enabled=false.
+# ── VIP failover: get image + render Quadlet (split per engine) ───────
+# vip-manager is pulled (patroni_vip_manager_image); keepalived is built from
+# the Dockerfile shared/keepalived.yml renders to {{ patroni_keepalived_dir }}.
+# The two include files below get the image AND render the Quadlet for
+# whichever VIP backend is active, so we skip both entirely when
+# patroni_vip_enabled=false.
 
-- name: Vip-manager (etcd-aware) — build image + render Quadlet
+- name: Vip-manager (etcd-aware) — pull image + render Quadlet
   ansible.builtin.include_tasks: vip_manager.yml
   when:
     - patroni_vip_enabled
@@ -38,19 +38,62 @@
     - patroni_vip_enabled
     - not use_vip_manager
 
+# The VIP is off, or keepalived runs it now: stop vip-manager, drop its Quadlet
+# so the daemon-reload below removes the unit, and release the VIP it left.
+- name: Retire vip-manager
+  when: not (patroni_vip_enabled and use_vip_manager)
+  block:
+    - name: Stop vip-manager
+      ansible.builtin.systemd:
+        name: vip-manager.service
+        state: stopped
+      register: _vm_stopped
+      failed_when: false # no such unit when vip-manager never ran here
+
+    - name: Remove the vip-manager Quadlet
+      ansible.builtin.file:
+        path: /etc/containers/systemd/vip-manager.container
+        state: absent
+      register: _q_vip_manager_removed
+
+    - name: Release the VIP vip-manager left
+      ansible.builtin.include_tasks: ../shared/vip_manager_release.yml
+      when: _vm_stopped is changed
+
+# The VIP is off, or vip-manager runs it now. keepalived removes its own VIP
+# when stopped, so only the unit has to go.
+- name: Retire keepalived
+  when: not (patroni_vip_enabled and not use_vip_manager)
+  block:
+    - name: Stop keepalived
+      ansible.builtin.systemd:
+        name: keepalived.service
+        state: stopped
+      failed_when: false # no such unit when keepalived never ran here
+
+    - name: Remove the keepalived Quadlet
+      ansible.builtin.file:
+        path: /etc/containers/systemd/keepalived.container
+        state: absent
+      register: _q_keepalived_removed
+
 - name: Wal-g — build local image (no upstream container published)
   ansible.builtin.include_tasks: walg.yml
   when:
-    - walg_enabled
-    - walg_build_local
+    - patroni_walg_enabled
+    - patroni_walg_build_local
 
 - name: Wal-g — pull prebuilt image
   containers.podman.podman_image:
-    name: "{{ walg_image }}"
+    name: "{{ patroni_walg_image }}"
     pull: true
+  register: _image_pull
+  retries: 10
+  delay: 20
+  until: _image_pull is succeeded
   when:
-    - walg_enabled
-    - not walg_build_local
+    - patroni_walg_enabled
+    - not patroni_walg_build_local
 
 # ── Render Quadlets ───────────────────────────────────────────────────
 
@@ -63,7 +106,7 @@
     mode: "0644"
   register: _q_etcd
 
-- name: Render walg-init Quadlet (S3 enabled)
+- name: Render walg-init Quadlet (WAL-G enabled)
   ansible.builtin.template:
     src: quadlets/walg-init.container.j2
     dest: /etc/containers/systemd/walg-init.container
@@ -71,7 +114,7 @@
     group: root
     mode: "0644"
   register: _q_walg_init
-  when: walg_enabled | bool
+  when: patroni_walg_enabled | bool
 
 # Rollback path: walg was enabled previously, now disabled. Stop services
 # (Quadlet-managed walg-init + host-managed walg-cron timer/service) and
@@ -89,7 +132,7 @@
     - walg-cron.timer
     - walg-cron.service
   failed_when: false
-  when: not (walg_enabled | bool)
+  when: not (patroni_walg_enabled | bool)
 
 - name: Remove walg Quadlets (walg disabled — rollback)
   ansible.builtin.file:
@@ -98,7 +141,7 @@
   loop:
     - walg-init.container
   register: _q_walg_removed
-  when: not (walg_enabled | bool)
+  when: not (patroni_walg_enabled | bool)
 
 - name: Remove walg-cron host units + helper script (walg disabled — rollback)
   ansible.builtin.file:
@@ -108,7 +151,7 @@
     - /etc/systemd/system/walg-cron.timer
     - /etc/systemd/system/walg-cron.service
     - "{{ patroni_dir }}/walg-backup.sh"
-  when: not (walg_enabled | bool)
+  when: not (patroni_walg_enabled | bool)
 
 - name: Render patroni Quadlet
   ansible.builtin.template:
@@ -145,7 +188,7 @@
     group: root
     mode: "0644"
   register: _q_pg_exporter
-  when: postgres_exporter_enabled | bool
+  when: patroni_postgres_exporter_enabled | bool
 
 - name: Reload systemd to materialize Quadlet units
   ansible.builtin.systemd:
@@ -158,6 +201,8 @@
     or (_q_vip_manager.changed | default(false))
     or (_q_keepalived.changed | default(false))
     or (_q_walg_removed.changed | default(false))
+    or (_q_vip_manager_removed.changed | default(false))
+    or (_q_keepalived_removed.changed | default(false))
 
 # ── Build service start list and start them ────────────────────────────
 # Order is encoded in [Unit] Requires=/After=, but we list them in
@@ -169,9 +214,9 @@
   ansible.builtin.set_fact:
     _patroni_services: >-
       {{ ['etcd.service']
-         + (['walg-init.service'] if (walg_enabled | bool) else [])
+         + (['walg-init.service'] if (patroni_walg_enabled | bool) else [])
          + ['patroni.service', 'haproxy.service', 'pgbouncer.service']
-         + (['postgres-exporter.service'] if (postgres_exporter_enabled | bool) else [])
+         + (['postgres-exporter.service'] if (patroni_postgres_exporter_enabled | bool) else [])
          + (['vip-manager.service'] if (patroni_vip_enabled and use_vip_manager) else [])
          + (['keepalived.service'] if (patroni_vip_enabled and not use_vip_manager) else [])
       }}
@@ -196,12 +241,21 @@
          | map(attribute='item')
          | list }}
 
+# etcd one node at a time: restarting every member at once loses quorum.
+- name: Restart etcd one node at a time if its Quadlet changed
+  ansible.builtin.include_tasks: ../shared/etcd_rolling_restart.yml
+  vars:
+    _etcd_was_running: "{{ 'etcd.service' in _services_already_running }}"
+  loop: "{{ ansible_play_hosts }}"
+  loop_control:
+    loop_var: _etcd_node
+  when: _q_etcd.changed
+
 - name: Restart services whose Quadlet changed (skip ones started fresh)
   ansible.builtin.systemd:
     name: "{{ item.svc }}"
     state: restarted
   loop:
-    - { svc: etcd.service, changed: "{{ _q_etcd.changed }}" }
     - { svc: walg-init.service, changed: "{{ _q_walg_init.changed | default(false) }}" }
     - { svc: patroni.service, changed: "{{ _q_patroni.changed }}" }
     - { svc: haproxy.service, changed: "{{ _q_haproxy.changed }}" }

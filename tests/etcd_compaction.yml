@@ -1,0 +1,134 @@
+---
+# Regression coverage for etcd history compaction.
+#
+# The failure this guards against is silent for months. Without
+# --auto-compaction-*, etcd keeps every version of Patroni's keys and grows
+# until it hits its 2 GB quota. It then raises a NOSPACE alarm and rejects
+# every write — but the running primary only renews a lease, so nothing
+# looks wrong. The first sign is the next primary failure: no replica can
+# write the leader key, and the cluster is left without a primary. That
+# happened on a production cluster 127 days after it was built.
+#
+# Run from collection root:
+#   ansible-playbook tests/etcd_compaction.yml
+
+- name: Render etcd with and without history compaction
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  vars:
+    _ec_dir: /tmp/etcd-compaction-test
+    # Node identity the etcd/patroni templates expect from the inventory.
+    node_ip: 10.0.0.11
+    node_ips: [10.0.0.11, 10.0.0.12, 10.0.0.13]
+    etcd_cluster_state: new
+    patroni_postgresql_postgres_password: test-only
+    # Normally derived by shared/_computed_vars.yml; set the two flags the
+    # compose template reads directly.
+    patroni_vip_enabled: true
+    use_vip_manager: true
+    # name → overrides; each is rendered through both engines' templates.
+    _ec_cases:
+      default: {}
+      revision:
+        patroni_etcd_auto_compaction_mode: revision
+        patroni_etcd_auto_compaction_retention: "1000"
+      disabled:
+        patroni_etcd_auto_compaction_mode: ""
+
+  tasks:
+    # Loads every file in patroni's defaults/main/ and vars/main/, the same
+    # variables the role sees. Runs no tasks.
+    - name: Import patroni role variables
+      ansible.builtin.import_role:
+        name: patroni
+        tasks_from: export_vars
+
+    - name: Verify compaction is on by default
+      ansible.builtin.assert:
+        that:
+          - patroni_etcd_auto_compaction_mode == 'periodic'
+          - patroni_etcd_auto_compaction_retention == '1h'
+        fail_msg: >-
+          etcd compaction must default to on. Off, a Patroni cluster fills
+          etcd's quota in months and then can't fail over.
+
+    - name: Recreate render directory
+      ansible.builtin.file:
+        path: "{{ _ec_dir }}"
+        state: "{{ _ec_state }}"
+        mode: "0755"
+      loop: [absent, directory]
+      loop_control:
+        loop_var: _ec_state
+
+    # One template task per case: `vars:` on a looped task is evaluated per
+    # item, so each render sees only its own overrides.
+    - name: Render compose stack per case
+      ansible.builtin.template:
+        src: ../roles/patroni/templates/compose/docker-compose.yml.j2
+        dest: "{{ _ec_dir }}/compose-{{ item.key }}.yml"
+        mode: "0644"
+      loop: "{{ _ec_cases | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+      vars:
+        patroni_etcd_auto_compaction_mode: >-
+          {{ item.value.patroni_etcd_auto_compaction_mode | default('periodic') }}
+        patroni_etcd_auto_compaction_retention: >-
+          {{ item.value.patroni_etcd_auto_compaction_retention | default('1h') }}
+
+    - name: Render etcd Quadlet per case
+      ansible.builtin.template:
+        src: ../roles/patroni/templates/quadlets/etcd.container.j2
+        dest: "{{ _ec_dir }}/etcd-{{ item.key }}.container"
+        mode: "0644"
+      loop: "{{ _ec_cases | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+      vars:
+        patroni_etcd_auto_compaction_mode: >-
+          {{ item.value.patroni_etcd_auto_compaction_mode | default('periodic') }}
+        patroni_etcd_auto_compaction_retention: >-
+          {{ item.value.patroni_etcd_auto_compaction_retention | default('1h') }}
+
+    - name: Verify compose passes the compaction flags to etcd
+      ansible.builtin.assert:
+        that:
+          - "'--auto-compaction-mode=periodic' in _cmd.default"
+          - "'--auto-compaction-retention=1h' in _cmd.default"
+          - "'--auto-compaction-mode=revision' in _cmd.revision"
+          - "'--auto-compaction-retention=1000' in _cmd.revision"
+          - _cmd.disabled | select('match', '--auto-compaction') | list | length == 0
+          # The flags must not displace the cluster flags around them.
+          - _cmd.default[0] == 'etcd'
+          - "'--initial-cluster-token=' ~ patroni_scope in _cmd.default"
+        fail_msg: "compose etcd command: {{ _cmd }}"
+      vars:
+        _cmd:
+          default: "{{ (lookup('file', _ec_dir ~ '/compose-default.yml') | from_yaml).services.etcd.command }}"
+          revision: "{{ (lookup('file', _ec_dir ~ '/compose-revision.yml') | from_yaml).services.etcd.command }}"
+          disabled: "{{ (lookup('file', _ec_dir ~ '/compose-disabled.yml') | from_yaml).services.etcd.command }}"
+
+    # The Quadlet Exec= is one logical line continued with trailing
+    # backslashes. Rebuild it the way systemd does and check the argv, so a
+    # missing or extra backslash (which would cut the command short or glue
+    # the next directive onto it) fails here rather than on a host.
+    - name: Verify the Quadlet Exec line carries the same flags
+      ansible.builtin.assert:
+        that:
+          - "'--auto-compaction-mode=periodic' in _exec.default"
+          - "'--auto-compaction-retention=1h' in _exec.default"
+          - "'--auto-compaction-mode=revision' in _exec.revision"
+          - "'--auto-compaction-retention=1000' in _exec.revision"
+          - _exec.disabled | select('match', '--auto-compaction') | list | length == 0
+          # The continuation must end exactly at the last flag.
+          - _exec.default[-1] == '--initial-cluster-token=' ~ patroni_scope
+          - _exec.disabled[-1] == '--initial-cluster-token=' ~ patroni_scope
+        fail_msg: "Quadlet etcd Exec argv: {{ _exec }}"
+      vars:
+        # Join continued lines, take the Exec= line, split into argv.
+        _exec:
+          default: "{{ (lookup('file', _ec_dir ~ '/etcd-default.container') | regex_replace('\\\\\\n\\s*', ' ') | regex_search('^Exec=(.*)$', '\\1', multiline=True) | first).split() }}"
+          revision: "{{ (lookup('file', _ec_dir ~ '/etcd-revision.container') | regex_replace('\\\\\\n\\s*', ' ') | regex_search('^Exec=(.*)$', '\\1', multiline=True) | first).split() }}"
+          disabled: "{{ (lookup('file', _ec_dir ~ '/etcd-disabled.container') | regex_replace('\\\\\\n\\s*', ' ') | regex_search('^Exec=(.*)$', '\\1', multiline=True) | first).split() }}"

@@ -79,6 +79,39 @@
   register: _q_exporter
   when: mongodb_exporter_enabled | bool
 
+# Per-member exporters (shard mongod / configsvr), one Quadlet each. Empty
+# list by default, so nothing renders unless switched on.
+- name: Render per-member mongodb-exporter Quadlets (when enabled)
+  ansible.builtin.template:
+    src: quadlets/mongodb-exporter-member.container.j2
+    dest: "/etc/containers/systemd/mongodb-exporter-{{ _member.name }}.container"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ mongodb_exporter_members }}"
+  loop_control:
+    loop_var: _member
+    label: "mongodb-exporter-{{ _member.name }}"
+  register: _q_exporter_members
+
+# Switching one off removes its Quadlet and stops the service, which the
+# daemon-reload below then unloads. A no-op on nodes that never had one.
+- name: Remove per-member exporter Quadlets that are switched off
+  ansible.builtin.file:
+    path: "/etc/containers/systemd/mongodb-exporter-{{ item }}.container"
+    state: absent
+  loop: "{{ _mongodb_exporter_member_names | difference(mongodb_exporter_members | map(attribute='name')) }}"
+  register: _q_exporter_members_removed
+
+- name: Stop per-member exporters whose Quadlet was removed
+  ansible.builtin.systemd:
+    name: "mongodb-exporter-{{ item.item }}.service"
+    state: stopped
+  loop: "{{ _q_exporter_members_removed.results | selectattr('changed') | list }}"
+  loop_control:
+    label: "mongodb-exporter-{{ item.item }}"
+  failed_when: false
+
 # systemd-generators only convert .container files at daemon-reload (or boot).
 # Running it after every render is cheap and required when files change.
 - name: Reload systemd to materialize Quadlet units
@@ -89,6 +122,8 @@
     or (_q_configsvr.changed | default(false))
     or (_q_mongos.changed | default(false))
     or (_q_exporter.changed | default(false))
+    or (_q_exporter_members.changed | default(false))
+    or (_q_exporter_members_removed.changed | default(false))
 
 
 # Build the service list to enable + start. Order matters for cold-start
@@ -100,7 +135,9 @@
     _mongodb_services: >-
       {{ ['mongodb-mongod.service']
          + (['mongodb-configsvr.service', 'mongodb-mongos.service'] if mongodb_cluster_type == 'sharded' else [])
-         + (['mongodb-exporter.service'] if mongodb_exporter_enabled | bool else []) }}
+         + (['mongodb-exporter.service'] if mongodb_exporter_enabled | bool else [])
+         + (mongodb_exporter_members | map(attribute='name')
+            | map('regex_replace', '^(.*)$', 'mongodb-exporter-\1.service') | list) }}
 
 - name: Enable + start MongoDB services
   ansible.builtin.systemd:
@@ -142,6 +179,16 @@
     - item.svc != 'mongodb-exporter.service' or (mongodb_exporter_enabled | bool)
     - item.svc != 'mongodb-configsvr.service' or (mongodb_cluster_type == 'sharded')
     - item.svc != 'mongodb-mongos.service' or (mongodb_cluster_type == 'sharded')
+
+# Same rule for the per-member exporters, whose Quadlets render in a loop.
+- name: Restart per-member exporters whose Quadlet changed (skip ones started fresh)
+  ansible.builtin.systemd:
+    name: "mongodb-exporter-{{ item._member.name }}.service"
+    state: restarted
+  loop: "{{ _q_exporter_members.results | default([]) | selectattr('changed') | list }}"
+  loop_control:
+    label: "mongodb-exporter-{{ item._member.name }}"
+  when: ('mongodb-exporter-' ~ item._member.name ~ '.service') in _services_already_running
 
 # Wait only for ports that bind unconditionally at process startup —
 # mongod and configsvr open their listeners as soon as the process is

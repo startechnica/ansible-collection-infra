@@ -25,6 +25,32 @@
     state: absent
   when: not (grafana_alloy_env_has_secrets | bool)
 
+- name: Create Alloy secrets directory (host_metrics module password)
+  ansible.builtin.file:
+    path: "{{ grafana_alloy_secrets_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  when: grafana_alloy_module_password_file_active | bool
+
+- name: Write host_metrics module password file
+  ansible.builtin.copy:
+    content: "{{ grafana_alloy_prometheus_password }}"
+    dest: "{{ grafana_alloy_secrets_dir }}/prometheus_password"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  when: grafana_alloy_module_password_file_active | bool
+  notify: restart grafana_alloy
+
+- name: Remove Alloy secrets directory when the module password file is not used
+  ansible.builtin.file:
+    path: "{{ grafana_alloy_secrets_dir }}"
+    state: absent
+  when: not (grafana_alloy_module_password_file_active | bool)
+
 - name: Render config.alloy
   ansible.builtin.template:
     src: config.alloy.j2

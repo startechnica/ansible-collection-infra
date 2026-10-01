@@ -12,7 +12,7 @@
 # Usage:
 #   ansible-playbook playbooks/mongodb-cluster.yml \
 #     -i inventories/<your-inventory>.yml --ask-vault-pass \
-#     --tags upgrade -e mongodb_image_tag_new=8.2.7
+#     --tags upgrade -e mongodb_image_tag_new=8.3.8
 
 - name: Validate new image tag is specified
   ansible.builtin.assert:
@@ -47,6 +47,10 @@
   community.docker.docker_image:
     name: "{{ _new_image }}"
     source: pull
+  register: _image_pull
+  retries: 10
+  delay: 20
+  until: _image_pull is succeeded
 
 # ── Identify replica set members ─────────────────────────────────────────────
 

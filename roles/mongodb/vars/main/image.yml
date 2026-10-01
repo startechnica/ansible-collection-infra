@@ -1,0 +1,8 @@
+---
+# Computed: fully-qualified container image reference.
+#
+# vars/ precedence, so it can't be overridden from inventory — set the three
+# components in defaults/main/engine.yml instead. Lazily evaluated on each
+# reference rather than set as a fact, so it is available from the moment the
+# role loads, before tasks/main.yml's guard / dispatch logic runs.
+mongodb_image: "{{ mongodb_image_registry }}/{{ mongodb_image_repository }}:{{ mongodb_image_tag }}"

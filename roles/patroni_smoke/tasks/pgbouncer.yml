@@ -1,0 +1,17 @@
+---
+# PgBouncer — connection pooler. Only run when pgbouncer_enabled.
+#   * PB1: :6432 reachable. (Deeper pgbouncer checks — SHOW POOLS, auth
+#     mode — are deferred until a chaos / depth test exists; the TCP
+#     probe is enough for a "is it actually listening" smoke.)
+
+- name: "PB1. PgBouncer :6432 reachable"
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: 6432
+    timeout: 10
+    state: started
+  register: _smoke_pgbouncer
+  failed_when: false
+  when:
+    - patroni_smoke_check_pgbouncer | bool
+    - pgbouncer_enabled | default(false) | bool

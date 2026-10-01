@@ -1,30 +1,79 @@
 ---
 # WAL-G provisioning — password gen + env file render.
-# Caller (configs.yml) gates this include on walg_enabled, so everything
+# Caller (configs.yml) gates this include on patroni_walg_enabled, so everything
 # below runs unconditionally when entered.
 
 - name: Generate walg auth password (idempotent — reuses existing file)
   ansible.builtin.set_fact:
-    walg_auth_password: >-
-      {{ walg_auth_password if walg_auth_password != ''
+    patroni_walg_auth_password: >-
+      {{ patroni_walg_auth_password if patroni_walg_auth_password != ''
          else lookup('password',
-           walg_credentials_file ~ ' length=64 chars=ascii_letters,digits') }}
+           patroni_walg_credentials_file ~ ' length=64 chars=ascii_letters,digits') }}
   run_once: true
   no_log: true
+
+- name: Assert patroni_walg_storage_type is a supported backend
+  ansible.builtin.assert:
+    that:
+      - patroni_walg_storage_type in ['s3', 'gcs']
+    fail_msg: >-
+      patroni_walg_storage_type='{{ patroni_walg_storage_type }}' is not supported. Use 's3'
+      (AWS S3, MinIO, Ceph, any S3-compatible endpoint) or 'gcs' (native
+      Google Cloud Storage).
+    quiet: true
+
+# ── GCS backend: service-account key ────────────────────────────────────
+# WAL-G's GCS driver reads credentials from a JSON key file, not from env
+# vars, so the key gets its own 0600 file that the patroni container mounts
+# read-only. Accepts the raw JSON string from GCP or an already-parsed
+# YAML/JSON mapping, so inventory can vault it either way.
+
+- name: Assert GCS backend has bucket + credentials
+  ansible.builtin.assert:
+    that:
+      - patroni_walg_gcs_bucket | length > 0
+      - patroni_walg_gcs_service_account_json | length > 0
+    fail_msg: >-
+      patroni_walg_storage_type=gcs requires both patroni_walg_gcs_bucket and
+      patroni_walg_gcs_service_account_json (the service-account JSON key — keep it in
+      Ansible Vault). Fill both, or switch patroni_walg_storage_type back to 's3'.
+    quiet: true
+  when: patroni_walg_storage_type == 'gcs'
+
+- name: Deploy WAL-G GCS service-account key
+  ansible.builtin.copy:
+    content: >-
+      {{ patroni_walg_gcs_service_account_json | to_nice_json
+         if patroni_walg_gcs_service_account_json is mapping
+         else patroni_walg_gcs_service_account_json }}
+    dest: "{{ patroni_walg_gcs_service_account_file }}"
+    owner: "{{ patroni_uid }}"
+    group: "{{ patroni_gid }}"
+    mode: "0600"
+  no_log: true
+  notify: restart walg
+  when: patroni_walg_storage_type == 'gcs'
+
+- name: Remove WAL-G GCS service-account key (S3 backend active)
+  ansible.builtin.file:
+    path: "{{ patroni_walg_gcs_service_account_file }}"
+    state: absent
+  notify: restart walg
+  when: patroni_walg_storage_type != 'gcs'
 
 - name: Deploy walg.env
   ansible.builtin.template:
     src: walg.env.j2
-    dest: "{{ walg_dir }}/walg.env"
+    dest: "{{ patroni_walg_dir }}/walg.env"
     mode: "0600"
   notify: restart walg
 
 - name: Deploy walg Dockerfile (local build — no upstream image published)
   ansible.builtin.template:
     src: dockerfiles/walg.Dockerfile.j2
-    dest: "{{ walg_dir }}/Dockerfile"
+    dest: "{{ patroni_walg_dir }}/Dockerfile"
     mode: "0644"
-  when: walg_build_local
+  when: patroni_walg_build_local
 
 # ── Scheduled backup: host-level systemd timer + helper script ──────────
 # Replaces the old in-container sleep loop with the same pattern used by
@@ -37,24 +86,16 @@
     dest: "{{ patroni_dir }}/walg-backup.sh"
     mode: "0755"
 
+# Templated rather than inline: the unit it depends on is engine-specific
+# (patroni.service on podman, docker.service on docker), and a template can be
+# render-tested (tests/walg_cron_unit.yml).
 - name: Install walg-cron.service unit
-  ansible.builtin.copy:
+  ansible.builtin.template:
+    src: walg-cron.service.j2
     dest: /etc/systemd/system/walg-cron.service
     mode: "0644"
-    content: |
-      [Unit]
-      Description=WAL-G scheduled backup (oneshot)
-      Documentation=man:systemd.timer(5)
-      After=patroni.service
-      Requires=patroni.service
-
-      [Service]
-      Type=oneshot
-      ExecStart={{ patroni_dir }}/walg-backup.sh
-      StandardOutput=append:/var/log/walg-backup.log
-      StandardError=append:/var/log/walg-backup.log
   notify: reload systemd
-  when: walg_schedule | length > 0
+  when: patroni_walg_schedule | length > 0
 
 - name: Install walg-cron.timer unit
   ansible.builtin.copy:
@@ -66,14 +107,14 @@
       Documentation=man:systemd.timer(5)
 
       [Timer]
-      OnCalendar={{ walg_schedule }}
+      OnCalendar={{ patroni_walg_schedule }}
       Persistent=true
       Unit=walg-cron.service
 
       [Install]
       WantedBy=timers.target
   notify: reload systemd
-  when: walg_schedule | length > 0
+  when: patroni_walg_schedule | length > 0
 
 - name: Enable and start walg-cron.timer
   ansible.builtin.systemd:
@@ -81,7 +122,7 @@
     enabled: true
     state: started
     daemon_reload: true
-  when: walg_schedule | length > 0
+  when: patroni_walg_schedule | length > 0
 
 - name: Disable walg-cron.timer if scheduling is empty
   ansible.builtin.systemd:
@@ -89,4 +130,4 @@
     enabled: false
     state: stopped
   failed_when: false
-  when: walg_schedule | length == 0
+  when: patroni_walg_schedule | length == 0

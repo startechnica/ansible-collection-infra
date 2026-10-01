@@ -1,0 +1,70 @@
+---
+# Regression coverage for the WAL-G scheduled-backup unit's dependency.
+#
+# walg-cron.service used to hard-code Requires=patroni.service. That unit only
+# exists on podman, where Quadlet generates it. On docker hosts systemd refused
+# to start the backup ("Unit patroni.service not found"), so the timer fired
+# every night and no scheduled backup ever ran. Nothing failed loudly: the
+# timer stayed active and the error only showed in the journal.
+#
+# Run from collection root:
+#   ansible-playbook tests/walg_cron_unit.yml
+
+- name: Render walg-cron.service per container engine
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  vars:
+    _wc_dir: /tmp/walg-cron-unit-test
+    _wc_expect:
+      podman: patroni.service
+      docker: docker.service
+
+  tasks:
+    # Loads every file in patroni's defaults/main/ and vars/main/, the same
+    # variables the role sees. Runs no tasks.
+    - name: Import patroni role variables
+      ansible.builtin.import_role:
+        name: patroni
+        tasks_from: export_vars
+
+    - name: Recreate render directory
+      ansible.builtin.file:
+        path: "{{ _wc_dir }}"
+        state: "{{ _wc_state }}"
+        mode: "0755"
+      loop: [absent, directory]
+      loop_control:
+        loop_var: _wc_state
+
+    - name: Render the unit for each engine
+      ansible.builtin.template:
+        src: ../roles/patroni/templates/walg-cron.service.j2
+        dest: "{{ _wc_dir }}/walg-cron-{{ item.key }}.service"
+        mode: "0644"
+      loop: "{{ _wc_expect | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+      vars:
+        patroni_container_engine: "{{ item.key }}"
+
+    - name: Verify each engine depends on a unit that exists there
+      ansible.builtin.assert:
+        that:
+          - _deps.After == [item.value]
+          - _deps.Requires == [item.value]
+          - "'ExecStart=' ~ patroni_dir ~ '/walg-backup.sh' in _unit"
+          - "'Type=oneshot' in _unit"
+        fail_msg: >-
+          walg-cron.service for {{ item.key }} should order after and require
+          {{ item.value }}; found After={{ _deps.After }},
+          Requires={{ _deps.Requires }}. A Requires= on a unit that doesn't
+          exist on this engine stops every scheduled backup.
+      loop: "{{ _wc_expect | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+      vars:
+        _unit: "{{ lookup('file', _wc_dir ~ '/walg-cron-' ~ item.key ~ '.service') }}"
+        _deps:
+          After: "{{ _unit | regex_findall('^After=(.*)$', multiline=True) }}"
+          Requires: "{{ _unit | regex_findall('^Requires=(.*)$', multiline=True) }}"

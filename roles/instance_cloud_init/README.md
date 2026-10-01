@@ -1,8 +1,10 @@
 # instance_cloud_init
 
-Cloud-init phases for [instance](../instance/). Not a standalone role —
-it's a sub-role invoked per-VM from `instance/tasks/configure_all.yml` via
-`include_role: tasks_from:` inside a loop over `instances_to_create`.
+Cloud-init phases for [instance](../instance/). Has no `main.yml` entry point:
+include one phase at a time with `include_role: tasks_from:`, usually in a
+loop over the VMs (`instance` does this per VM). Each phase imports
+`instance` `export_vars`, so the `instance` defaults and the platform preset
+resolve without `instance` running first.
 
 ## Phases (entry points)
 
@@ -11,9 +13,12 @@ it's a sub-role invoked per-VM from `instance/tasks/configure_all.yml` via
 | `tasks/inject.yml` | Writes `guestinfo.userdata` + `.metadata` + OVF `user-data` vapp properties to the VM. |
 | `tasks/poweron.yml` | Powers the VM on **without** vSphere guest customization (cloud-init reads guestinfo on first boot). |
 | `tasks/post_provision.yml` | Runs per-VM shell commands via VMware Tools (optional; uses `item.post_commands`). |
-| `tasks/cleanup.yml` | Clears guestinfo after successful boot so subsequent boots don't re-run cloud-init. |
+| `tasks/cleanup.yml` | Clears guestinfo after successful boot so subsequent boots don't re-run cloud-init. Run by `deploy.yml` Stage 3.7. |
 
-## Expected inputs (from parent role context)
+## Expected inputs
+
+Each phase that reads these loads the `instance` defaults and vars itself
+through `instance` `export_vars`, so set only what differs from those defaults.
 
 - `item` — current VM dict from the loop (`name`, `networks`, `post_commands`, `cloud_init`, …)
 - `vcenter` — vCenter connection dict

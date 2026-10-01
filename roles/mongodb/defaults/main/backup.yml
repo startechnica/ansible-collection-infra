@@ -1,0 +1,47 @@
+---
+# MongoDB role defaults: backup engine, destination, schedule and retention.
+# The role loads every file in defaults/main/ (see tasks/export_vars.yml).
+#
+# These knobs are SHARED between the mongodump path and the PBM path — one
+# schedule, one retention window, one PITR intent. PBM-specific settings
+# (agent image, storage backend, compression) live in main/pbm.yml.
+
+# Backup engine choice: 'mongodump' runs logical mongodump to local/S3; 'pbm'
+# uses Percona Backup for MongoDB (PBM) for cluster-consistent backups + PITR.
+# Follows mongodb_backup_pbm_enabled by default, so a cluster without PBM keeps
+# its scheduled mongodump backups. 'pbm' without PBM enabled fails preflight.
+mongodb_backup_type: "{{ 'pbm' if mongodb_backup_pbm_enabled | bool else 'mongodump' }}"
+mongodb_backup_dir: "{{ mongodb_root_dir }}/backups"
+mongodb_backup_retain_days: 7
+## @param mongodb_backup_pitr_enabled [default: false] Pass --oplog to
+## mongodump so the backup captures oplog entries for the dump window, making
+## it usable for point-in-time recovery via playbooks/mongodb/pitr.yml. Only
+## valid for replica-set deployments dumped from a mongod — mongodump --oplog
+## is rejected against a mongos, so leave this false on sharded clusters. Also
+## incompatible with per-db/collection backups (full cluster dump only).
+mongodb_backup_pitr_enabled: false
+
+# Scheduled backup — host-level systemd timer + oneshot service, same pattern
+# as patroni's walg-cron.timer (no crond dependency; FCOS doesn't ship it).
+# `mongodb_backup_enabled` is the master switch: false tears down any installed
+# timer/service and skips installation. `mongodb_backup_schedule` is a systemd
+# OnCalendar expression (see `man systemd.time`); Persistent=true catches up a
+# missed run (host offline at the scheduled time) on next boot. On-demand
+# `mongodb_action: backup` works regardless of these knobs.
+mongodb_backup_enabled: true
+mongodb_backup_schedule: "*-*-* 02:00:00"
+
+# Backup destination: 'local' keeps the mongodump on the node only; 's3' also
+# tar-gzips it and uploads via containerised mc (the dump is always written
+# locally first — s3 mode is local-then-push). Applies to both the on-demand
+# `mongodb_action: backup` flow and the scheduled timer. Defaults to 's3' when
+# a mongodb_s3_bucket is configured, else 'local', preserving prior behaviour.
+mongodb_backup_mode: "{{ 's3' if (mongodb_s3_bucket | length > 0) else 'local' }}"
+
+# S3 key prefix (under mongodb_s3_bucket) for MongoDB backups — mongodump
+# archives at this root, PBM under "<prefix>/pbm". Defaults to a
+# cluster-namespaced path so distinct clusters sharing one bucket don't collide.
+# mongodb_cluster_name is a display string ("MongoDB Cluster"), so it's
+# slugified (lowercase, spaces → dashes) into a key-safe segment, e.g.
+# "mongodb-mongodb-cluster".
+mongodb_backup_s3_prefix: "mongodb-{{ mongodb_cluster_name | lower | regex_replace('[^a-z0-9]+', '-') | regex_replace('(^-|-$)', '') }}"

@@ -1,0 +1,12 @@
+---
+# Deliberately empty. Ansible requires `vars_from` to name an existing file, and
+# without it an import loads all of vars/main/. Pass `vars_from: empty.yml` with
+# `defaults_from: main/<file>.yml` to import one defaults file and none of
+# mongodb's computed vars:
+#
+#   - ansible.builtin.import_role:
+#       name: mongodb
+#       tasks_from: export_vars
+#       defaults_from: main/resources.yml
+#       vars_from: empty.yml
+{}

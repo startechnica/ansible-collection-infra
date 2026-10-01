@@ -1,0 +1,20 @@
+# {{ ansible_managed }}
+{#
+  The unit the backup depends on differs by engine. On podman, patroni runs as
+  the Quadlet-generated patroni.service. On docker there is no such unit — the
+  container belongs to docker.service — and a Requires= on a unit that doesn't
+  exist makes systemd refuse to start this one ("Unit patroni.service not
+  found"), so the scheduled backup would silently never run.
+#}
+{% set _walg_cron_dep = 'patroni.service' if patroni_container_engine == 'podman' else 'docker.service' %}
+[Unit]
+Description=WAL-G scheduled backup (oneshot)
+Documentation=man:systemd.timer(5)
+After={{ _walg_cron_dep }}
+Requires={{ _walg_cron_dep }}
+
+[Service]
+Type=oneshot
+ExecStart={{ patroni_dir }}/walg-backup.sh
+StandardOutput=append:/var/log/walg-backup.log
+StandardError=append:/var/log/walg-backup.log

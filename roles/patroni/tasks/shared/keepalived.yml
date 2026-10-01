@@ -6,13 +6,13 @@
 - name: Deploy keepalived.conf
   ansible.builtin.template:
     src: keepalived.conf.j2
-    dest: "{{ keepalived_dir }}/keepalived.conf"
+    dest: "{{ patroni_keepalived_dir }}/keepalived.conf"
     mode: "0644"
   notify: restart keepalived
 
 - name: Deploy keepalived Dockerfile
   ansible.builtin.template:
     src: dockerfiles/keepalived.Dockerfile.j2
-    dest: "{{ keepalived_dir }}/Dockerfile"
+    dest: "{{ patroni_keepalived_dir }}/Dockerfile"
     mode: "0644"
   notify: restart keepalived

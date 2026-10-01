@@ -19,9 +19,9 @@
     owner: postgres
     state: present
     login_host: 127.0.0.1
-    login_port: "{{ postgresql_port }}"
+    login_port: "{{ patroni_postgresql_port }}"
     login_user: postgres
-    login_password: "{{ postgresql_postgres_password }}"
+    login_password: "{{ patroni_postgresql_postgres_password }}"
     login_db: "{{ _target_db }}"
     ssl_mode: disable
   delegate_to: "{{ _patroni_leader_host }}"
@@ -36,9 +36,9 @@
     roles: pgbouncer
     state: present
     login_host: 127.0.0.1
-    login_port: "{{ postgresql_port }}"
+    login_port: "{{ patroni_postgresql_port }}"
     login_user: postgres
-    login_password: "{{ postgresql_postgres_password }}"
+    login_password: "{{ patroni_postgresql_postgres_password }}"
     ssl_mode: disable
   delegate_to: "{{ _patroni_leader_host }}"
   run_once: true
@@ -49,9 +49,9 @@
   community.postgresql.postgresql_query:
     login_db: "{{ _target_db }}"
     login_host: 127.0.0.1
-    login_port: "{{ postgresql_port }}"
+    login_port: "{{ patroni_postgresql_port }}"
     login_user: postgres
-    login_password: "{{ postgresql_postgres_password }}"
+    login_password: "{{ patroni_postgresql_postgres_password }}"
     ssl_mode: disable
     query: |
       SELECT prosecdef, proconfig
@@ -67,9 +67,9 @@
   community.postgresql.postgresql_query:
     login_db: "{{ _target_db }}"
     login_host: 127.0.0.1
-    login_port: "{{ postgresql_port }}"
+    login_port: "{{ patroni_postgresql_port }}"
     login_user: postgres
-    login_password: "{{ postgresql_postgres_password }}"
+    login_password: "{{ patroni_postgresql_postgres_password }}"
     ssl_mode: disable
     query: |
       CREATE OR REPLACE FUNCTION pgbouncer.user_search(uname TEXT)
@@ -98,9 +98,9 @@
     roles: PUBLIC
     state: absent
     login_host: 127.0.0.1
-    login_port: "{{ postgresql_port }}"
+    login_port: "{{ patroni_postgresql_port }}"
     login_user: postgres
-    login_password: "{{ postgresql_postgres_password }}"
+    login_password: "{{ patroni_postgresql_postgres_password }}"
     ssl_mode: disable
   delegate_to: "{{ _patroni_leader_host }}"
   run_once: true
@@ -115,9 +115,9 @@
     roles: pgbouncer
     state: present
     login_host: 127.0.0.1
-    login_port: "{{ postgresql_port }}"
+    login_port: "{{ patroni_postgresql_port }}"
     login_user: postgres
-    login_password: "{{ postgresql_postgres_password }}"
+    login_password: "{{ patroni_postgresql_postgres_password }}"
     ssl_mode: disable
   delegate_to: "{{ _patroni_leader_host }}"
   run_once: true

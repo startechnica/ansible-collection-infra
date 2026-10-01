@@ -20,7 +20,7 @@ chpasswd:
 {% endif %}
 
 users:
-  - name: {{ instance_user_name | default('ubuntu') }}
+  - name: {{ _resolved_instance_user_name }}
     shell: {{ instance_user_shell | default('/bin/bash') }}
     sudo: "{{ instance_user_sudo | default('ALL=(ALL) NOPASSWD:ALL') }}"
 {% if instance_user_password | default('') | length > 0 %}

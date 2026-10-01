@@ -14,23 +14,15 @@
     dest: "{{ patroni_dir }}/etcd-snapshot.sh"
     mode: "0755"
 
+# Templated rather than inline so the engine-specific ordering can be
+# render-tested (tests/etcd_snapshot.yml).
 - name: Install etcd-snapshot.service unit
-  ansible.builtin.copy:
+  ansible.builtin.template:
+    src: etcd-snapshot.service.j2
     dest: /etc/systemd/system/etcd-snapshot.service
     mode: "0644"
-    content: |
-      [Unit]
-      Description=etcd snapshot
-      Documentation=man:etcdctl(3)
-      After=patroni.service
-
-      [Service]
-      Type=oneshot
-      ExecStart={{ patroni_dir }}/etcd-snapshot.sh
-      StandardOutput=append:/var/log/etcd-snapshot.log
-      StandardError=append:/var/log/etcd-snapshot.log
   notify: reload systemd
-  when: etcd_snapshot_schedule | length > 0
+  when: patroni_etcd_snapshot_schedule | length > 0
 
 - name: Install etcd-snapshot.timer unit
   ansible.builtin.copy:
@@ -42,14 +34,14 @@
       Documentation=man:systemd.timer(5)
 
       [Timer]
-      OnCalendar={{ etcd_snapshot_schedule }}
+      OnCalendar={{ patroni_etcd_snapshot_schedule }}
       Persistent=true
       Unit=etcd-snapshot.service
 
       [Install]
       WantedBy=timers.target
   notify: reload systemd
-  when: etcd_snapshot_schedule | length > 0
+  when: patroni_etcd_snapshot_schedule | length > 0
 
 - name: Enable and start etcd-snapshot.timer
   ansible.builtin.systemd:
@@ -57,7 +49,7 @@
     enabled: true
     state: started
     daemon_reload: true
-  when: etcd_snapshot_schedule | length > 0
+  when: patroni_etcd_snapshot_schedule | length > 0
 
 - name: Disable etcd-snapshot.timer if scheduling is empty
   ansible.builtin.systemd:
@@ -65,4 +57,4 @@
     enabled: false
     state: stopped
   failed_when: false # idempotent — unit may not exist on first run
-  when: etcd_snapshot_schedule | length == 0
+  when: patroni_etcd_snapshot_schedule | length == 0

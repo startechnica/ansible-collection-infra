@@ -19,6 +19,8 @@
   loop:
     # Umbrella dir: root:root 0755, system convention for /opt/<service>.
     - { path: "{{ mongodb_root_dir }}", owner: root, group: root, mode: "0755" }
+    # systemd cannot open append targets beneath a missing parent directory.
+    - { path: /var/log/mongodb, owner: root, group: root, mode: "0755" }
     # /opt/mongodb/data and its per-instance children — mongodb-owned.
     - { path: "{{ mongodb_root_dir }}/data" }
     - { path: "{{ mongodb_mongod_data_dir }}" }

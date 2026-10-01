@@ -1,15 +1,16 @@
 ---
-# vip-manager — podman path. Build local image + render Quadlet.
+# vip-manager — podman path. Pull the prebuilt image, then render the Quadlet.
 # Caller (podman/deploy.yml) gates on `patroni_vip_enabled and use_vip_manager`.
 
-- name: Build vip-manager image (etcd-aware VIP, podman)
+# Retried like the other image pulls (see podman/preflight.yml).
+- name: Pull vip-manager image (etcd-aware VIP, podman)
   containers.podman.podman_image:
-    name: "localhost/vip-manager"
-    tag: "v{{ vip_manager_version }}"
-    path: "{{ vip_manager_dir }}"
-    build:
-      format: oci
-      force_rm: true
+    name: "{{ patroni_vip_manager_image }}"
+    pull: true
+  register: _image_pull
+  retries: 10
+  delay: 20
+  until: _image_pull is succeeded
 
 - name: Render vip-manager Quadlet
   ansible.builtin.template:

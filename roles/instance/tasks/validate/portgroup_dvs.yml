@@ -8,6 +8,13 @@
 # whole branch can short-circuit with a single skipping line in the
 # runner output when the standalone-ESXi path is taken instead.
 
+# Performance: this query only feeds `available_networks`, which keeps a
+# single field per portgroup — `portgroup_name`. So we (a) scope to the one
+# DVS named by `portgroup_dvswitch_name` when it's set (omit → all switches,
+# preserving multi-DVS setups that don't set it), turning an all-switch walk
+# into a single-switch lookup, and (b) disable every `show_*` policy fetch,
+# since none of the teaming/port/mac/uplink/vlan detail is read downstream.
+# `portgroup_name` is always returned regardless of the show_* flags.
 - name: Get distributed portgroups
   community.vmware.vmware_dvs_portgroup_info:
     hostname: "{{ vcenter_connect.hostname }}"
@@ -15,6 +22,13 @@
     password: "{{ vcenter_connect.password }}"
     validate_certs: "{{ vcenter_connect.validate_certs }}"
     datacenter: "{{ instance_datacenter }}"
+    dvswitch: "{{ portgroup_dvswitch_name | default(omit, true) }}"
+    show_mac_learning: false
+    show_network_policy: false
+    show_port_policy: false
+    show_teaming_policy: false
+    show_uplinks: false
+    show_vlan_info: false
   delegate_to: localhost
   run_once: true
   register: dvs_pg_info

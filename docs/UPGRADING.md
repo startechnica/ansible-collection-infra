@@ -5,7 +5,384 @@ caveat: **pre-1.0 minor bumps may contain breaking changes**. Read the release
 notes in [../CHANGELOG.md](../CHANGELOG.md) before upgrading; this file
 documents the migration steps for breaking changes.
 
-## Unreleased
+## 1.0.3 (2026-10-02)
+
+### Breaking — every `patroni` role variable is now `patroni_`-prefixed
+
+The companion to the mongodb rename below. **111 variables** are renamed, with
+**no aliases** — an inventory using an old name is silently ignored and the
+role's default applies.
+
+The transformation is mechanical: **prepend `patroni_`**. Whole families move at
+once, so you can migrate by prefix rather than variable by variable:
+
+| Old prefix | New prefix | Count |
+| --- | --- | --- |
+| `postgresql_*` | `patroni_postgresql_*` | 9 |
+| `pg_*` | `patroni_pg_*` | 4 |
+| `etcd_*` | `patroni_etcd_*` | 12 |
+| `haproxy_*` | `patroni_haproxy_*` | 20 |
+| `pgbouncer_*` | `patroni_pgbouncer_*` | 18 |
+| `walg_*` | `patroni_walg_*` | 19 |
+| `postgres_exporter_*` | `patroni_postgres_exporter_*` | 6 |
+| `s3_*` | `patroni_s3_*` | 6 |
+| `tls_*` | `patroni_tls_*` | 5 |
+| `vip_manager_*` | `patroni_vip_manager_*` | 5 |
+| `keepalived_*` | `patroni_keepalived_*` | 2 |
+| `wal_archive_dir` | `patroni_wal_archive_dir` | 1 |
+
+Two entries are **not** a plain prefix:
+
+- **`certs_dir` → `patroni_tls_dir`.** A plain prefix would have collided with
+  the existing `patroni_certs_dir`, which is patroni's *own* leaf-cert directory,
+  not the root of the TLS tree. The new name matches `mongodb_tls_dir`.
+- **`debug` and `dry_run` → `patroni_debug` / `patroni_dry_run`**, each
+  defaulting to the collection-wide value (`{{ debug | default(false) }}`). The
+  role now *reads* those without declaring the bare name, so `-e debug=true`
+  still works and nothing else in the play gets its `debug` overwritten by
+  whichever role's defaults loaded last. Set `patroni_debug` to enable it for
+  patroni alone. (`dry_run` is a reserved switch nothing in the role reads yet.)
+
+Migrate an inventory with:
+
+```bash
+sed -i -E 's/\b(postgresql|pg|etcd|haproxy|pgbouncer|walg|postgres_exporter|s3|tls|vip_manager|keepalived)_/patroni_\1_/g; s/\bwal_archive_dir\b/patroni_wal_archive_dir/; s/\bcerts_dir\b/patroni_tls_dir/' inventories/<inv>.yml
+```
+
+Review the result before committing — that pattern is deliberately broad and
+will also rewrite `mongodb_s3_*` into `mongodb_patroni_s3_*` if the inventory
+sets those, and it does not know which `pg_*`/`tls_*` keys belong to patroni
+versus something else you may have. Check with
+`git diff inventories/<inv>.yml`.
+
+**Ordering note if you are doing both renames:** apply the mongodb migration
+first. `s3_*` belongs to patroni after this change, so an inventory that still
+needs `mongodb_s3_*` derived from the old shared `s3_*` values should get those
+copied out before `s3_*` is renamed away.
+
+### Breaking — every `mongodb` role variable is now `mongodb_`-prefixed
+
+`roles/mongodb/defaults/main.yml` is split into `defaults/main/*.yml` (one file
+per topic, like `patroni`), and the 22 variables that weren't namespaced have
+been renamed. There are **no aliases** — an inventory using an old name is
+silently ignored and the role's default applies.
+
+| Old name | New name |
+| --- | --- |
+| `debug` | `mongodb_debug` (defaults to `debug`, so `-e debug=true` still works) |
+| `mongod_mem_limit_mb` | `mongodb_mongod_mem_limit_mb` |
+| `configsvr_mem_limit_mb` | `mongodb_configsvr_mem_limit_mb` |
+| `mongos_mem_limit_mb` | `mongodb_mongos_mem_limit_mb` |
+| `mongod_oom_score_adj` | `mongodb_mongod_oom_score_adj` |
+| `configsvr_oom_score_adj` | `mongodb_configsvr_oom_score_adj` |
+| `mongos_oom_score_adj` | `mongodb_mongos_oom_score_adj` |
+| `mongod_tls_mode` | `mongodb_mongod_tls_mode` |
+| `configsvr_tls_mode` | `mongodb_configsvr_tls_mode` |
+| `mongos_tls_mode` | `mongodb_mongos_tls_mode` |
+| `ssl_days` | `mongodb_tls_days` |
+| `ssl_ca_days` | `mongodb_tls_ca_days` |
+| `tls_key_type` | `mongodb_tls_key_type` |
+| `tls_key_curve` | `mongodb_tls_key_curve` |
+| `tls_key_size` | `mongodb_tls_key_size` |
+| `s3_endpoint` | `mongodb_s3_endpoint` |
+| `s3_bucket` | `mongodb_s3_bucket` |
+| `s3_access_key` | `mongodb_s3_access_key` |
+| `s3_secret_key` | `mongodb_s3_secret_key` |
+| `s3_region` | `mongodb_s3_region` |
+| `s3_force_path_style` | `mongodb_s3_force_path_style` |
+| `s3_client_image` | `mongodb_s3_client_image` |
+
+#### The one that bites quietly: S3
+
+**`s3_*` and `tls_key_*` are still valid variables — they belong to `patroni`
+now.** So a dual-stack inventory that set them once for both roles keeps
+validating, keeps running, and produces no error. What changes is that mongodb
+stops seeing them:
+
+- `mongodb_s3_bucket` is empty → `mongodb_backup_mode` falls back to `local`,
+  and **scheduled MongoDB backups stop being uploaded to S3.** They still run,
+  still succeed, still write to `mongodb_backup_dir` on the node. Nothing fails.
+- PBM's storage config loses its endpoint and credentials, so `pbm` backups
+  fail at the agent rather than at deploy time.
+
+Check whether you are affected:
+
+```bash
+grep -rlE '^\s*s3_(bucket|endpoint|access_key|secret_key):' inventories/ \
+  | xargs grep -l 'mongodb_enabled: *true'
+```
+
+**Action:** in every inventory that runs mongodb, add a `mongodb_s3_*` set. The
+two roles may point at the same bucket — only the variable names are per-role:
+
+```yaml
+# patroni: WAL-G + etcd snapshots (unchanged)
+s3_endpoint: https://s3.example.com
+s3_bucket: myproject-backups
+s3_access_key: "{{ vault_s3_access_key }}"
+s3_secret_key: "{{ vault_s3_secret_key }}"
+
+# mongodb: mongodump upload + PBM (new)
+mongodb_s3_endpoint: https://s3.example.com
+mongodb_s3_bucket: myproject-backups
+mongodb_s3_access_key: "{{ vault_s3_access_key }}"
+mongodb_s3_secret_key: "{{ vault_s3_secret_key }}"
+```
+
+For an inventory that runs **only** mongodb, rename in place instead of
+duplicating:
+
+```bash
+sed -i -E 's/\bs3_(bucket|endpoint|access_key|secret_key|region|force_path_style):/mongodb_s3_\1:/' inventories/<inv>.yml
+```
+
+#### Why
+
+`tls_key_curve` was defined by **both** roles with **different** values —
+`secp256r1` for mongodb, `secp384r1` for patroni. Both feed certificate
+generation, so whichever role's defaults loaded last silently decided the curve
+of the other's certificates. That one collision is why cross-role variable
+imports (added in 1.0.3 for the memory budget) had to be kept to a single
+`defaults_from` file, and it would have recurred with every new shared name.
+
+After the rename the two roles share **no** variable name at all, which
+`tests/preflight_mem_budget.yml` asserts directly by diffing the two roles'
+defaults directories — alongside a second assertion that nothing in mongodb's
+defaults is unprefixed.
+
+That includes `debug`, which mongodb used to declare like nine other roles do.
+It is now `mongodb_debug`, defaulting to `{{ debug | default(false) }}` — the
+role *reads* the collection-wide value without owning the name, so
+`-e debug=true` still reaches it and nothing else in the play gets its `debug`
+overwritten by whichever role's defaults happened to load last. Same shape as
+`mongodb_container_engine` falling back to `container_engine`. Note that nothing
+in the role reads it yet: no mongodb task has debug-gated output today, so this
+rename changes no behaviour. If you set `debug` for mongodb specifically, set
+`mongodb_debug` instead.
+
+### Breaking — `pgbouncer_default_pool_size` renamed, and PgBouncer pool sizes are now real variables
+
+`templates/pgbouncer.ini.j2` hardcoded `default_pool_size = 50`,
+`min_pool_size = 10`, `reserve_pool_size = 10` and `max_client_conn = 1000`.
+`pgbouncer_default_pool_size` existed as a variable set to `20`, but **nothing
+read it** — the effective pool size has always been 50. All four are now wired
+to variables:
+
+| Setting | Variable | Default |
+| --- | --- | --- |
+| `max_client_conn` | `patroni_pgbouncer_max_client_conn` | `1000` |
+| `default_pool_size` | `patroni_pgbouncer_default_pool_size` | `50` |
+| `reserve_pool_size` | `patroni_pgbouncer_reserve_pool_size` | `10` |
+| `min_pool_size` | `patroni_pgbouncer_min_pool_size` | `10` |
+
+Each default equals the literal the template already rendered, so **the
+rendered config is byte-identical unless you set one of the new variables.**
+
+**Why a rename rather than switching the old name on:** wiring
+`pgbouncer_default_pool_size` up as-is would have dropped every deployment that
+set it from 50 server connections per pool to 20 — a silent capacity cut caused
+by "fixing" the variable. Renaming makes the old key inert, which is what it
+already was.
+
+**Action:** none, unless you set `pgbouncer_default_pool_size` in inventory. If
+you did, it was never taking effect; decide what you actually want and set
+`patroni_pgbouncer_default_pool_size`. To keep today's behaviour, remove the old
+key and set nothing.
+
+### New — PostgreSQL `max_connections` is a variable, and is reconciled post-bootstrap
+
+`max_connections` was the literal `200` in `templates/patroni.yml.j2`. It is now
+`patroni_pg_max_connections`, default `200` — the same value, so nothing changes
+on upgrade.
+
+Two things to know before you change it:
+
+- **It is a postmaster parameter.** `bootstrap.dcs` only seeds the cluster at
+  first init, so the new `shared/reconcile_pg_parameters.yml` pushes the value
+  to DCS via `patronictl edit-config` when it differs — the same bridge
+  `reconcile_archiving.yml` provides for `archive_command`. That leaves every
+  member in `pending_restart`; the role reports this and **does not restart
+  anything**, because a rolling restart is an operator's decision.
+- **The inventory value now wins over an out-of-band `patronictl edit-config`.**
+  If you have hand-tuned `max_connections` on a live cluster, set
+  `patroni_pg_max_connections` to match *before* the next provision run or it
+  will be pushed back to 200. Check with:
+
+  ```bash
+  patronictl -c /etc/patroni/patroni.yml show-config | grep max_connections
+  ```
+
+When lowering the value, restart the leader first: a replica whose
+`max_connections` is below the primary's refuses to start (hot standby requires
+`>=`).
+
+### New — etcd history compaction (recreates etcd)
+
+etcd now starts with `--auto-compaction-mode=periodic
+--auto-compaction-retention=1h` (`patroni_etcd_auto_compaction_mode` /
+`patroni_etcd_auto_compaction_retention`). Before this, etcd kept every version
+of Patroni's keys. It fills its 2 GB quota after about four months, and after that
+the cluster can't elect a new primary. See the CHANGELOG for the details.
+
+**Check every existing cluster first.** An older cluster may already be in `NOSPACE`:
+
+```bash
+E="etcdctl --cacert=/etc/certs/ca.crt --cert=/etc/certs/etcd-server.crt --key=/etc/certs/etcd-server.key"
+docker exec etcd $E endpoint status --cluster -w table   # DB SIZE near 2.1 GB = close to the quota
+docker exec etcd $E alarm list                           # memberID:… alarm:NOSPACE = already hit
+```
+
+If `alarm list` shows `NOSPACE`, recover first:
+[TROUBLESHOOTING: etcd NOSPACE](TROUBLESHOOTING.md#etcd-nospace-alarm--patroni-cant-elect-a-leader).
+
+**Rolling it out.** The flags change the etcd container definition, so etcd is
+recreated. A normal provision run does that **on every member at once**. That
+drops etcd quorum for a few seconds, and Patroni demotes the primary when it
+loses the DCS. On a running cluster, apply it one member at a time instead:
+
+1. See the exact change the role will make: `--check --diff --tags patroni`
+   shows it for `docker-compose.yml` (docker) or `etcd.container` (podman).
+2. On one member, make that same edit, then recreate etcd:
+   - docker: `cd /opt/patroni && docker compose up -d --no-deps etcd`
+   - podman: `systemctl daemon-reload && systemctl restart etcd.service`.
+     `patroni.service` has `Requires=etcd.service`, so **Patroni and PostgreSQL
+     restart with it**. Do the replicas first, then `patronictl switchover`, then
+     the former leader.
+3. Wait for `etcdctl endpoint health --cluster` to report every member healthy,
+   then move on to the next member.
+
+Once every member has the edit, the next provision run renders the same file
+and restarts nothing.
+
+### Changed — etcd snapshots are written through a mount (recreates etcd)
+
+`patroni_etcd_snapshot_dir` (`/opt/etcd/snapshots`) is now bind-mounted into
+the etcd container at `patroni_etcd_snapshot_mount` (`/etcd-snapshots`) and
+owned by etcd's user. etcdctl writes each snapshot straight there, and
+`etcd-snapshot.sh` rotates and uploads on the host. On GCS-backed clusters it
+also uploads to `patroni_walg_gcs_bucket` under `patroni_etcd_gcs_prefix`.
+
+**Rolling it out.** The mount recreates etcd, so the same rule applies as for
+[compaction](#new--etcd-history-compaction-recreates-etcd): a normal provision
+run recreates every member at once. On a running cluster, add the volume to
+one member at a time and wait for `endpoint health --cluster` between members.
+If you're rolling out compaction too, do both in the same recreate.
+
+- docker: add `- /opt/etcd/snapshots:/etcd-snapshots:Z` to the `etcd`
+  service's `volumes`, then `docker compose up -d --no-deps etcd`.
+- podman: add `Volume=/opt/etcd/snapshots:/etcd-snapshots:Z` to
+  `etcd.container`, then `systemctl daemon-reload && systemctl restart
+  etcd.service`. Patroni restarts with it, so follow the replica-first order.
+
+Then `chown 42782:42782 /opt/etcd/snapshots && chmod 0700 /opt/etcd/snapshots`
+(`patroni_etcd_uid`/`gid`; the script also does this on every run). Run the
+provision to install the new script and unit.
+
+**Recreating etcd also clears an old leak.** Deployments from before the
+systemd timer wrote snapshots to the etcd container's `/tmp` and couldn't
+delete them. Check with `du -sh` on the container's writable layer, or just
+watch disk usage. A recreated container starts with an empty writable
+layer, so those files go with it.
+
+### Breaking — `s3_retain_days` removed
+
+The `s3_retain_days` variable is gone. S3 backup retention now always follows
+`mongodb_backup_retain_days`, removing a redundant second knob (its default was
+already `{{ mongodb_backup_retain_days }}`).
+
+**What you'll see:** if you never set `s3_retain_days`, nothing changes —
+behaviour is identical. If you set it to a value *different* from
+`mongodb_backup_retain_days`, remote objects are now pruned on the
+`mongodb_backup_retain_days` window instead.
+
+**Action:** set `mongodb_backup_retain_days` to your desired retention (it
+governs both local and S3 pruning) and remove any `s3_retain_days` from
+inventory.
+
+```yaml
+mongodb_backup_retain_days: 14   # applies to local dumps and S3 objects
+```
+
+### Breaking — `vip_manager` renamed to `patroni_vip_engine`
+
+The Patroni VIP selector moved into the role's `patroni_vip_*` namespace.
+Accepted values are unchanged: `vip-manager` (default), `keepalived`, `none`.
+There is no alias — the role no longer reads `vip_manager`.
+
+**What you'll see:** if you never set `vip_manager`, or set it to `vip-manager`
+or `none`, nothing changes (`none` was only accepted with `patroni_vip_address`
+empty, which disables the VIP on its own). If you set
+`vip_manager: keepalived` and don't rename it, the old key is ignored and the
+next run switches the cluster to vip-manager:
+
+- **docker:** keepalived drops out of the rendered compose file and is removed
+  as an orphan; vip-manager takes over the VIP.
+- **podman:** keepalived is stopped and its Quadlet removed; vip-manager takes
+  over the VIP.
+
+The switch is the same in the other direction, and when the VIP is disabled,
+except that vip-manager leaves its VIP on the interface when stopped, so the
+role removes it once vip-manager is gone.
+
+**Action:** rename the key in inventory before running the role:
+
+```yaml
+patroni_vip_engine: keepalived   # was: vip_manager: keepalived
+```
+
+### Breaking — vip-manager 5.0.0 runs from a prebuilt amd64 image (recreates vip-manager)
+
+vip-manager now runs from a prebuilt image, `patroni_vip_manager_image`
+(default `ghcr.io/firmansyahn/containers/vip-manager:5.0.0-debian-13-r0`),
+instead of an image built on each node from the upstream release tarball. The
+local build is gone, and with it `patroni_vip_manager_version` and
+`patroni_vip_manager_arch`. vip-manager moves from 4.0.0 to 5.0.0.
+
+The image is published for amd64 only. On any other architecture, point
+`patroni_vip_manager_image` at an image you build, or use
+`patroni_vip_engine: keepalived`.
+
+**Why 5.x:** 4.2.0, the last 4.x release, can leave the VIP up on two nodes
+after an etcd watch is cancelled
+([vip-manager#394](https://github.com/cybertec-postgresql/vip-manager/issues/394)),
+and the fix shipped in 5.0.0 only. 5.0.0 drops the deprecated parameter names;
+the config the role renders already uses the current ones.
+
+**What you'll see on the next run:**
+
+- vip-manager is recreated on every node. The old container stops with
+  SIGTERM, which leaves the VIP on the interface, so the leader keeps it apart
+  from a possible moment at startup, before the new vip-manager's first answer
+  from etcd.
+- Nothing else restarts. On docker, earlier versions restarted every container
+  on every node at once after any change to `docker-compose.yml`, PostgreSQL
+  included; this version no longer does, so the changed image tag recreates
+  vip-manager alone.
+- New in 5.0.0: vip-manager removes the VIP when it loses etcd, about 5 seconds
+  into an etcd quorum loss (etcd cancels its watch after 3 election timeouts
+  without a leader). Patroni demotes the primary only after `retry_timeout`, 10
+  seconds, so a quorum loss between the two now takes the VIP down for a few
+  seconds with no failover, where 4.0.0 kept it up.
+- The vip-manager etcd client key goes from mode `0400` to `0440`, still
+  `root:root`. The image runs as uid 1001 with group 0 and reads the key through
+  the group; so does its `curl` healthcheck.
+- `<patroni_vip_manager_dir>/Dockerfile` is deleted, and the previously built
+  `vip-manager:v4.0.0` image (podman: `localhost/vip-manager:v4.0.0`) stays
+  behind; uninstall doesn't remove it either. Remove it with `docker rmi` or
+  `podman rmi` if you want the space back.
+
+**Action:**
+
+- Delete `patroni_vip_manager_version` and `patroni_vip_manager_arch` from
+  inventory; nothing reads them now. To change the release, set
+  `patroni_vip_manager_image`, pinned with a `-r<revision>` tag or a digest,
+  never a branch tag or `latest`.
+- Don't set `no-new-privileges` for the vip-manager container (including
+  `"no-new-privileges": true` in Docker's `daemon.json`): it cancels the file
+  capability the image needs as uid 1001. Where it's forced, point
+  `patroni_vip_manager_image` at an image that runs as root.
+
+## 1.0.2 (2026-06-08)
 
 ### Potentially breaking — `netbox_device_platform` default is now empty
 

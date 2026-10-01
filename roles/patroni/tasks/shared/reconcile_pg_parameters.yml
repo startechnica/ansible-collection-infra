@@ -1,0 +1,91 @@
+---
+# Reconcile max_connections in Patroni's DCS to match patroni_pg_max_connections.
+#
+# Why this exists: bootstrap.dcs.postgresql.parameters in patroni.yml is only
+# consumed at first cluster init. After that the runtime value lives in DCS
+# (etcd) and re-rendering patroni.yml has no effect on it — so making
+# max_connections a variable without this task would have produced a second
+# variable that silently does nothing on every existing cluster, which is the
+# exact defect that wiring up the PgBouncer pool sizes just fixed. Same bridge,
+# same shape, as shared/reconcile_archiving.yml.
+#
+# Idempotent: reads current DCS config first, only pushes edit-config when the
+# values actually differ. Cheap on no-op runs (one show-config exec).
+#
+# What this deliberately does NOT do: restart anything. max_connections is a
+# postmaster parameter, so a change leaves every member in pending_restart until
+# an operator performs a rolling restart. Doing that as a side effect of a
+# provision run would turn a config change into a cluster event.
+#
+# Consequence worth knowing: the inventory value now WINS over an out-of-band
+# `patronictl edit-config`. A cluster hand-tuned to a higher max_connections
+# gets pushed back down on the next run unless the inventory is updated to
+# match — documented on patroni_pg_max_connections in
+# defaults/main/postgresql.yml.
+
+- name: Discover Patroni leader
+  ansible.builtin.include_tasks: "../{{ patroni_container_engine }}/_detect_leader.yml"
+
+- name: Read current Patroni dynamic config from DCS
+  ansible.builtin.command:
+    argv:
+      - "{{ patroni_container_engine }}"
+      - exec
+      - patroni
+      - patronictl
+      - -c
+      - /etc/patroni/patroni.yml
+      - show-config
+  register: _patroni_params_show_config
+  changed_when: false
+  delegate_to: "{{ _patroni_leader_host }}"
+  run_once: true
+
+# Defaulted to the desired value, not to 0: a cluster whose DCS config has no
+# explicit max_connections is running PostgreSQL's own default, and pushing ours
+# would be a real change — but so would treating "absent" as a mismatch on every
+# run. Comparing against the desired value makes absent mean "leave it alone"
+# unless the template's value is what seeded it, which it is on any cluster this
+# role bootstrapped.
+- name: Parse current max_connections
+  ansible.builtin.set_fact:
+    _pg_current_max_connections: >-
+      {{ (_patroni_params_show_config.stdout | from_yaml).postgresql.parameters.max_connections
+         | default(patroni_pg_max_connections, true) }}
+  run_once: true
+
+- name: Push max_connections to DCS via patronictl edit-config
+  ansible.builtin.command:
+    argv:
+      - "{{ patroni_container_engine }}"
+      - exec
+      - patroni
+      - patronictl
+      - -c
+      - /etc/patroni/patroni.yml
+      - edit-config
+      - --force
+      - --set
+      - "postgresql.parameters.max_connections={{ patroni_pg_max_connections }}"
+  delegate_to: "{{ _patroni_leader_host }}"
+  run_once: true
+  when: (_pg_current_max_connections | int) != (patroni_pg_max_connections | int)
+  register: _pg_max_connections_push
+
+# max_connections cannot be applied by a reload, so say so rather than leaving
+# the operator to discover pending_restart in `patronictl list`.
+- name: Report that max_connections needs a rolling restart
+  ansible.builtin.debug:
+    msg:
+      - "max_connections changed in DCS: {{ _pg_current_max_connections }} -> {{ patroni_pg_max_connections }}."
+      - "This is a postmaster parameter, so every member is now in pending_restart"
+      - "and PostgreSQL is STILL RUNNING WITH {{ _pg_current_max_connections }} until restarted."
+      - "Restart replicas first, then the leader (or use `patronictl switchover`"
+      - "to move the leader before restarting it):"
+      - "  patronictl -c /etc/patroni/patroni.yml restart {{ patroni_scope }} <member>"
+      - "A replica whose max_connections is BELOW the primary's refuses to start"
+      - "(hot standby requires >=), so when lowering the value restart the leader first."
+  when:
+    - _pg_max_connections_push is defined
+    - _pg_max_connections_push is changed
+  run_once: true

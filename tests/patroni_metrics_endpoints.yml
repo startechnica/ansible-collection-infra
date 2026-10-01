@@ -1,0 +1,148 @@
+---
+# Regression coverage for the Patroni stack's Prometheus endpoints.
+#
+# HAProxy: the stats listener must route /metrics to the built-in
+# prometheus-exporter service. `stats uri /` matches every path, so the
+# exporter rule has to stay an http-request rule in the same listener (those
+# run before the stats URI match); if it goes, /metrics silently turns back
+# into the HTML stats page and the scrape reads no metrics.
+#
+# etcd: the client port requires a client certificate, so a local scraper reads
+# etcd through a separate plain-HTTP metrics listener
+# (patroni_etcd_listen_metrics_urls). Off by default, which must leave the etcd
+# command exactly as before (a changed command recreates etcd); on, it adds
+# exactly --listen-metrics-urls and leaves client-cert auth alone. etcd runs
+# with host networking on both engines, so a loopback listener is reachable
+# from a host-networked scraper.
+#
+# Run from collection root:
+#   ansible-playbook tests/patroni_metrics_endpoints.yml
+
+- name: Render Patroni metrics endpoints
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  vars:
+    _pm_dir: /tmp/patroni-metrics-endpoints-test
+    # Node identity the etcd/patroni templates expect from the inventory.
+    node_ip: 10.0.0.11
+    node_ips: [10.0.0.11, 10.0.0.12, 10.0.0.13]
+    etcd_cluster_state: new
+    patroni_postgresql_postgres_password: test-only
+    # Normally derived by shared/_computed_vars.yml; set the two flags the
+    # compose template reads directly.
+    patroni_vip_enabled: true
+    use_vip_manager: true
+    patroni_nodes:
+      - { name: pg-1, ipv4: 10.0.0.11 }
+      - { name: pg-2, ipv4: 10.0.0.12 }
+      - { name: pg-3, ipv4: 10.0.0.13 }
+    _pm_metrics_url: http://127.0.0.1:2381
+
+  tasks:
+    # Loads every file in patroni's defaults/main/ and vars/main/, the same
+    # variables the role sees. Runs no tasks.
+    - name: Import patroni role variables
+      ansible.builtin.import_role:
+        name: patroni
+        tasks_from: export_vars
+
+    - name: Verify the etcd metrics listener is off by default
+      ansible.builtin.assert:
+        that:
+          - patroni_etcd_listen_metrics_urls == ''
+          - patroni_haproxy_stats_port | int == 7000
+
+    - name: Recreate render directory
+      ansible.builtin.file:
+        path: "{{ _pm_dir }}"
+        state: "{{ _pm_state }}"
+        mode: "0755"
+      loop: [absent, directory]
+      loop_control:
+        loop_var: _pm_state
+
+    - name: Render haproxy.cfg
+      ansible.builtin.template:
+        src: ../roles/patroni/templates/haproxy.cfg.j2
+        dest: "{{ _pm_dir }}/haproxy.cfg"
+        mode: "0644"
+
+    - name: Verify the stats listener serves /metrics from the prometheus-exporter
+      ansible.builtin.assert:
+        that:
+          - "'mode http' in _stats"
+          - "'bind *:' ~ patroni_haproxy_stats_port in _stats"
+          - "'stats uri /' in _stats"
+          - "'http-request use-service prometheus-exporter if { path /metrics }' in _stats"
+          # The Jinja-only note above the rule must not render.
+          - "'http_process_req_common' not in _cfg"
+        fail_msg: "listen stats section: {{ _stats }}"
+      vars:
+        _cfg: "{{ lookup('file', _pm_dir ~ '/haproxy.cfg') }}"
+        # Text from `listen stats` up to the next `listen` section.
+        _stats: "{{ _cfg | regex_search('(?s)^listen stats\\n.*?(?=^listen )', multiline=True) }}"
+
+    # One template task per case: `vars:` on a looped task is evaluated per
+    # item, so each render sees only its own override.
+    - name: Render etcd Quadlet per case
+      ansible.builtin.template:
+        src: ../roles/patroni/templates/quadlets/etcd.container.j2
+        dest: "{{ _pm_dir }}/etcd-{{ item.name }}.container"
+        mode: "0644"
+      loop:
+        - { name: default, url: "" }
+        - { name: metrics, url: "{{ _pm_metrics_url }}" }
+      loop_control:
+        label: "{{ item.name }}"
+      vars:
+        patroni_etcd_listen_metrics_urls: "{{ item.url }}"
+
+    - name: Render compose stack per case
+      ansible.builtin.template:
+        src: ../roles/patroni/templates/compose/docker-compose.yml.j2
+        dest: "{{ _pm_dir }}/compose-{{ item.name }}.yml"
+        mode: "0644"
+      loop:
+        - { name: default, url: "" }
+        - { name: metrics, url: "{{ _pm_metrics_url }}" }
+      loop_control:
+        label: "{{ item.name }}"
+      vars:
+        patroni_etcd_listen_metrics_urls: "{{ item.url }}"
+
+    # The Quadlet Exec= is one logical line continued with trailing
+    # backslashes. Rebuild it the way systemd does and check the argv, so a
+    # missing or extra backslash fails here rather than on a host.
+    - name: Verify the etcd Quadlet argv
+      ansible.builtin.assert:
+        that:
+          - _exec.default | select('match', '--listen-metrics-urls') | list | length == 0
+          - "'--listen-metrics-urls=' ~ _pm_metrics_url in _exec.metrics"
+          # Exactly one flag added, nothing else changed.
+          - _exec.metrics | reject('equalto', '--listen-metrics-urls=' ~ _pm_metrics_url) | list == _exec.default
+          # Client-cert auth on the client port is untouched.
+          - "'--client-cert-auth=true' in _exec.metrics"
+          - _exec.metrics[-1] == '--initial-cluster-token=' ~ patroni_scope
+          # Host networking: 127.0.0.1 in the container is the host's loopback.
+          - "'Network=host' in lookup('file', _pm_dir ~ '/etcd-metrics.container')"
+        fail_msg: "Quadlet etcd Exec argv: {{ _exec }}"
+      vars:
+        # Join continued lines, take the Exec= line, split into argv.
+        _exec:
+          default: "{{ (lookup('file', _pm_dir ~ '/etcd-default.container') | regex_replace('\\\\\\n\\s*', ' ') | regex_search('^Exec=(.*)$', '\\1', multiline=True) | first).split() }}"
+          metrics: "{{ (lookup('file', _pm_dir ~ '/etcd-metrics.container') | regex_replace('\\\\\\n\\s*', ' ') | regex_search('^Exec=(.*)$', '\\1', multiline=True) | first).split() }}"
+
+    - name: Verify the etcd compose command
+      ansible.builtin.assert:
+        that:
+          - _etcd.default.command | select('match', '--listen-metrics-urls') | list | length == 0
+          - _etcd.metrics.command | reject('equalto', '--listen-metrics-urls=' ~ _pm_metrics_url) | list == _etcd.default.command
+          - _etcd.metrics.command | select('equalto', '--listen-metrics-urls=' ~ _pm_metrics_url) | list | length == 1
+          - "'--client-cert-auth=true' in _etcd.metrics.command"
+          - _etcd.metrics.network_mode == 'host'
+        fail_msg: "compose etcd: {{ _etcd }}"
+      vars:
+        _etcd:
+          default: "{{ (lookup('file', _pm_dir ~ '/compose-default.yml') | from_yaml).services.etcd }}"
+          metrics: "{{ (lookup('file', _pm_dir ~ '/compose-metrics.yml') | from_yaml).services.etcd }}"

@@ -4,6 +4,494 @@ All notable changes to this collection are documented in this file. The format
 is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this collection adheres to [Semantic Versioning](https://semver.org/).
 
+## 1.0.3 (2026-10-02)
+
+### Breaking changes
+
+- **Every variable in the `mongodb` and `patroni` roles is now role-prefixed.**
+  133 variables renamed — 22 in `mongodb`, 111 in `patroni` — with **no
+  aliases**. An inventory using an old name is silently ignored and the role's
+  default applies. Full tables and a migration `sed` per role:
+  [docs/UPGRADING.md](docs/UPGRADING.md).
+
+  The transformation is mechanical (prepend the role name), so whole families
+  move at once:
+
+  | Old prefix | New prefix |
+  | --- | --- |
+  | `mongod_*`, `configsvr_*`, `mongos_*` | `mongodb_mongod_*`, `mongodb_configsvr_*`, `mongodb_mongos_*` |
+  | `postgresql_*`, `pg_*` | `patroni_postgresql_*`, `patroni_pg_*` |
+  | `etcd_*`, `haproxy_*`, `pgbouncer_*`, `walg_*` | `patroni_etcd_*`, `patroni_haproxy_*`, `patroni_pgbouncer_*`, `patroni_walg_*` |
+  | `postgres_exporter_*`, `vip_manager_*`, `keepalived_*` | `patroni_postgres_exporter_*`, `patroni_vip_manager_*`, `patroni_keepalived_*` |
+  | `s3_*`, `tls_*` | `patroni_s3_*` / `mongodb_s3_*`, `patroni_tls_*` / `mongodb_tls_*` |
+
+  Six are not a plain prefix:
+
+  | Old name | New name |
+  | --- | --- |
+  | `ssl_days`, `ssl_ca_days` | `mongodb_tls_days`, `mongodb_tls_ca_days` |
+  | `certs_dir` | `patroni_tls_dir` (a plain prefix would collide with `patroni_certs_dir`, patroni's own leaf-cert directory) |
+  | `vip_manager` | `patroni_vip_engine` |
+  | `debug`, `dry_run` | `mongodb_debug` / `patroni_debug` / `patroni_dry_run`, each defaulting to the collection-wide value so `-e debug=true` still reaches them |
+
+  **The `s3_*` and `tls_key_*` renames fail quietly.** Those names are still
+  valid — they belong to `patroni` now — so a dual-stack inventory that set them
+  once for both roles keeps validating and keeps running while mongodb stops
+  seeing them. `mongodb_s3_bucket` is empty, `mongodb_backup_mode` falls back to
+  `local`, and **scheduled MongoDB backups keep succeeding but stop being
+  uploaded to S3.** Add a `mongodb_s3_*` set (it may name the same bucket)
+  before the next run. If migrating both roles, do mongodb first: `s3_*` becomes
+  patroni's, so copy those values out before renaming them away.
+
+  **Why:** `tls_key_curve` was defined by both roles with *different* values
+  (`secp256r1` vs `secp384r1`) and both feed certificate generation, so
+  whichever role's defaults loaded last silently chose the curve for the other's
+  certificates. The two roles now share no variable name at all — 90 and 165
+  defaults, zero intersection — which `tests/preflight_mem_budget.yml` asserts in
+  both directions, alongside a per-role check that neither has an unprefixed
+  default. A collection-wide name is consumed by declaring a prefixed variable
+  that falls back to it, never by declaring the bare name.
+
+- **Removed `s3_retain_days`.** Remote (S3) backup retention now always follows
+  `mongodb_backup_retain_days` — the var was a needless second knob (its default
+  was already `{{ mongodb_backup_retain_days }}`). Only affects deployments that
+  set it to a value *different* from `mongodb_backup_retain_days`.
+
+- **Renamed `s3_prefix` → `mongodb_backup_s3_prefix`** and changed its default
+  from `mongodb/{{ mongodb_network }}` to a cluster-namespaced, slugified path
+  `mongodb-{{ mongodb_cluster_name | slugify }}`. This **moves the default S3
+  backup path** (mongodump + PBM under `<prefix>/pbm`); existing objects are not
+  migrated. To keep the previous location, set
+  `mongodb_backup_s3_prefix: "mongodb/{{ mongodb_network }}"`.
+
+- **Changed defaults.** Each of these alters a running deployment on its next
+  run:
+
+  | Variable | 1.0.2 | 1.0.3 |
+  | --- | --- | --- |
+  | `mongodb_version` | `8.2.7` | `8.0.28` (LTS; rapid releases are unsupported by PBM 2.15) |
+  | `mongodb_exporter_image` | `percona/mongodb_exporter:0.51.0` | `:0.52.0` |
+  | `mongodb_mongos_mem_limit_mb` | `512` | `1024` |
+  | `patroni_pgbouncer_default_pool_size` | `20`, and **inert** | `50` |
+
+  The pool size needs explaining: `templates/pgbouncer.ini.j2` hardcoded
+  `default_pool_size = 50` and never read the variable, so 50 is what every
+  deployment has always run. The new default preserves that. Wiring the old name
+  up as-is would instead have cut anyone who set it from 50 to 20.
+
+- **`patroni`: vip-manager 5.0.0, pulled as a prebuilt image.** New
+  `patroni_vip_manager_image` defaults to
+  `ghcr.io/firmansyahn/containers/vip-manager:5.0.0-debian-13-r0` (amd64 only);
+  the image is no longer built on the node, and `patroni_vip_manager_version`
+  and `patroni_vip_manager_arch` are removed. 4.x can leave the VIP up on two
+  nodes after an etcd watch is cancelled, fixed in 5.0.0 only. The vip-manager
+  etcd client key is now mode `0440` (`root:root`), so the image's uid 1001 can
+  read it through group 0. The next run recreates vip-manager on every node. See
+  [docs/UPGRADING.md](docs/UPGRADING.md).
+
+### Added
+
+- **`deploy.yml` Stage 7.5 applies `grafana_alloy`** on `cluster_nodes` where
+  `grafana_alloy_enabled=true`, after the data services and the firewall.
+  `--tags alloy` (or `make deploy-alloy INV=<inventory>`) re-applies only the
+  collector. Previously no playbook included the role.
+- **`grafana_alloy` can ship a database VM's full telemetry.** All new options
+  are off by default, and with none of them set `config.alloy`, the Quadlet and
+  the compose file render byte-for-byte as before (golden files in
+  `tests/fixtures/grafana_alloy/`).
+  - `grafana_alloy_host_metrics_module_enabled` takes host metrics from the
+    `startechnica/grafana` `host_metrics.unix` module (`import.git`) instead of
+    the built-in unix exporter, so VMs and Kubernetes nodes running the module
+    produce the same series: job `integrations/unix`, `instance` and `node` =
+    host name. The module owns the remote_write; tenant, credentials and
+    external labels are passed to it. It sends no `cluster_name` unless
+    `grafana_alloy_external_labels` has one. The container gets the host `/` at
+    `/host/root` (`ro,rslave`) and `--pid=host`, as the module requires.
+    Repository, revision, path and pull frequency are variables. The module
+    gets the Prometheus password from a `local.file` with `is_secret = true`
+    (`<root>/secrets/prometheus_password`, 0600, mounted read-only), because
+    Alloy's UI and API show a module argument read with `sys.env()` in clear.
+  - `grafana_alloy_prometheus_tenant_id` sets `X-Scope-OrgID` on the metrics
+    remote_write (the counterpart of `grafana_alloy_loki_tenant_id`).
+  - `grafana_alloy_external_labels` adds labels (e.g. `region`, `zone`) to every
+    metric and every log line.
+  - `grafana_alloy_extra_scrapes` adds local Prometheus scrapes (`job`,
+    `targets`, `scheme`, `tls_insecure_skip_verify`, `metrics_path`,
+    `scrape_interval`, `metric_drop_regex`, static `labels`, `name`; an empty
+    `name` falls back to `job`). Every one
+    sets `instance` to the host name, never `127.0.0.1:<port>`, so exporter
+    series join the host metrics on `instance`. Static `labels` tell apart
+    several targets that share a job and instance, e.g. three MongoDB exporters.
+  - `grafana_alloy_self_metrics_enabled` scrapes Alloy's own `/metrics` as job
+    `integrations/alloy`, so collector-health alerts cover the host.
+  - `tasks/validate_metrics.yml` checks these inputs on provision (label names,
+    unique component names, tenant with the module), so a mistake fails the
+    play instead of Alloy's config load on the host.
+- **`patroni_etcd_listen_metrics_urls`**: a plain-HTTP listener for etcd's
+  `/metrics` and `/health`, e.g. `http://127.0.0.1:2381`. The client port
+  requires a client certificate, so this is how a local scraper reads etcd.
+  Empty (default) leaves the etcd command unchanged. Setting it recreates etcd,
+  so roll it out one member at a time.
+- **Per-member MongoDB exporters** for sharded clusters:
+  `mongodb_exporter_shard_enabled` (`:9217`, the shard mongod) and
+  `mongodb_exporter_configsvr_enabled` (`:9218`, the config server), each
+  connected directly to its process instead of `mongos`, which reports router
+  state only. Off by default. The role creates the exporter's X.509 user on the
+  shard replica set, where a direct connection can see it
+  (`tasks/exporter_users.yml`, member-cert auth like `pbm_setup.yml`). While
+  they are on, every exporter mounts `exporter.pem` with the shared SELinux
+  label (`z`): a private label (`Z`) is rewritten by whichever container starts
+  last and locks the others out. The preflight memory budget counts them. Not
+  `--discovering-mode`: that auto-discovers collections, not cluster members.
+- **The Patroni stack's HAProxy `/metrics` is regression-tested**
+  (`tests/patroni_metrics_endpoints.yml`). The stats listener's
+  `use-service prometheus-exporter` rule has been in the template since
+  2026-09-13 and routes `/metrics` to the exporter even under `stats uri /`,
+  because HAProxy runs `http-request` rules before it matches the stats URI.
+  A host whose `/metrics` still returns the HTML stats page has a `haproxy.cfg`
+  rendered before that date; re-running the role fixes it.
+- **etcd snapshots upload to GCS.** On clusters where WAL-G uses the native
+  GCS backend (`patroni_walg_storage_type: gcs`), each snapshot now also goes to
+  `patroni_walg_gcs_bucket` under `patroni_etcd_gcs_prefix` (default
+  `patroni-etcd-<scope>`), in one folder per host because every member takes
+  its snapshot at the same moment. Before this, snapshots only left the host on S3.
+  The upload runs `wal-g st put` in a throwaway container from
+  `patroni_walg_image` with WAL-G's service-account key, so nothing new is
+  installed. S3 upload is unchanged and still runs whenever `patroni_s3_bucket`
+  is set. Remote retention is left to a bucket lifecycle rule.
+- **Percona Backup for MongoDB (PBM)** — cluster-consistent backups and PITR for
+  **sharded** clusters, where `mongodump --oplog` cannot run through a `mongos`.
+  Opt in with `mongodb_backup_pbm_enabled`; one agent runs beside every
+  data-bearing mongod (two per host when sharded). Agents authenticate by X.509
+  client cert. Storage backend is selectable with `mongodb_backup_storage_type`
+  (`minio` default, `s3`, `gcs`) — `minio` avoids an AWS SDK Go v2 signing header
+  some proxies rewrite into `SignatureDoesNotMatch`, and path-style addressing is
+  the default so S3-compatible gateways work. Continuous oplog slicing follows
+  the shared `mongodb_backup_pitr_enabled` switch; `mongodb_backup_init` lays
+  down the first base backup so PITR can start. Compression is configurable
+  (`mongodb_backup_compression_type`/`_level`, `zstd` level 3 by default).
+  Preflight rejects a MongoDB rapid release, which PBM 2.15 does not support.
+  On the Community `mongo` image PBM does logical backups and logical PITR only.
+  `mongodb_container_engine_bin` pins the absolute engine path the scheduled
+  backup unit's `ExecStart=` needs, since systemd units have no `PATH` lookup;
+  empty (the default) resolves it per host with `command -v`.
+  Design notes: [docs/design/mongodb-pbm.md](docs/design/mongodb-pbm.md).
+- **Patroni standby clusters** (DR / off-site replica) — `patroni_standby_enabled`
+  plus `patroni_standby_primary_{host,port,slot,sslmode,walg_prefix}` and
+  `patroni_standby_create_replica_methods`. The cluster's leader replays a remote
+  primary by streaming with a WAL-G `wal-fetch` fallback instead of accepting
+  writes. `playbooks/patroni/standby-promote.yml` removes the DCS
+  `standby_cluster` block to promote. `patroni_shared_ca_dir` lets primary and
+  standby share one CA so `verify-ca` streaming trusts the primary's cert, and
+  `patroni_replication_cidrs` admits the standby's IPs on the primary. Design
+  notes: [docs/design/patroni-standby-cluster.md](docs/design/patroni-standby-cluster.md).
+- **Native GCS backends.** WAL-G: `patroni_walg_storage_type: gcs` with
+  `patroni_walg_gcs_bucket` / `_prefix` and a service-account key in
+  `patroni_walg_gcs_service_account_json` (vault it — it is a private key). PBM:
+  `mongodb_backup_storage_type: gcs` with `mongodb_backup_gcs_bucket` / `_prefix`
+  / `_service_account`. Both use service-account keys rather than HMAC, which
+  PBM 2.12+ deprecates.
+- **Preflight memory budget.** `roles/preflight/tasks/memory.yml` reports what a
+  host is about to commit against total RAM, warns past a headroom ceiling
+  (`container_mem_headroom_pct`, 15%) and fails past total RAM under
+  `container_mem_strict`. `container_mem_reserved_mb` models a second stack on
+  the same node, which is how a co-located MongoDB + Patroni node gets a true
+  picture: the `mongodb` role imports patroni's own `patroni_mem_request_mb`
+  through a narrow `export_vars` import rather than asking inventory to restate
+  it. Patroni's request is `patroni_pg_shared_buffers` plus a flat
+  `patroni_stack_overhead_mb` (640) for etcd, HAProxy, PgBouncer, the VIP manager
+  and the exporter; mongodb's is the sum of every container cap it places,
+  including the PBM agents and the exporter (`mongodb_exporter_mem_limit_mb`,
+  `mongodb_backup_pbm_mem_limit_mb`). `mongodb_mem_reserved_mb` /
+  `patroni_mem_reserved_mb` remain as additive escape hatches for memory the
+  collection cannot introspect. Regression coverage:
+  `tests/preflight_mem_budget.yml`.
+- **Preflight PostgreSQL connection budget.** `roles/preflight/tasks/pg_connections.yml`
+  reports `(pool + reserve) x pairs + bypass + overhead` against
+  `patroni_pg_max_connections` on every run, warns when it overflows, and fails
+  under `patroni_pg_conn_strict`. PgBouncer's pool sizes are **per (user,
+  database) pair**, so the demand is a product — adding one application database
+  silently adds 60 real backends at the shipped defaults. The pair count derives
+  from `patroni_databases` plus PgBouncer's own `auth_query` pool.
+  `patroni_pg_conn_overhead` (20) accounts for `superuser_reserved_connections`,
+  Patroni's monitoring connection, the exporter, WAL-G and admin sessions.
+  Note that at the shipped defaults the budget runs out at the **third** pair
+  (`3 x 60 + 20 bypass + 20 overhead = 220` against 200), so a cluster with one
+  database and two users already warns. Such clusters work in practice — pools
+  fill on demand and are rarely all saturated — and the defaults are deliberately
+  left at today's effective values rather than tuned to silence it. Regression
+  coverage: `tests/pg_connection_budget.yml`.
+- **`patroni_pg_max_connections`, reconciled post-bootstrap.** PostgreSQL's
+  `max_connections` was a literal `200` in `templates/patroni.yml.j2`, so the
+  ceiling every connection cap was reasoned against could not be read or raised
+  from inventory. `bootstrap.dcs` only seeds a cluster at first init, so
+  `shared/reconcile_pg_parameters.yml` pushes changes to DCS via `patronictl
+  edit-config` — the same bridge `reconcile_archiving.yml` provides for
+  `archive_command`. It is a postmaster parameter, so a change leaves members in
+  `pending_restart`: the role reports the restart order (replicas first; leader
+  first when *lowering*, since a replica below the primary's value refuses to
+  start) and never restarts anything itself. The inventory value wins over an
+  out-of-band `edit-config`.
+- **OOM victim selection across every `mongodb` and `patroni` container.** Each
+  unit sets `oom_score_adj` on both the Quadlet and compose paths, so when the
+  **host** (not a cgroup) runs out of memory the kernel kills something cheap
+  instead of the largest process. Ranked: `patroni_etcd_oom_score_adj` (-900),
+  `patroni_oom_score_adj` (-500), `patroni_keepalived_oom_score_adj` /
+  `patroni_vip_manager_oom_score_adj` (-500), `patroni_haproxy_oom_score_adj` /
+  `patroni_pgbouncer_oom_score_adj` (-300), `mongodb_mongod_oom_score_adj` /
+  `mongodb_configsvr_oom_score_adj` (0), `mongodb_mongos_oom_score_adj` (500),
+  `mongodb_backup_pbm_oom_score_adj` (800), the exporters (1000). Also
+  `patroni_pg_backend_oom_adjust_enabled` / `patroni_pg_backend_oom_score_adj`,
+  which set `PG_OOM_ADJUST_FILE`/`_VALUE` so the postmaster survives and a
+  backend is killed instead. This matters most without swap: FCOS never has any,
+  so the kernel goes straight from "full" to an OOM kill. Regression coverage:
+  `tests/oom_score_adj.yml`.
+- **HAProxy pooler-bypass listener and configurable caps.** A third listener,
+  `pg-direct` (`patroni_haproxy_direct_port`, 5434), reaches the leader's
+  PostgreSQL directly for migrations and admin tooling. Per-listener frontend and
+  per-server caps are variables
+  (`patroni_haproxy_{primary,replicas,direct}_maxconn` and `_server_maxconn`,
+  plus `patroni_haproxy_global_maxconn`); `pg-direct` is held ~50x smaller than
+  the pooled listeners because every connection on it is a real backend
+  competing for `max_connections`. All six timeouts are variables too
+  (`patroni_haproxy_{client,server,connect,tunnel,client_fin,server_fin}_timeout`)
+  and health-check tuning is exposed as `patroni_haproxy_check_{inter,fall,rise,timeout}`.
+- **PgBouncer client TLS, per-database pool modes, and pool sizing.**
+  `patroni_pgbouncer_client_tls_sslmode` (default `prefer`, non-breaking) with
+  `_protocols` and `_ciphers` — PgBouncer terminates client TLS for the whole
+  stack, since HAProxy runs `mode tcp` and relays the handshake through.
+  `patroni_pgbouncer_database_overrides` renders explicit `[databases]` entries
+  so one pooler can serve databases needing different pool modes; the motivating
+  case is GitLab, where Rails requires transaction pooling while Praefect
+  requires session pooling for its LISTEN/NOTIFY connection. Pool sizing is
+  configurable: `patroni_pgbouncer_max_client_conn` (1000),
+  `_default_pool_size` (50), `_reserve_pool_size` (10), `_min_pool_size` (10) —
+  all four were hardcoded in the template.
+- **MongoDB scheduled backups and a backup engine selector.** Provisioning
+  installs a host-level systemd timer (`mongodb-backup.timer`) on one node
+  running the same dump → prune → upload flow on `mongodb_backup_schedule`
+  (daily 02:00), with `Persistent=true` to catch up a missed run; no crond
+  dependency, matching patroni's `walg-cron.timer`. `mongodb_backup_enabled`
+  tears it down. `mongodb_backup_type` selects `mongodump` or `pbm`, following
+  `mongodb_backup_pbm_enabled` by default. `mongodb_backup_mode` selects `local`
+  or `s3`, defaulting to `s3` when a bucket is configured. `pitr.yml` gained
+  `backup_source: s3`, and `mongodb_backup` gained `oplog` and TLS parameters.
+- **Per-cluster S3 prefixes for Patroni backups.** WAL-G and etcd snapshots wrote
+  to bucket-root paths, so two clusters sharing a bucket collided.
+  `patroni_walg_s3_prefix` and `patroni_etcd_s3_prefix` default to
+  cluster-namespaced paths derived from `patroni_scope`.
+- **`export_vars` anchors on `common`, `instance`, `mongodb` and `patroni`.** A
+  task-free entry point that loads a role's variables into the calling play
+  without running it, so a consumer reads the same values the deploy used instead
+  of duplicating defaults. `defaults_from` / `vars_from` narrow the import to one
+  topic file; `vars/empty.yml` skips computed vars entirely. `instance_ignition`
+  and `instance_cloud_init` are standalone roles usable without the `instance`
+  orchestrator.
+- **Two new preflight checks.** The container-engine binary is verified on PATH
+  before engine-specific checks, so a missing CLI reports itself rather than
+  surfacing as "Compose plugin not found". On hosts in `patroni_nodes`, the VIP
+  settings (`patroni_vip_address`, `patroni_vip_mask`, `patroni_vip_engine`) are
+  validated by importing only patroni's VIP defaults.
+- **`butane` is downloaded automatically.** Ignition presets no longer need a
+  pre-installed `butane`: one on `PATH` is used, otherwise the pinned release is
+  fetched (sha256-verified) into `~/.cache/startechnica/butane/`. Air-gapped
+  controllers still need it on `PATH` or a mirror in
+  `ignition_butane_release_url`.
+- **Image pulls are retried.** A large pull failing on one transient network
+  error no longer fails the run.
+- **Content-library OVA import is retried**, and **DVS NIC binding is verified
+  after provision** by a post-configure assert.
+
+### Changed
+
+- **`patroni` no longer turns transparent huge pages off by default.** New
+  `patroni_thp_enabled` (`never`, `madvise` or `always`) sets
+  `/sys/kernel/mm/transparent_hugepage/enabled` now and at boot through
+  `patroni-thp.service`. Empty, the default, leaves THP alone. `shared_buffers`
+  is shared memory, which that knob doesn't cover, and the "disable THP" advice
+  dates from RHEL 6-era kernels whose compaction stalls and 2 MB copy-on-write
+  are gone. **Existing hosts keep THP off:** with `patroni_thp_enabled` empty,
+  the role leaves the `disable-thp.service` an earlier version installed in
+  place. Set `patroni_thp_enabled: never` to keep managing it, or remove the
+  unit to fall back to the kernel default (`madvise` on Ubuntu and Fedora
+  CoreOS). On a node that also
+  runs MongoDB, leave it empty; `mongodb_thp_enabled` decides there.
+- **Both roles' defaults and vars are split into one file per topic.**
+  `roles/patroni/defaults/main.yml` → `defaults/main/*.yml` (14 files) and
+  `roles/mongodb/defaults/main.yml` → `defaults/main/*.yml` (12 files), with
+  `vars/main.yml` split the same way in both. This is what lets a consumer import
+  one slice with `defaults_from` instead of every variable the role has. Each
+  role's `main/resources.yml` (mongodb) and `main/postgresql.yml` (patroni) is
+  deliberately self-contained so the memory budget is importable from a single
+  file.
+- **The MongoDB kernel-compatibility gate now applies to every version.** The
+  vendored-TCMalloc/rseq incompatibility with Linux `>= 6.19` is open-ended and
+  affects the 8.0 LTS line including `8.0.28`, so the gate is independent of
+  `mongodb_version`. Preflight fails before starting containers rather than
+  letting mongod crash-loop into a misleading port-listener timeout. The former
+  version-gated `mongodb_kernel_guard_min_version` and `mongodb_fixed_kernel` are
+  retained but **inert** for inventory compatibility. Resolution is a kernel
+  `< 6.19` or a non-affected OS; choosing an older MongoDB version is not one.
+- **Patroni HAProxy servers are named by node hostname.** The `server` lines
+  carried positional names, which surfaced in the stats page and the Prometheus
+  `server` label; addresses are unchanged.
+- **`grafana_alloy`'s engine fallback follows `instance_platform_preset`**
+  through `common`'s resolved engine rather than defaulting to podman
+  independently.
+- **`deploy.yml` registers VMs in NetBox in its own play** (Stage 2.1).
+- **`instance` no longer copies `instance_folder_path` and `ignition_tmp_dir`**
+  into every host's vars.
+- **Raised minimum `netbox.netbox` to `>=3.23.0`** and `community.mongodb` to a
+  newer floor.
+
+### Fixed
+
+- **`patroni`: a docker-compose.yml change no longer restarts every container
+  on every node at once.** Rendering a changed compose file notified a handler
+  that ran `docker compose restart` across the whole stack, so any change to
+  the file, a single image tag included, restarted PostgreSQL on all nodes at
+  the same time. `docker compose up` already recreates exactly the services
+  whose definition changed, so the handler is gone.
+- **`patroni`: deploy restarts etcd one node at a time.** A changed etcd
+  definition (docker) or Quadlet (podman) restarted every member at once,
+  losing quorum. Each member is now restarted on its own and must report healthy
+  before the next one goes; if it doesn't, the play stops. A new cluster still
+  starts all members without waiting.
+- **`patroni`: uninstall, disabling the VIP and switching `patroni_vip_engine`
+  release the VIP.** vip-manager removes the VIP only on SIGINT, and both
+  engines stop it with SIGTERM, so a node whose vip-manager was removed kept the
+  address on its interface for good, and answered on it next to the new leader.
+  The role now removes the VIP from the node once vip-manager is stopped, taking
+  the address from vip-manager's config on disk. On podman, switching engines
+  also stops and removes the old engine's Quadlet, which used to keep running
+  next to the new one.
+- **`patroni` (podman): stopping etcd no longer stops vip-manager.** Its Quadlet
+  required `etcd.service`, so stopping this node's etcd stopped vip-manager and
+  left the VIP with nothing to move it. vip-manager reads every etcd member, so
+  it now only orders itself after the local one.
+- **`patroni`: `renew-certs` restarts vip-manager.** It reads its etcd client
+  certificate only at start, so it kept the old one, and once that expired it
+  could no longer reach etcd.
+- **`mongodb`: transparent huge pages follow MongoDB's advice for the deployed
+  version.** The role always turned THP off, which is right for 7.0 and earlier,
+  but since 8.0 MongoDB's TCMalloc wants it on. New `mongodb_thp_enabled` is
+  the THP mode (`never`, `madvise` or `always`; empty leaves THP alone). It
+  defaults to `always` for `mongodb_version` 8.0+ and `never` for 7.0 and
+  earlier. `madvise` and `always` come with the rest of MongoDB's recipe
+  (`defrag=defer+madvise`, `khugepaged/max_ptes_none=0`,
+  `vm.overcommit_memory=1`); `never` also sets `defrag=never`. The values are
+  applied without restarting mongod, and at boot by `mongodb-thp.service`, which
+  replaces `disable-thp.service`.
+
+  **Next to Patroni nothing changes by default:** the default is `never`,
+  because THP is host-wide and `always` grows every process's resident memory
+  on a node already split between two stacks. Set `madvise` or `always` there
+  to opt in. `vm.overcommit_memory` is never set next to Patroni, which sets
+  strict overcommit on hosts with swap.
+- **`mongodb`: preflight rejects a mongod or config server memory limit under
+  512 MB.** The WiredTiger cache is half the container limit, and mongod refuses
+  to start with a cache under 0.25 GB, so a smaller limit deployed and then
+  crash-looped.
+- **`grafana_alloy`: a password that references an undefined variable now
+  fails the play.** `grafana_alloy_env_has_secrets` reads each password through
+  `default('')`, which also swallowed an unresolvable reference such as
+  `"{{ vault_x }}"` with the vault file not loaded. The role then removed
+  `alloy.env` and Alloy sent an empty password, which surfaced only as rejected
+  writes. Provision now resolves each password first and fails, naming the
+  missing variable.
+- **etcd snapshots could fill the host disk, and a failed snapshot looked
+  like a success.** Clusters deployed with older versions of the role write
+  each snapshot to the etcd container's `/tmp` and then run `exec etcd rm`.
+  The etcd image is distroless, so the `rm` failed on every run, with the
+  error sent to `/dev/null`. The copies grew with the etcd database until a
+  production node's disk filled (220 GB). The current script staged snapshots
+  in etcd's own data directory instead. It also exited 0 when etcdctl failed,
+  so a timer that never produced a snapshot still looked healthy. Now
+  `patroni_etcd_snapshot_dir` is bind-mounted into etcd at
+  `patroni_etcd_snapshot_mount` (`/etcd-snapshots`) and owned by etcd's user,
+  so etcdctl writes each snapshot straight to its final place. Rotation (the
+  newest `patroni_etcd_snapshot_retain`), cleanup of interrupted `.part`
+  files and of the old staging files, and uploads all run on the host. The
+  script exits non-zero when the snapshot or an upload fails. The unit
+  (`etcd-snapshot.service`, now a template) orders after `etcd.service` on
+  podman and `docker.service` on docker. It previously ordered after
+  `patroni.service`, which doesn't exist on docker. The mount recreates etcd;
+  see [docs/UPGRADING.md](docs/UPGRADING.md). Regression coverage:
+  `tests/etcd_snapshot.yml`, which runs the rendered script against a
+  stand-in engine and checks what it leaves on disk.
+- **Patroni clusters lost the ability to fail over after about four months.**
+  etcd ran without `--auto-compaction-*`, so it kept every version of the
+  member, status and leader keys Patroni rewrites every 10 s from each node.
+  The backend grew by roughly 18 MB a day until it reached etcd's default 2 GB
+  quota. etcd then raised a `NOSPACE` alarm and rejected every write. The
+  running primary only renews a lease, so it stayed up and nothing looked
+  wrong. When the primary next failed, no replica could write the leader key
+  and the cluster was left with no primary. This happened on a production
+  cluster 127 days after it was built. etcd now compacts to one hour of history
+  by default: `patroni_etcd_auto_compaction_mode` (`periodic`) and
+  `patroni_etcd_auto_compaction_retention` (`1h`), rendered on both the
+  compose and Quadlet paths. Set the mode to `""` to leave compaction off.
+  Existing clusters pick it up by recreating etcd one member at a time. A
+  cluster that is already in `NOSPACE` also needs a one-off compact, defrag and
+  disarm. Both steps are in [docs/UPGRADING.md](docs/UPGRADING.md) and
+  [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md). Regression coverage:
+  `tests/etcd_compaction.yml`.
+- **Scheduled WAL-G backups never ran on docker hosts.** `walg-cron.service`
+  hard-coded `Requires=patroni.service`, and that unit only exists where Quadlet
+  generates it (podman). On docker, systemd refused to start the backup
+  (`Unit patroni.service not found`) every night while the timer stayed active,
+  so the only sign was in the journal. The unit is now a template that depends
+  on `patroni.service` on podman and `docker.service` on docker. Regression
+  coverage: `tests/walg_cron_unit.yml`.
+- **HAProxy dropped idle LISTEN/NOTIFY sessions and long-running statements
+  after 5 minutes.** `timeout client` / `timeout server` were hardcoded to
+  `300s`, and in `mode tcp` those are *inactivity* timers. A LISTEN/NOTIFY client
+  is idle by design, so it was disconnected every 5 minutes of quiet — and
+  because NOTIFY is not queued for absent listeners, every notification
+  published during the gap was lost with no error until the client next touched
+  the socket. The same timer cut any statement running longer than 300s without
+  sending bytes (`CREATE INDEX`, analytical queries, `pg_dump` through the
+  proxy), which PgBouncer deliberately does not cap (`query_timeout = 0`). The
+  existing `option clitcpka` / `srvtcpka` keepalives did not help: a keepalive
+  probe carries no application data, so it does not reset the inactivity timers.
+  Adds `timeout tunnel` (24h), which in `mode tcp` supersedes client/server once
+  a connection is established — setup stays bounded by the unchanged 300s while
+  established sessions get a long leash, which is safe precisely because the
+  keepalives reap dead peers in ~2 min. Regression coverage:
+  `tests/haproxy_timeouts.yml`.
+- **Patroni replicas logged `no pg_hba.conf entry for replication ... 127.0.0.1`
+  on every HA cycle.** Patroni opens a replication connection to its own node
+  over loopback, and `all` pg_hba rules never match replication connections.
+  Adds loopback `replication replicator` rules (`scram-sha-256` when
+  `patroni_postgresql_replication_password` is set, `cert` otherwise) plus `::1`
+  twins of the local `all` rules. These live in `bootstrap.pg_hba`, so they apply
+  only to newly bootstrapped clusters — add them by hand on an existing cluster.
+- **Patroni's rendered `docker-compose.yml` was invalid YAML whenever WAL-G was
+  enabled** (docker engine only). The patroni service's `depends_on` mixed the
+  short list form with the `walg-init` mapping entry carrying
+  `condition: service_completed_successfully` — a block sequence and a block
+  mapping at the same level, which no YAML parser accepts, so `docker compose up`
+  refused the file. Both entries now use the long mapping form. The podman
+  (Quadlet) path was never affected.
+- **`mongodump --oplog` against a sharded cluster is a dead flag** — accepted and
+  silently ignored, producing a backup that looks PITR-capable and is not. Now
+  caught at preflight.
+- **MongoDB day-2 backup playbooks were docker-only.** `pitr.yml` and
+  `verify-backup.yml` assumed the docker engine and failed on podman hosts.
+- **etcd snapshot cleanup failed on the distroless etcd image**, which has no
+  shell for the cleanup step.
+- **Backups passed `--tls` for `preferTLS`**, breaking on older `mongodump`.
+- **S3 credential injection broke on keys starting with a digit.**
+- **Transient `IncompleteRead` on the post-rebind NIC re-probe** failed provision
+  runs.
+- **Distributed-portgroup NICs deployed disconnected** — content-library OVFs
+  bind NICs at import time and needed an explicit reconnect.
+- **FCOS auto-import never ran**, dead since it was added: the gate required a
+  variable that was never set on that path.
+- **FCOS metadata fetch built `streams/.json`** (a 404) when the preset was
+  unset.
+- **FCOS layered `python3` on provision-only VMs** that never run a service role.
+
 ## 1.0.2 (2026-06-08)
 
 ### Breaking changes

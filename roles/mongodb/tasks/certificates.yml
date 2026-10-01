@@ -16,9 +16,9 @@
 - name: Generate CA private key
   community.crypto.openssl_privatekey:
     path: "{{ mongodb_local_certs_dir }}/ca.key"
-    type: "{{ tls_key_type }}"
-    curve: "{{ tls_key_curve if tls_key_type == 'ECC' else omit }}"
-    size: "{{ tls_key_size if tls_key_type == 'RSA' else omit }}"
+    type: "{{ mongodb_tls_key_type }}"
+    curve: "{{ mongodb_tls_key_curve if mongodb_tls_key_type == 'ECC' else omit }}"
+    size: "{{ mongodb_tls_key_size if mongodb_tls_key_type == 'RSA' else omit }}"
   delegate_to: localhost
   run_once: true
   become: false
@@ -48,7 +48,7 @@
     privatekey_path: "{{ mongodb_local_certs_dir }}/ca.key"
     csr_path: "{{ mongodb_local_certs_dir }}/ca.csr"
     provider: selfsigned
-    selfsigned_not_after: "+{{ ssl_ca_days }}d"
+    selfsigned_not_after: "+{{ mongodb_tls_ca_days }}d"
   delegate_to: localhost
   run_once: true
   become: false
@@ -84,6 +84,15 @@
     client_cn: "{{ mongodb_exporter_cn }}"
     client_name: exporter
   when: mongodb_exporter_enabled | bool
+
+# ── Generate PBM agent client cert ──
+
+- name: Generate PBM agent certificate
+  ansible.builtin.include_tasks: _generate_client_cert.yml
+  vars:
+    client_cn: "{{ mongodb_backup_pbm_cn }}"
+    client_name: pbm-agent
+  when: mongodb_backup_pbm_enabled | bool
 
 # ── Distribute to remote hosts ──
 
@@ -134,3 +143,16 @@
     - exporter.pem
     - exporter.crt
   when: mongodb_exporter_enabled | bool
+
+- name: Distribute PBM agent cert
+  ansible.builtin.copy:
+    src: "{{ mongodb_local_certs_dir }}/{{ inventory_hostname }}/{{ item }}"
+    dest: "{{ mongodb_tls_dir }}/{{ item }}"
+    owner: "{{ mongodb_uid }}"
+    group: "{{ mongodb_gid }}"
+    mode: "{{ '0400' if item.endswith('.key') or item.endswith('.pem') else '0444' }}"
+  loop:
+    - pbm-agent.key
+    - pbm-agent.pem
+    - pbm-agent.crt
+  when: mongodb_backup_pbm_enabled | bool

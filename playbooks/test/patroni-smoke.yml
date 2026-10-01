@@ -1,0 +1,27 @@
+---
+# Thin wrapper around the startechnica.infra.patroni_smoke role.
+# All checks live in roles/patroni_smoke/tasks/*.yml. This file is the
+# canonical entry point — scripts/smoke.sh dispatches to it.
+#
+# The `patroni_nodes` group is built at runtime from instances[] by
+# patroni/_setup.yml (the same prelude the deploy playbooks use), so the
+# inventory does not need a static group.
+
+- name: "Setup patroni hosts (build group from instances)"
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: "Build host group from instances"
+      ansible.builtin.include_tasks: ../patroni/_setup.yml
+
+- name: "Patroni smoke test"
+  hosts: patroni_nodes
+  gather_facts: true
+  become: true
+  pre_tasks:
+    - name: "Inherit localhost vars"
+      ansible.builtin.include_role:
+        name: common
+        tasks_from: inherit_localhost_vars
+  roles:
+    - role: patroni_smoke

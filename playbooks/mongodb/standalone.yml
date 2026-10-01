@@ -21,7 +21,7 @@
 #   ansible_ssh_private_key_file: <path>   # or ansible_password
 #
 # Role variables go in group_vars/mongodb_nodes.yml (or host_vars). The
-# defaults in roles/mongodb/defaults/main.yml cover most knobs; the usual
+# defaults in roles/mongodb/defaults/main/ cover most knobs; the usual
 # minimum overrides are:
 #   mongodb_admin_password: "{{ vault_mongodb_admin_password }}"
 #   mongodb_cluster_type:  sharded     # or replicaset

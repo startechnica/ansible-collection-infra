@@ -1,0 +1,30 @@
+---
+# Export anchor — intentionally does no work.
+#
+# Importing this role with `tasks_from: export_vars` loads the common role's
+# defaults/main.yml + vars/main.yml (_platform_map, _platform_preset, the
+# _resolved_* platform-preset fallbacks, _vsphere_guest_id_platform_map) into
+# the calling play WITHOUT running any tasks or publishing host facts. Use it
+# instead of resolve_platform_preset when a role only needs to read them.
+#
+# Usage:
+#   - ansible.builtin.import_role:
+#       name: common
+#       tasks_from: export_vars
+#
+# `include_role` only exposes the vars with `public: true`.
+#
+# Read the `_resolved_*` names, not the bare container_engine /
+# instance_init_type / instance_user_name / content_library_name /
+# content_library_item_name / ignition_channel. Each `_resolved_*` reads its
+# bare name, so republishing it under that name here is a recursive template;
+# only resolve_platform_preset (set_fact) overwrites the bare names.
+#
+# The `_resolved_*` values are templated per host from what that host sees:
+# `instance_platform_preset` plus the bare name. Keep both in `all.vars` — a
+# host that can't see the preset falls back to the role default
+# (fedora-coreos → ignition / podman / core).
+#
+# Imported vars are visible to every host in the play and last only for that
+# play, so import again in each play that needs them. Keep this file
+# task-free; its only job is to trigger var loading.

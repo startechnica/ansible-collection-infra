@@ -1,6 +1,13 @@
 ---
 # Power on (ignition — no guest customization)
 
+# Loads the instance defaults and vars plus common's _resolved_* values, so
+# this phase also works outside the instance role. Runs no tasks.
+- name: Import instance role vars
+  ansible.builtin.import_role:
+    name: instance
+    tasks_from: export_vars
+
 - name: "Power on {{ item.name }}"
   community.vmware.vmware_guest:
     hostname: "{{ vcenter_connect.hostname }}"

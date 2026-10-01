@@ -1,0 +1,76 @@
+---
+# Validate backend credentials and the optional metrics inputs: external
+# labels, the host_metrics module, the self scrape and the extra scrapes. Every
+# check passes on role defaults, so inventories that set none of these are
+# unaffected. A bad value here would otherwise surface only on the host: as an
+# Alloy config error after the container restarted with it, or as rejected
+# writes.
+
+# grafana_alloy_env_has_secrets reads each password through default(''), which
+# also swallows a reference to an undefined variable (say, a vault file that
+# wasn't loaded): the role would then remove alloy.env and Alloy would send an
+# empty password. Resolving each password here, without a default, fails on
+# that instead, naming the missing variable.
+- name: Resolve backend passwords
+  ansible.builtin.assert:
+    that:
+      - grafana_alloy_loki_password is string
+      - grafana_alloy_prometheus_password is string
+      - grafana_alloy_tempo_password is string
+    quiet: true
+
+- name: Compute scrape component names
+  ansible.builtin.set_fact:
+    # Same derivation as config.alloy.j2: `name`, else `job`, with every
+    # character outside [A-Za-z0-9_] replaced by "_". grafana_alloy_scrapes is
+    # the self scrape (when on) followed by grafana_alloy_extra_scrapes.
+    _ga_scrape_names: >-
+      {{ grafana_alloy_scrapes
+         | map(attribute='name', default='')
+         | zip(grafana_alloy_scrapes | map(attribute='job', default=''))
+         | map('select') | map('list')
+         | map('default', [''], true) | map('first')
+         | map('regex_replace', '[^A-Za-z0-9_]', '_')
+         | list }}
+    # Every static target label key across all scrapes.
+    _ga_scrape_label_keys: >-
+      {{ grafana_alloy_scrapes
+         | map(attribute='labels', default={})
+         | map('dict2items') | flatten
+         | map(attribute='key')
+         | list }}
+
+- name: Validate external labels, host_metrics module and extra scrapes
+  ansible.builtin.assert:
+    that:
+      # Label names must be Prometheus label names (also valid Alloy keys).
+      - grafana_alloy_external_labels is mapping
+      - grafana_alloy_external_labels.keys() | reject('match', '^[a-zA-Z_][a-zA-Z0-9_]*$') | list | length == 0
+      # The module always sends X-Scope-OrgID; an empty tenant is rejected by Mimir.
+      - not (grafana_alloy_host_metrics_module_active | bool) or (grafana_alloy_prometheus_tenant_id | length > 0)
+      - grafana_alloy_extra_scrapes is sequence
+      - grafana_alloy_scrapes | map(attribute='job', default='') | select('equalto', '') | list | length == 0
+      - grafana_alloy_scrapes | map(attribute='targets', default=[]) | map('length') | select('equalto', 0) | list | length == 0
+      - grafana_alloy_scrapes | map(attribute='scheme', default='http') | reject('in', ['http', 'https']) | list | length == 0
+      # Component labels: valid Alloy identifiers, unique, and not the
+      # built-in node scrape's label.
+      - _ga_scrape_names | reject('match', '^[A-Za-z_][A-Za-z0-9_]*$') | list | length == 0
+      - _ga_scrape_names | unique | length == _ga_scrape_names | length
+      - "'node' not in _ga_scrape_names"
+      # Static labels: Prometheus label names; instance and job are set by the role.
+      - _ga_scrape_label_keys | reject('match', '^[a-zA-Z_][a-zA-Z0-9_]*$') | list | length == 0
+      - _ga_scrape_label_keys | select('match', '^__') | list | length == 0
+      - "'instance' not in _ga_scrape_label_keys"
+      - "'job' not in _ga_scrape_label_keys"
+    fail_msg: >-
+      grafana_alloy: invalid metrics settings. grafana_alloy_external_labels
+      keys and extra-scrape `labels` keys must be Prometheus label names (not
+      instance, job or __*). With grafana_alloy_host_metrics_module_enabled,
+      set grafana_alloy_prometheus_tenant_id. Every grafana_alloy_extra_scrapes
+      entry needs `job` and a non-empty `targets` list, `scheme` http or https,
+      and a component name (`name`, else `job`) that is unique and not "node";
+      set `name` on entries that share a job (the self scrape,
+      grafana_alloy_self_metrics_enabled, is named integrations_alloy).
+      Names: {{ _ga_scrape_names }}.
+    success_msg: "grafana_alloy metrics settings OK."
+    quiet: "{{ not (debug | default(false) | bool) }}"

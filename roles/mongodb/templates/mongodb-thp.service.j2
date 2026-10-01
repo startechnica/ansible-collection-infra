@@ -1,0 +1,17 @@
+[Unit]
+Description=Transparent huge pages {{ mongodb_thp_enabled }} for MongoDB
+# Run before basic.target so the settings are in place before Docker or the
+# Quadlet units start mongod.
+DefaultDependencies=no
+After=sysinit.target local-fs.target
+Before=basic.target
+
+[Service]
+Type=oneshot
+{% for path, value in mongodb_thp_settings.items() %}
+ExecStart=/bin/sh -c '[ ! -f {{ path }} ] || echo {{ value }} > {{ path }}'
+{% endfor %}
+RemainAfterExit=yes
+
+[Install]
+WantedBy=basic.target

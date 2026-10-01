@@ -31,10 +31,9 @@
 - name: Report SELinux AVC denials (if any)
   ansible.builtin.debug:
     msg:
-      - "════════════════════════════════════════════════════════════════════"
       - "  SELinux AVC denials observed since boot — review before enforcing"
       - "════════════════════════════════════════════════════════════════════"
-      - "{{ _selinux_avc.stdout_lines | default([]) }}"
+      # - "{{ _selinux_avc.stdout_lines | default([]) }}"
       - "════════════════════════════════════════════════════════════════════"
       - "  Hint: pipe to audit2allow on the host for a candidate policy:"
       - "    sudo ausearch -m AVC,USER_AVC --start boot | audit2allow -m local_mongodb"

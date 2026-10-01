@@ -11,7 +11,7 @@ restapi:
 etcd3:
   hosts:
 {% for ip in node_ips %}
-    - {{ ip }}:{{ etcd_client_port }}
+    - {{ ip }}:{{ patroni_etcd_client_port }}
 {% endfor %}
   protocol: https
   cacert: /etc/certs/ca.crt
@@ -24,6 +24,25 @@ bootstrap:
     loop_wait: 10
     retry_timeout: 10
     maximum_lag_on_failover: 1048576
+{% if patroni_standby_enabled | default(false) | bool %}
+    # This cluster is a STANDBY: its leader replays the remote primary's data
+    # (streaming, WAL-G wal-fetch fallback) rather than accepting writes.
+    # standby_cluster seeds DCS at bootstrap; reconcile_standby.yml keeps it in
+    # sync afterward, and standby-promote.yml removes it to promote.
+    standby_cluster:
+      host: {{ patroni_standby_primary_host }}
+      port: {{ patroni_standby_primary_port }}
+{% if patroni_standby_primary_slot | default('') | length > 0 %}
+      primary_slot_name: {{ patroni_standby_primary_slot }}
+{% endif %}
+      create_replica_methods:
+{% for _m in patroni_standby_create_replica_methods | default(['basebackup']) %}
+        - {{ _m }}
+{% endfor %}
+{% if patroni_walg_enabled %}
+      restore_command: "/opt/walg/wal-g wal-fetch %f %p"
+{% endif %}
+{% endif %}
     postgresql:
       use_pg_rewind: true
       use_slots: true
@@ -35,7 +54,7 @@ bootstrap:
         ssl_ca_file: /etc/certs/ca.crt
         wal_level: replica
         hot_standby: "on"
-        max_connections: 200
+        max_connections: {{ patroni_pg_max_connections }}
         max_wal_senders: 10
         max_replication_slots: 10
         wal_keep_size: "1GB"
@@ -43,7 +62,7 @@ bootstrap:
 {% if patroni_extensions | default([]) | length > 0 %}
         shared_preload_libraries: "{{ patroni_extensions | join(',') }}"
 {% endif %}
-{% if walg_enabled %}
+{% if patroni_walg_enabled %}
         archive_command: "/opt/walg/wal-g wal-push %p"
         restore_command: "/opt/walg/wal-g wal-fetch %f %p"
 {% else %}
@@ -51,10 +70,10 @@ bootstrap:
         restore_command: "cp /wal_archive/%f %p"
 {% endif %}
         # Memory — auto-calculated from host RAM
-        shared_buffers: "{{ pg_shared_buffers }}"
-        effective_cache_size: "{{ pg_effective_cache }}"
-        work_mem: "{{ pg_work_mem }}"
-        maintenance_work_mem: "{{ pg_maint_mem }}"
+        shared_buffers: "{{ patroni_pg_shared_buffers }}"
+        effective_cache_size: "{{ patroni_pg_effective_cache }}"
+        work_mem: "{{ patroni_pg_work_mem }}"
+        maintenance_work_mem: "{{ patroni_pg_maint_mem }}"
         wal_buffers: "64MB"
         huge_pages: "try"
         # WAL / checkpoints
@@ -65,72 +84,104 @@ bootstrap:
         random_page_cost: 1.1
         effective_io_concurrency: 200
         # Logging
-{% if postgresql_log_destination == "file" %}
+{% if patroni_postgresql_log_destination == "file" %}
         logging_collector: "on"
         log_directory: /var/log/postgresql
         log_filename: "postgresql-%Y-%m-%d_%H%M%S.log"
-{% elif postgresql_log_destination == "stdout" %}
+{% elif patroni_postgresql_log_destination == "stdout" %}
         logging_collector: "off"
-{% elif postgresql_log_destination == "both" %}
+{% elif patroni_postgresql_log_destination == "both" %}
         logging_collector: "on"
         log_directory: /var/log/postgresql
         log_filename: "postgresql-%Y-%m-%d_%H%M%S.log"
         log_destination: "stderr,csvlog"
 {% endif %}
+{% if not (patroni_standby_enabled | default(false) | bool) %}
   post_bootstrap: "psql -c 'CREATE ROLE replicator WITH REPLICATION LOGIN'"
+{% endif %}
   initdb:
     - encoding: UTF8
     - data-checksums
   pg_hba:
     # ── Replication: peers only, TLS required ──
 {% for ip in node_ips %}
-{% if postgresql_replication_password %}
+{% if patroni_postgresql_replication_password %}
     - hostssl replication replicator {{ ip }}/32 scram-sha-256
 {% else %}
     - hostssl replication replicator {{ ip }}/32 cert
 {% endif %}
 {% endfor %}
+{% if patroni_replication_cidrs | default([]) | length > 0 %}
+    # ── Remote standby clusters (set patroni_replication_cidrs on the primary) ──
+{% for cidr in patroni_replication_cidrs %}
+{% if patroni_postgresql_replication_password %}
+    - hostssl replication replicator {{ cidr }} scram-sha-256
+{% else %}
+    - hostssl replication replicator {{ cidr }} cert
+{% endif %}
+{% endfor %}
+{% endif %}
+    # ── Local replication (Patroni loopback introspection) ──
+    # Patroni's get_replica_timeline() opens a REPLICATION connection to this
+    # node's own Postgres. Since `listen` is 0.0.0.0, that connection comes from
+    # localhost, and pg_hba records with database `all` never match replication
+    # connections — so replicas need an explicit loopback replication rule or
+    # every HA cycle logs "no pg_hba.conf entry for replication ... 127.0.0.1".
+{% if patroni_postgresql_replication_password %}
+    - hostssl replication replicator 127.0.0.1/32 scram-sha-256
+    - hostssl replication replicator ::1/128 scram-sha-256
+{% else %}
+    - hostssl replication replicator 127.0.0.1/32 cert
+    - hostssl replication replicator ::1/128 cert
+{% endif %}
     # ── PgBouncer + Ansible (runs in host network on this node) ──
     # hostssl: PgBouncer container connects with TLS via server_tls_sslmode=prefer
     # host:    Ansible postgresql_* tasks (manage_databases, pgbouncer_auth, etc.)
     #          connect from localhost with ssl_mode=disable. No network exposure
-    #          since 127.0.0.1 only.
+    #          since loopback only. ::1 twins cover IPv6 loopback if Postgres is
+    #          ever set to listen on ::.
     - hostssl all all 127.0.0.1/32 scram-sha-256
     - host    all all 127.0.0.1/32 scram-sha-256
+    - hostssl all all ::1/128 scram-sha-256
+    - host    all all ::1/128 scram-sha-256
     # ── Other cluster nodes (Patroni REST, ad-hoc psql between members) ──
 {% for ip in node_ips %}
     - hostssl all all {{ ip }}/32 scram-sha-256
 {% endfor %}
-{% if postgresql_admin_cidrs | default([]) | length > 0 %}
-    # ── Admin / external direct PG access (set postgresql_admin_cidrs) ──
-{% for cidr in postgresql_admin_cidrs %}
+{% if patroni_postgresql_admin_cidrs | default([]) | length > 0 %}
+    # ── Admin / external direct PG access (set patroni_postgresql_admin_cidrs) ──
+{% for cidr in patroni_postgresql_admin_cidrs %}
     - hostssl all all {{ cidr }} scram-sha-256
 {% endfor %}
 {% endif %}
     # No catch-all; everything else implicitly denied.
 
 postgresql:
-  listen: 0.0.0.0:{{ postgresql_port }}
-  connect_address: {{ node_ip }}:{{ postgresql_port }}
-  proxy_address: {{ node_ip }}:{{ pgbouncer_port }}
+  listen: 0.0.0.0:{{ patroni_postgresql_port }}
+  connect_address: {{ node_ip }}:{{ patroni_postgresql_port }}
+  proxy_address: {{ node_ip }}:{{ patroni_pgbouncer_port }}
   data_dir: /var/lib/postgresql/pg_data
   config_dir: /var/lib/postgresql/pg_data
   authentication:
     superuser:
       username: postgres
-      password: "{{ postgresql_postgres_password }}"
-{% if postgresql_replication_password %}
+      password: "{{ patroni_postgresql_postgres_password }}"
+{# On a standby, this connection reaches the REMOTE primary, so honor the
+   standby sslmode (verify-ca needs a shared CA; require skips CA verify). A
+   normal cluster always uses verify-ca against its own CA. #}
+{% set _repl_sslmode = patroni_standby_primary_sslmode | default('verify-ca') if (patroni_standby_enabled | default(false) | bool) else 'verify-ca' %}
+{% if patroni_postgresql_replication_password %}
     replication:
       username: replicator
-      password: "{{ postgresql_replication_password }}"
-      sslmode: verify-ca
+      password: "{{ patroni_postgresql_replication_password }}"
+      sslmode: {{ _repl_sslmode }}
       sslcert: /etc/certs/replicator.crt
       sslkey: /etc/certs/replicator.key
       sslrootcert: /etc/certs/ca.crt
 {% else %}
     replication:
       username: replicator
-      sslmode: verify-ca
+      sslmode: {{ _repl_sslmode }}
       sslcert: /etc/certs/replicator.crt
       sslkey: /etc/certs/replicator.key
       sslrootcert: /etc/certs/ca.crt

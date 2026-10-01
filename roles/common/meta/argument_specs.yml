@@ -52,6 +52,6 @@ argument_specs:
   validate_inventory:
     short_description: Inventory preconditions validator — asserts before deploy.
     description:
-      - Read-only assertions catching concrete misconfigurations (S3 all-or-nothing, patroni_scope unset, vip_manager without patroni_vip_address, malformed databases shape,
+      - Read-only assertions catching concrete misconfigurations (S3 all-or-nothing, patroni_scope unset, patroni_vip_engine without patroni_vip_address, malformed databases shape,
         unscoped NetBox enrichment, etc.).
       - No side effects; safe to run any time. Invoked as Stage 0 of deploy.yml (runs on every invocation via the `always` tag; `--tags validate` runs only this stage).

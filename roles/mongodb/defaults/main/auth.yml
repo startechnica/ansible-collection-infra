@@ -1,0 +1,41 @@
+---
+# MongoDB role defaults: admin credentials, X.509 auth subjects and the
+# application databases/users created after cluster init.
+# The role loads every file in defaults/main/ (see tasks/export_vars.yml).
+
+# ── Admin user ──
+mongodb_admin_user: admin
+mongodb_admin_password: "" # Set in group_vars or vault
+
+# ── Healthcheck user (x509 cert auth, no password needed) ──
+# CNs and the PKI OU/O they compose with live in main/tls.yml.
+mongodb_healthcheck_x509_subject: "CN={{ mongodb_healthcheck_cn }},OU={{ mongodb_pki_client_ou }},O={{ mongodb_pki_o }}"
+
+# ── Exporter user (x509 cert auth for mongodb_exporter) ──
+mongodb_exporter_x509_subject: "CN={{ mongodb_exporter_cn }},OU={{ mongodb_pki_client_ou }},O={{ mongodb_pki_o }}"
+
+# ── Application databases and users (created after cluster init) ──
+# Each entry creates a database and its users with specified roles.
+# Passwords can reference vault variables.
+#
+# mongodb_databases:
+#   - name: myapp
+#     users:
+#       - name: app_user
+#         password: "{{ vault_myapp_db_password }}"
+#         roles:
+#           - { role: readWrite, db: myapp }
+#       - name: readonly_user
+#         password: "{{ vault_readonly_password }}"
+#         roles:
+#           - { role: read, db: myapp }
+#   - name: analytics
+#     users:
+#       - name: etl_user
+#         password: "{{ vault_etl_password }}"
+#         auth_db: admin              # authenticate against admin, not analytics
+#         roles:
+#           - { role: readWrite, db: analytics }
+#           - { role: read, db: myapp }
+#
+mongodb_databases: []

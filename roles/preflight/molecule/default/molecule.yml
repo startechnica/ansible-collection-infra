@@ -29,7 +29,8 @@ provisioner:
   config_options:
     defaults:
       interpreter_python: auto_silent
-      stdout_callback: yaml
+      stdout_callback: ansible.builtin.default
+      callback_result_format: yaml
       callbacks_enabled: profile_tasks
   inventory:
     host_vars:

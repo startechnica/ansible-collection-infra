@@ -7,19 +7,53 @@
 #   _cl_description: Description for the imported item
 #
 # Side effect: updates content_library_item_name to _cl_item_name
+#
+# Retry rationale: vCenter imports an OVA by having an ESXi host stream it
+# from the source URL over an NFC channel and write the .vmdk to the
+# datastore. That transfer can fail transiently mid-flight — the classic
+# symptom is `IO error during transfer of ...vmdk: Pipe closed` after the
+# job has run a minute or two (network blip to the mirror, NFC timeout on a
+# large pull, or a vSAN write hiccup). These almost always succeed on a
+# re-attempt, so a single blip should not fail the whole provision.
+#
+# CRITICAL: `import_content_library_ovf` will NOT update an item that already
+# exists — "If an item with the same name already exists, the module will not
+# update it." A failed import leaves a PARTIAL/empty item behind, so a plain
+# `until` retry on the import alone would, on the 2nd attempt, see "item
+# exists", no-op, and report SUCCESS against a broken OVA (the corruption then
+# resurfaces at deploy time). The delete-then-import therefore has to happen
+# together on EVERY attempt. `until` can't wrap a block, so the attempt is
+# factored into content_library_import_attempt.yml and looped here, breaking
+# out as soon as one attempt succeeds.
 
-- name: "Import to content library (vCenter pulls from URL) — {{ _cl_item_name }}"
-  vmware.vmware.import_content_library_ovf:
-    hostname: "{{ vcenter_connect.hostname }}"
-    username: "{{ vcenter_connect.username }}"
-    password: "{{ vcenter_connect.password }}"
-    validate_certs: "{{ vcenter_connect.validate_certs }}"
-    library_name: "{{ content_library_name }}"
-    dest: "{{ _cl_item_name }}"
-    src: "{{ _cl_source_url }}"
-    description: "{{ _cl_description | default('Imported by Ansible') }}"
-    state: present
-  delegate_to: localhost
+# Reset the success flag so a prior import in the same play run (another VM /
+# preset) can't make this one skip its work.
+- name: "Reset import-success flag — {{ _cl_item_name }}"
+  ansible.builtin.set_fact:
+    _cl_import_ok: false
+
+# The loop always iterates all N attempts, but the tasks inside the attempt
+# file self-skip once _cl_import_ok latches true — a `when:` on a looped
+# include is evaluated once (before the loop) and cannot break it mid-flight,
+# so the short-circuit lives on the inner tasks, not here.
+- name: "Import OVA to content library with retry — {{ _cl_item_name }}"
+  ansible.builtin.include_tasks: content_library_import_attempt.yml
+  loop: "{{ range(1, (content_library_import_retries | default(3) | int) + 1) | list }}"
+  loop_control:
+    loop_var: _cl_attempt
+
+- name: "Fail if the OVA import never succeeded — {{ _cl_item_name }}"
+  ansible.builtin.assert:
+    that:
+      - _cl_import_ok | default(false) | bool
+    fail_msg: >-
+      OVA import for '{{ _cl_item_name }}' failed after
+      {{ content_library_import_retries | default(3) }} attempts. Last error:
+      {{ _cl_import.msg | default('(no module message captured)') }}.
+      This is a vCenter-side transfer failure (host → datastore NFC), not a
+      config error — check ESXi→source network reachability, the datastore
+      health ({{ instance_disks.datastore | default('?') }}), and any
+      firewall/proxy that may be closing long-lived HTTPS transfers.
 
 - name: Set content library item name to imported item
   ansible.builtin.set_fact:

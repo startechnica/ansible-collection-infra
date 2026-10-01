@@ -8,7 +8,7 @@ manager-type: basic
 dcs-type: etcd
 dcs-endpoints:
 {% for ip in node_ips %}
-  - https://{{ ip }}:{{ etcd_client_port }}
+  - https://{{ ip }}:{{ patroni_etcd_client_port }}
 {% endfor %}
 etcd-ca-file: /etc/certs/ca.crt
 etcd-cert-file: /etc/certs/vip-manager.crt

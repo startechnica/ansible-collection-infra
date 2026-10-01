@@ -59,6 +59,9 @@ firewall_include_service_ports: true
 #                              and probes /master /replica)
 #   etcd-client (port 2379)  — only patroni_nodes (etcd colocated with
 #                              Patroni; no external clients)
+#   etcd-peer   (port 2380)  — only patroni_nodes (etcd cluster gossip)
+#   postgresql-direct (55432)— only patroni_nodes (Patroni streaming
+#                              replication between members; never public)
 #
 # A SECOND SSH rule named `ssh-any` (open from any source) is emitted
 # alongside `ssh-trusted` — toggle via `firewall_ssh_open_to_any` below.
@@ -80,6 +83,12 @@ firewall_service_source_map:
     {{ groups['patroni_nodes'] | default([])
        | map('extract', hostvars, 'ansible_host') | list }}
   etcd-client: >-
+    {{ groups['patroni_nodes'] | default([])
+       | map('extract', hostvars, 'ansible_host') | list }}
+  etcd-peer: >-
+    {{ groups['patroni_nodes'] | default([])
+       | map('extract', hostvars, 'ansible_host') | list }}
+  postgresql-direct: >-
     {{ groups['patroni_nodes'] | default([])
        | map('extract', hostvars, 'ansible_host') | list }}
 

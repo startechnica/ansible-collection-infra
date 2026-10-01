@@ -20,7 +20,7 @@
 #   ansible-playbook ... -e mongodb_action=backup
 #   ansible-playbook ... -e mongodb_action=uninstall -e mongodb_destroy_prune=true
 #   ansible-playbook ... -e mongodb_action=restore -e restore_path=/opt/mongodb/backups/...
-#   ansible-playbook ... -e mongodb_action=upgrade -e mongodb_image_tag_new=8.2.7
+#   ansible-playbook ... -e mongodb_action=upgrade -e mongodb_image_tag_new=8.3.8
 
 # ── Skip if disabled ──
 
@@ -98,12 +98,57 @@
 # Replaces the meta/main.yml dependency. Skipped on uninstall/status/etc.
 # so we don't burn 30s on kernel module / time sync / ulimit checks just
 # to tear things down or read state.
+
+# Learn what Patroni commits when it shares this node, instead of asking the
+# operator to keep a copy of that number in inventory. patroni_mem_request_mb is
+# a lazy expression in patroni's vars/main/memory.yml, so importing the role's
+# export anchor is enough — no tasks run, and nothing has to have run on the
+# host first.
+#
+# Narrow on purpose: `defaults_from` loads ONLY patroni's postgresql.yml, which
+# is the single file the budget depends on. Importing all of patroni's defaults
+# would also bring mongodb_tls_key_curve, which patroni defaults to secp384r1 and this
+# role to secp256r1 — silently changing the curve of every certificate this role
+# then generates. `vars_from` likewise loads only the memory vars.
+#
+# Note this is an import (static), so the variables load regardless of whether
+# Patroni is actually deployed here; the reservation below is what's gated on
+# patroni_enabled. Harmless either way — nothing else reads pg_*.
+- name: Import Patroni's memory budget (co-located stacks)
+  ansible.builtin.import_role:
+    name: patroni
+    tasks_from: export_vars
+    defaults_from: main/postgresql.yml
+    vars_from: main/memory.yml
+
 - name: Run preflight role (system + docker + venv)
   ansible.builtin.include_role:
     name: preflight
   vars:
+    # Every container this role puts on the node, not just the mongod family.
+    # The PBM agents and the exporter were omitted, which under-reported a
+    # sharded node with PBM by 640MB (two agents at 256 + exporter at 128) —
+    # enough to matter on exactly the hosts where the check is worth having.
+    # PBM renders one agent per data-bearing node: shard, plus config when
+    # sharded (see tasks/pbm.yml :: _pbm_agents).
     container_mem_request_mb: >-
-      {{ mongod_mem_limit_mb + (configsvr_mem_limit_mb + mongos_mem_limit_mb if mongodb_cluster_type == 'sharded' else 0) }}
+      {{ (mongodb_mongod_mem_limit_mb | int)
+         + ((mongodb_configsvr_mem_limit_mb | int) + (mongodb_mongos_mem_limit_mb | int)
+            if mongodb_cluster_type == 'sharded' else 0)
+         + ((mongodb_backup_pbm_mem_limit_mb | int)
+            * (2 if mongodb_cluster_type == 'sharded' else 1)
+            if mongodb_backup_pbm_enabled | bool else 0)
+         + ((mongodb_exporter_mem_limit_mb | int)
+            if mongodb_exporter_enabled | bool else 0)
+         + ((mongodb_exporter_mem_limit_mb | int) * (mongodb_exporter_members | length)) }}
+    # What something OTHER than this role commits on the same node. Patroni's
+    # share is read from the role itself (imported above) so there's no second
+    # copy of the number to keep in step; mongodb_mem_reserved_mb is the manual
+    # escape hatch for anything the collection can't introspect.
+    container_mem_reserved_mb: >-
+      {{ (patroni_mem_request_mb | int
+          if patroni_enabled | default(false) | bool else 0)
+         + (mongodb_mem_reserved_mb | default(0) | int) }}
   when: >-
     mongodb_action | default('provision') in
     ['provision', 'init', 'backup', 'restore', 'renew-certs', 'upgrade']
@@ -134,9 +179,11 @@
   ansible.builtin.include_tasks: sysctl.yml
   when: mongodb_action | default('provision') == 'provision'
 
-- name: Disable Transparent HugePages
+- name: Configure Transparent HugePages
   ansible.builtin.include_tasks: thp.yml
-  when: mongodb_action | default('provision') == 'provision'
+  when:
+    - mongodb_action | default('provision') == 'provision'
+    - mongodb_thp_enabled | length > 0
 
 # Container runtime dispatch. `mongodb_container_engine` is the
 # authoritative selector. The skip-all guard at the top of this file
@@ -181,7 +228,42 @@
   when:
     - mongodb_action | default('provision') in ['provision', 'init']
 
+# Install the scheduled-backup systemd timer once mongos is up and the admin
+# password is resolved. Mirrors patroni's walg-cron.timer.
+- name: Install scheduled backup timer
+  ansible.builtin.include_tasks: backup_schedule.yml
+  when:
+    - mongodb_action | default('provision') == 'provision'
+
+# Deploy PBM agents + apply config. After init_cluster so the PBM $external
+# user/role exist and the cluster is in auth mode.
+- name: Deploy Percona Backup for MongoDB
+  ansible.builtin.include_tasks: pbm.yml
+  when:
+    - mongodb_action | default('provision') == 'provision'
+    - mongodb_backup_pbm_enabled | bool
+
 # ── On-demand actions ──
+
+- name: PBM setup (retrofit onto an already-running cluster)
+  ansible.builtin.include_tasks: pbm_setup.yml
+  when:
+    - mongodb_action | default('provision') == 'pbm-setup'
+
+- name: PBM backup
+  ansible.builtin.include_tasks: pbm_backup.yml
+  when:
+    - mongodb_action | default('provision') == 'pbm-backup'
+
+- name: PBM restore
+  ansible.builtin.include_tasks: pbm_restore.yml
+  when:
+    - mongodb_action | default('provision') == 'pbm-restore'
+
+- name: PBM status
+  ansible.builtin.include_tasks: pbm_status.yml
+  when:
+    - mongodb_action | default('provision') == 'pbm-status'
 
 - name: Run backup
   ansible.builtin.include_tasks: backup.yml

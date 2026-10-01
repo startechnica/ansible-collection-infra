@@ -7,10 +7,15 @@ argument_specs:
         add/remove node).
       - Dispatches on the `mongodb_action` variable; default is full provisioning.
     options:
-      debug:
+      mongodb_debug:
         type: bool
-        default: false
-        description: Verbose / introspection output. Defensive `| bool` filter still used in tasks because CLI `-e debug=true` arrives as a string.
+        description: >-
+          Verbose / introspection output for this role. Defaults to the
+          collection-wide `debug` when that is set, so `-e debug=true` still
+          reaches it; set mongodb_debug directly to turn it on for mongodb
+          alone. No literal default is declared here because the real one is
+          that fallback. Use a defensive `| bool` filter when reading it — CLI
+          `-e debug=true` arrives as a string.
       mongodb_enabled:
         type: bool
         default: true
@@ -19,7 +24,7 @@ argument_specs:
       mongodb_action:
         type: str
         default: provision
-        choices: [provision, init, backup, restore, status, renew-certs, upgrade, uninstall]
+        choices: [provision, init, backup, restore, status, renew-certs, upgrade, uninstall, pbm-setup, pbm-backup, pbm-restore, pbm-status]
         description: Which sub-flow to run. Most day-2 playbooks override this.
 
       mongodb_cluster_type:
@@ -30,15 +35,34 @@ argument_specs:
 
       mongodb_version:
         type: str
-        default: "8.2.6"
+        default: "8.0.28"
         description: MongoDB Docker image tag to deploy.
 
       mongodb_unsupported_kernel:
         type: str
         default: "6.19"
         description:
-          - Kernel version string at-or-above which MongoDB is known to be incompatible. Preflight refuses to install when the host kernel is >= this value.
-          - Bump only after verifying a later MongoDB release supports your kernel (see https://jira.mongodb.org/browse/SERVER-121912).
+          - Open-ended lower bound of the kernel range where MongoDB's vendored-TCMalloc/rseq ABI violation bites.
+          - Kernels at/above this value are affected (no upper-bound escape); kernels below are always fine.
+          - "The compatibility gate is version-independent: MongoDB 8.0.28 is also affected."
+          - Preflight blocks whenever `host kernel >= mongodb_unsupported_kernel`.
+          - See https://jira.mongodb.org/browse/SERVER-121912.
+
+      mongodb_kernel_guard_min_version:
+        type: str
+        default: "8.3"
+        description:
+          - "DEPRECATED / INERT. Retained only for inventories that set the former version-gated compatibility guard."
+          - The guard now applies to every MongoDB version, including the 8.0 LTS line.
+          - See https://jira.mongodb.org/browse/SERVER-121912.
+
+      mongodb_fixed_kernel:
+        type: str
+        default: "7.0.14"
+        description:
+          - DEPRECATED / INERT. The gate no longer consumes this var.
+          - An earlier revision treated 7.0.14+ as fixed (a brief upstream window that was reverted); the incompatibility is now open-ended (6.19+). Kept declared only so setting it doesn't error.
+          - See https://jira.mongodb.org/browse/SERVER-121912.
 
       mongodb_skip_kernel_check:
         type: bool
@@ -46,6 +70,20 @@ argument_specs:
         description:
           - Bypass the kernel-compatibility check. Use only when you have verified MongoDB runs on your kernel — running with this set on an actually-incompatible kernel causes
             containers to crash in a restart loop.
+
+      mongodb_thp_enabled:
+        type: str
+        choices: ["", never, madvise, always]
+        description:
+          - Mode for /sys/kernel/mm/transparent_hugepage/enabled. never also sets defrag=never; madvise and
+            always also set defrag=defer+madvise, khugepaged/max_ptes_none=0 and vm.overcommit_memory=1.
+            THP is host-wide; the role applies it now and at every boot through mongodb-thp.service. Empty
+            skips every THP task.
+          - Defaults to always for mongodb_version 8.0 and later, which is MongoDB's recommendation for its
+            upgraded TCMalloc, and never for 7.0 and earlier. Next to Patroni (patroni_enabled) it defaults to
+            never, to spare memory on a node shared by two stacks. The patroni role leaves THP alone unless
+            patroni_thp_enabled is set; to let that decide instead, set this empty. vm.overcommit_memory is
+            never set next to Patroni, which owns it.
 
       mongodb_image_registry:
         type: str
@@ -90,39 +128,90 @@ argument_specs:
         default: 27019
 
       # ── Resources (MB) ──
-      mongod_mem_limit_mb:
+      mongodb_mongod_mem_limit_mb:
         type: int
         default: 2048
-      configsvr_mem_limit_mb:
+        description: >-
+          mongod container memory cap. Its WiredTiger cache is half of this, and
+          mongod refuses a cache under 0.25 GB, so preflight requires at least 512.
+      mongodb_configsvr_mem_limit_mb:
         type: int
         default: 512
-      mongos_mem_limit_mb:
+        description: >-
+          Config server container memory cap (sharded only). Same rule as
+          mongodb_mongod_mem_limit_mb: half goes to the WiredTiger cache, and
+          preflight requires at least 512.
+      mongodb_mongos_mem_limit_mb:
         type: int
-        default: 512
+        default: 1024
+        description: >-
+          mongos container memory cap. Unlike mongod/configsvr there is no
+          wiredTigerCacheSizeGB equivalent to make the router self-throttle, so
+          reaching this limit is an OOM kill that drops every client connection
+          on the node — budget above the idle footprint.
+
+      # ── OOM victim selection (oom_score_adj, -1000..1000) ──
+      # Higher = killed first when the HOST (not the cgroup) runs out of memory.
+      mongodb_mongod_oom_score_adj:
+        type: int
+        default: 0
+        description: Data-bearing; left at the kernel default.
+      mongodb_configsvr_oom_score_adj:
+        type: int
+        default: 0
+        description: Data-bearing; left at the kernel default.
+      mongodb_mongos_oom_score_adj:
+        type: int
+        default: 500
+        description: >-
+          Biased toward being the victim — a stateless router restarts cleanly,
+          whereas letting the kernel pick by RSS would target mongod instead.
+      mongodb_exporter_oom_score_adj:
+        type: int
+        default: 1000
+        description: Telemetry only — first in line for the OOM killer.
+
+      # ── Preflight memory budget ──
+      mongodb_exporter_mem_limit_mb:
+        type: int
+        default: 128
+        description: >-
+          Exporter container memory cap. Named (rather than hardcoded in the
+          templates) so the preflight memory budget can count it.
+      mongodb_mem_reserved_mb:
+        type: int
+        default: 0
+        description: >-
+          Extra memory committed on this node that the collection cannot
+          introspect — a non-container daemon, another tenant, something outside
+          this collection. Added on top of what is discovered automatically:
+          when `patroni_enabled` is true this role imports patroni's own
+          `patroni_mem_request_mb` rather than asking you to restate it, so a
+          plain mongodb+patroni node leaves this at 0.
 
       # ── TLS / PKI ──
-      ssl_days:
+      mongodb_tls_days:
         type: int
         default: 365
         description: Leaf certificate validity in days.
-      ssl_ca_days:
+      mongodb_tls_ca_days:
         type: int
         default: 3650
         description: CA certificate validity in days.
-      tls_key_type:
+      mongodb_tls_key_type:
         type: str
         default: ECC
         choices: [ECC, RSA]
-      tls_key_curve:
+      mongodb_tls_key_curve:
         type: str
         default: secp256r1
         description: |
-          ECC curve. Only used when `tls_key_type: ECC`.
-      tls_key_size:
+          ECC curve. Only used when `mongodb_tls_key_type: ECC`.
+      mongodb_tls_key_size:
         type: int
         default: 4096
         description: |
-          RSA key size in bits. Only used when `tls_key_type: RSA`.
+          RSA key size in bits. Only used when `mongodb_tls_key_type: RSA`.
 
       mongodb_pki_o:
         type: str
@@ -143,15 +232,15 @@ argument_specs:
         type: str
         default: mongodb-exporter
 
-      mongod_tls_mode:
+      mongodb_mongod_tls_mode:
         type: str
         default: requireTLS
         choices: [requireTLS, preferTLS, allowTLS, disabled]
-      configsvr_tls_mode:
+      mongodb_configsvr_tls_mode:
         type: str
         default: requireTLS
         choices: [requireTLS, preferTLS, allowTLS, disabled]
-      mongos_tls_mode:
+      mongodb_mongos_tls_mode:
         type: str
         default: preferTLS
         choices: [requireTLS, preferTLS, allowTLS, disabled]
@@ -190,43 +279,191 @@ argument_specs:
         default: true
       mongodb_exporter_image:
         type: str
-        default: "percona/mongodb_exporter:0.43.1"
+        default: "docker.io/percona/mongodb_exporter:0.52.0"
       mongodb_exporter_port:
         type: int
         default: 9216
+      mongodb_exporter_shard_enabled:
+        type: bool
+        default: false
+        description: >-
+          Sharded clusters: also run mongodb-exporter-shard, connected directly
+          to this node's shard mongod. Needs mongodb_exporter_enabled. The role
+          creates the exporter's X.509 user on the shard replica set.
+      mongodb_exporter_shard_port:
+        type: int
+        default: 9217
+        description: Port the shard exporter serves /metrics on.
+      mongodb_exporter_configsvr_enabled:
+        type: bool
+        default: false
+        description: >-
+          Sharded clusters: also run mongodb-exporter-configsvr, connected
+          directly to this node's config server. Needs mongodb_exporter_enabled.
+      mongodb_exporter_configsvr_port:
+        type: int
+        default: 9218
+        description: Port the configsvr exporter serves /metrics on.
+
+      # ── Percona Backup for MongoDB (PBM) ──
+      mongodb_backup_pbm_enabled:
+        type: bool
+        default: false
+        description: >
+          Deploy PBM agents for cluster-consistent backups + PITR. Required for
+          sharded-cluster PITR (mongodump --oplog can't run via mongos). One
+          agent per local mongod (2/host sharded, 1/host replicaset).
+      mongodb_backup_pbm_image:
+        type: str
+        default: "docker.io/percona/percona-backup-mongodb:2.15.0"
+      mongodb_backup_pbm_cn:
+        type: str
+        default: mongodb-pbm
+        description: X.509 CN the PBM agent presents (mapped to a $external user).
+      mongodb_backup_pbm_mem_limit_mb:
+        type: int
+        default: 256
+      mongodb_backup_pbm_oom_score_adj:
+        type: int
+        default: 800
+        description: >-
+          Biased toward being the OOM victim ahead of the nodes it backs up — a
+          missed backup window is recoverable, a killed mongod costs recovery.
+      mongodb_backup_storage_type:
+        type: str
+        default: minio
+        choices: [minio, s3, gcs]
+        description: >-
+          PBM object-storage backend. MinIO is the default for compatibility
+          with MinIO, Ceph, custom gateways, and proxies; select s3 for Amazon
+          S3 or endpoints requiring PBM's AWS SDK backend, or gcs for native
+          Google Cloud Storage JSON API access.
+      mongodb_backup_gcs_bucket:
+        type: str
+        default: ""
+        description: >-
+          Google Cloud Storage bucket used by PBM when
+          mongodb_backup_storage_type is gcs.
+      mongodb_backup_gcs_service_account:
+        type: raw
+        default: ""
+        description: >-
+          Google service-account JSON key granting PBM access to
+          mongodb_backup_gcs_bucket — the file GCP produces at "Create key →
+          JSON". Accepts the raw JSON string or an already-parsed mapping; the
+          role passes its client_email and private_key to PBM. Required when
+          mongodb_backup_storage_type is gcs. Store this value in Ansible Vault.
+      mongodb_backup_gcs_prefix:
+        type: str
+        description: >-
+          GCS object prefix for PBM backups. PBM data is stored beneath
+          "<prefix>/pbm". Defaults to a cluster-namespaced, slugified path.
+      mongodb_backup_init:
+        type: bool
+        default: true
+        description: >-
+          Force a storage resync and take a base backup (if none exists) during
+          provision/setup, so storage is initialized and PITR has an anchor.
+          Idempotent — skipped when a backup already exists.
+      mongodb_backup_compression_type:
+        type: str
+        default: zstd
+        choices: [none, gzip, snappy, lz4, s2, zstd]
+        description: Compression codec for PBM base backups and PITR oplog slices.
+      mongodb_backup_compression_level:
+        type: str
+        default: ""
+        description: >-
+          Optional codec-specific compression level (e.g. zstd 1–22, gzip 1–9).
+          Empty uses the codec default. Applies to base backups and PITR slices.
+      mongodb_backup_pbm_x509_subject:
+        type: str
+        description: >
+          Full X.509 subject DN the PBM $external user is created with. Defaults
+          to CN=<mongodb_backup_pbm_cn>,OU=<client OU>,O=<org>.
 
       # ── Backup ──
+      mongodb_backup_type:
+        type: str
+        default: "{{ 'pbm' if mongodb_backup_pbm_enabled | bool else 'mongodump' }}"
+        choices: [mongodump, pbm]
+        description: >-
+          Backup engine choice for scheduled and on-demand backups (`mongodump` or `pbm`).
+          `mongodump` runs logical dumps via a throwaway container; `pbm` uses
+          Percona Backup for MongoDB (PBM). Defaults to `pbm` when
+          mongodb_backup_pbm_enabled is true, otherwise `mongodump`; `pbm`
+          without PBM enabled fails preflight.
       mongodb_backup_dir:
         type: str
         default: /opt/mongodb/backups
       mongodb_backup_retain_days:
         type: int
         default: 7
+      mongodb_backup_pitr_enabled:
+        type: bool
+        default: false
+        description: >-
+          Point-in-time recovery switch shared by both backup engines. With
+          mongodump it passes --oplog so dumps are usable by
+          playbooks/mongodb/pitr.yml (replica-set only; mongodump --oplog is
+          rejected against a mongos). With PBM it enables continuous oplog
+          slicing. On a sharded cluster it requires mongodb_backup_pbm_enabled,
+          which preflight enforces.
+      mongodb_backup_mode:
+        type: str
+        choices: [local, s3]
+        description: >
+          Backup destination. `local` keeps the mongodump on the node under
+          `mongodb_backup_retain_days`; `s3` tar-gzips and uploads it via
+          containerised mc, then removes the local copy (pure-S3 — the bucket
+          is the only copy). The dump is always written locally first.
+          Defaults to `s3` when `mongodb_s3_bucket` is set, else `local`.
+      mongodb_backup_enabled:
+        type: bool
+        default: true
+        description: >
+          Master switch for the scheduled-backup timer. False tears down any
+          installed timer/service. On-demand `mongodb_action: backup` is
+          unaffected.
+      mongodb_backup_schedule:
+        type: str
+        default: "*-*-* 02:00:00"
+        description: >
+          systemd OnCalendar expression for the host-level scheduled-backup
+          timer (mongodb-backup.timer). Empty string disables the timer;
+          on-demand `mongodb_action: backup` still works.
 
-      # ── S3 (shared with patroni) ──
-      s3_endpoint:
+      # ── S3 (mongodb-only; patroni has its own patroni_s3_* set) ──
+      mongodb_s3_endpoint:
         type: str
         default: ""
-      s3_bucket:
+      mongodb_s3_bucket:
         type: str
         default: ""
         description: Set to enable S3 upload of backups. Empty disables.
-      s3_access_key:
+      mongodb_s3_access_key:
         type: str
         default: ""
-      s3_secret_key:
+      mongodb_s3_secret_key:
         type: str
         default: ""
-      s3_region:
+      mongodb_s3_region:
         type: str
         default: us-east-1
-      s3_prefix:
+      mongodb_s3_force_path_style:
         type: str
-        description: Path prefix inside the bucket. Defaults to `mongodb/<mongodb_network>`.
-      s3_retain_days:
+        default: "true"
+        description: >-
+          Force path-style S3 addressing (bucket in the URL path, not the
+          hostname). Required by most S3-compatible gateways. Consumed by PBM.
+      mongodb_backup_s3_prefix:
         type: str
-        description: Retention for S3 objects. Defaults to `mongodb_backup_retain_days`. Set `0` to disable prune.
-      s3_client_image:
+        description: >-
+          S3 key prefix (under mongodb_s3_bucket) for MongoDB backups — mongodump at this
+          root, PBM under "<prefix>/pbm". Defaults to a cluster-namespaced,
+          slugified path (mongodb-<mongodb_cluster_name>) so distinct clusters
+          sharing one bucket don't collide.
+      mongodb_s3_client_image:
         type: str
         default: "minio/mc:latest"
 

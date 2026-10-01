@@ -26,7 +26,9 @@ vault_mongodb_app_password: app-primary-password
 vault_postgres_password: "" # empty = auto-generated
 vault_patroni_app_password: app-primary-password-pg
 
-# S3 (shared by MongoDB + Patroni backups)
+# S3 backups. One secret can feed both roles' credential sets — the variable
+# names are per-role (patroni_s3_* and mongodb_s3_*), the value behind them
+# need not be. See docs/SECRETS.md.
 vault_s3_access_key: AKIAXXXXXXXXXXXXXXXX
 vault_s3_secret_key: verylongsecretkeyherexxxxxxxxxxxxxxxxxxxx
 

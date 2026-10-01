@@ -1,0 +1,13 @@
+---
+# Computed: per-service port to use for `<engine> exec ... mongosh --port`.
+#
+# Docker uses bridge networking, so each container internally binds 27017
+# regardless of what host-side port is published. Podman uses Network=host, so
+# the container shares the host's network namespace and `localhost:27017`
+# always reaches mongos — to talk to mongod or configsvr from inside their own
+# container we have to use the actual port the service is bound to on host.
+#
+# The host-side ports these derive from live in defaults/main/ports.yml.
+mongodb_mongod_exec_port: "{{ 27017 if mongodb_container_engine == 'docker' else mongodb_mongod_node_port }}"
+mongodb_configsvr_exec_port: "{{ 27017 if mongodb_container_engine == 'docker' else mongodb_configsvr_node_port }}"
+mongodb_mongos_exec_port: "{{ 27017 if mongodb_container_engine == 'docker' else mongodb_mongos_node_port }}"

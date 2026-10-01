@@ -1,0 +1,63 @@
+---
+# MongoDB role defaults: Percona Backup for MongoDB (PBM).
+# The role loads every file in defaults/main/ (see tasks/export_vars.yml).
+#
+# Cluster-consistent backups + point-in-time recovery for SHARDED clusters
+# (where mongodump --oplog can't run via mongos). One pbm-agent runs next to
+# every data-bearing mongod: in sharded mode that's two agents per host (the
+# shard mongod + the configsvr); in replicaset mode it's one (the mongod).
+# Agents authenticate via X.509 client cert (CN=mongodb_backup_pbm_cn) and store
+# backups in object storage. PBM's MinIO client is the default for S3-compatible
+# services; the AWS SDK-backed S3 client and native GCS client remain selectable.
+#
+# NOTE: on the Community `mongo` image PBM does LOGICAL backups + logical PITR
+# only — physical backups need Percona Server for MongoDB. See
+# docs/design/mongodb-pbm.md.
+#
+# The agent's memory cap lives in main/resources.yml with the rest of the
+# memory budget, not here — see that file for why.
+
+mongodb_backup_pbm_enabled: false
+# Pin the agent image (avoid :latest for reproducible/offline-friendly pulls).
+mongodb_backup_pbm_image: "docker.io/percona/percona-backup-mongodb:2.15.0"
+mongodb_backup_pbm_cn: mongodb-pbm
+# PBM object-storage client. `minio` is the safer default for MinIO/Ceph/custom
+# gateways and proxies because it avoids the AWS SDK Go v2 signing
+# `Accept-Encoding` (a header some proxies rewrite, causing
+# SignatureDoesNotMatch). Set `s3` for Amazon S3 or endpoints requiring PBM's
+# AWS SDK backend, or `gcs` for native Google Cloud Storage JSON API access.
+mongodb_backup_storage_type: minio
+# Native GCS settings (used only when mongodb_backup_storage_type is `gcs`).
+# PBM 2.12+ deprecates GCS HMAC credentials, so the role authenticates with a
+# service-account key: the whole JSON key file GCP produces at "Create key →
+# JSON", as the raw JSON string or an already-parsed mapping. The role passes
+# its client_email and private_key to PBM. KEEP THIS IN ANSIBLE VAULT — it is a
+# private key.
+mongodb_backup_gcs_bucket: ""
+mongodb_backup_gcs_service_account: ""
+# PBM data is stored under "<prefix>/pbm", matching the S3 layout.
+mongodb_backup_gcs_prefix: "mongodb-{{ mongodb_cluster_name | lower | regex_replace('[^a-z0-9]+', '-') | regex_replace('(^-|-$)', '') }}"
+# PBM continuous oplog slicing (restore to any timestamp in the window) is
+# gated on the shared mongodb_backup_pitr_enabled knob — the same switch that
+# enables mongodump --oplog for replica-set backups. One PITR intent, one knob.
+# On provision/setup, force a storage resync (clears "storage is not
+# initialized") and lay down a base backup if none exists yet — PBM needs one
+# before PITR can start slicing. Idempotent: skipped when a backup already
+# exists. Set false to manage the first backup yourself.
+mongodb_backup_init: true
+# Backup compression type: none|gzip|snappy|lz4|s2|zstd.
+mongodb_backup_compression_type: zstd
+# Optional compression level (codec-specific, e.g. zstd 1–22, gzip 1–9). Empty
+# uses the codec's default. Applies to both base backups and PITR oplog slices.
+mongodb_backup_compression_level: 3
+# Scheduled `pbm backup` reuses the shared backup knobs rather than PBM-specific
+# ones: the timer fires on `mongodb_backup_schedule` (empty disables it) and a
+# post-backup `pbm cleanup` prunes base backups + their oplog chunks older than
+# `mongodb_backup_retain_days`. One schedule + one retention window for both the
+# mongodump path and PBM. Enabling PITR (mongodb_backup_pitr_enabled) without a
+# schedule leaves you a single base-backup anchor that never rotates — set a
+# schedule so the PITR window keeps a fresh floor and the bucket doesn't grow
+# unbounded.
+# X.509 subject the PBM agent presents (mapped to a $external user with the
+# PBM role set). Mirrors mongodb_healthcheck_x509_subject / _exporter_.
+mongodb_backup_pbm_x509_subject: "CN={{ mongodb_backup_pbm_cn }},OU={{ mongodb_pki_client_ou }},O={{ mongodb_pki_o }}"

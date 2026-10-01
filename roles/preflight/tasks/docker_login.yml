@@ -1,6 +1,6 @@
 ---
 # Authenticate to one or more Docker registries so subsequent image pulls
-# (patroni_image, mongodb_image, walg_image, …) work for private repos.
+# (patroni_image, mongodb_image, patroni_walg_image, …) work for private repos.
 # Credentials persist in /root/.docker/config.json on the target node and
 # are reused across role invocations.
 #

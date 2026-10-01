@@ -1,0 +1,3 @@
+---
+# Read-only smoke test for a deployed mongodb cluster. No role deps.
+dependencies: []

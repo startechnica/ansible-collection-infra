@@ -62,7 +62,7 @@
   delegate_to: localhost
   register: _boot_wait
   retries: 50
-  delay: 20
+  delay: 10
   until: >-
     ((_instances_pending | map(attribute='name') | list)
      | difference(

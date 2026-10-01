@@ -38,7 +38,7 @@
         mode: "0700"
 
     - name: Restore via WAL-G (S3)
-      when: s3_bucket | default('') | length > 0
+      when: patroni_s3_bucket | default('') | length > 0
       block:
         - name: Fetch latest backup with wal-g
           community.docker.docker_container_exec:
@@ -50,7 +50,7 @@
           changed_when: false
 
     - name: Restore via pg_basebackup snapshot (local)
-      when: s3_bucket | default('') | length == 0
+      when: patroni_s3_bucket | default('') | length == 0
       block:
         - name: Find latest local pg_basebackup
           ansible.builtin.shell: ls -dt {{ patroni_backup_dir }}/backup-* 2>/dev/null | head -n1
@@ -137,7 +137,7 @@
     - name: Backup verification report
       ansible.builtin.debug:
         msg:
-          - "Backup source: {{ 'WAL-G S3' if s3_bucket | default('') | length > 0 else _latest_basebackup.stdout | default('n/a') }}"
+          - "Backup source: {{ 'WAL-G S3' if patroni_s3_bucket | default('') | length > 0 else _latest_basebackup.stdout | default('n/a') }}"
           - "Databases restored: {{ _dbs.query_result | default([]) }}"
           - "Status: PASS"
 

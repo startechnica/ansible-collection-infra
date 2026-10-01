@@ -37,12 +37,12 @@ jobs:
         run: |
           ansible-galaxy collection build --force --output-path ./dist
 
-      - name: Publish to Ansible Galaxy
-        env:
-          ANSIBLE_GALAXY_API_KEY: ${{ secrets.ANSIBLE_GALAXY_API_KEY }}
-        run: |
-          ansible-galaxy collection publish ./dist/*.tar.gz \
-            --api-key "$ANSIBLE_GALAXY_API_KEY"
+      # - name: Publish to Ansible Galaxy
+      #   env:
+      #     ANSIBLE_GALAXY_API_KEY: ${{ secrets.ANSIBLE_GALAXY_API_KEY }}
+      #   run: |
+      #     ansible-galaxy collection publish ./dist/*.tar.gz \
+      #       --api-key "$ANSIBLE_GALAXY_API_KEY"
 
       - name: Attach tarball to GitHub release
         uses: softprops/action-gh-release@v2

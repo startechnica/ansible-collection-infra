@@ -2,7 +2,8 @@
 # os_tuning.yml - Linux kernel and sysctl tuning for PostgreSQL / Patroni
 #
 # Variables used:
-#   postgresql_dir              – PostgreSQL data directory (used for I/O scheduler detection)
+#   patroni_postgresql_dir              – PostgreSQL data directory (used for I/O scheduler detection)
+#   patroni_thp_enabled                 – transparent huge pages mode; empty leaves THP alone
 #   ansible_facts['memtotal_mb'] – auto-gathered Ansible fact (total RAM in MiB)
 
 # ##############################################################################
@@ -55,19 +56,22 @@
           'vm.dirty_background_ratio': '3',
           'kernel.shmmax': _shmmax | string,
           'kernel.shmall': _shmall | string,
-          'net.core.somaxconn': '4096',
+          'net.core.somaxconn': '65535',
+          'net.ipv4.tcp_max_syn_backlog': '65535',
+          'net.core.netdev_max_backlog': '16384',
+          'net.ipv4.tcp_tw_reuse': '1',
           'net.ipv4.tcp_keepalive_time': '60',
           'net.ipv4.tcp_keepalive_intvl': '10',
           'net.ipv4.tcp_keepalive_probes': '6',
           'net.ipv4.ip_nonlocal_bind': '1',
           'net.ipv4.ip_local_port_range': '1024 65535',
           'net.ipv4.ip_local_reserved_ports':
-            (([haproxy_primary_port, haproxy_replicas_port,
-               haproxy_stats_port,
-               pgbouncer_port,
-               patroni_api_port, postgresql_port,
-               etcd_client_port,
-               etcd_peer_port]
+            (([patroni_haproxy_primary_port, patroni_haproxy_replicas_port,
+               patroni_haproxy_direct_port, patroni_haproxy_stats_port,
+               patroni_pgbouncer_port,
+               patroni_api_port, patroni_postgresql_port,
+               patroni_etcd_client_port,
+               patroni_etcd_peer_port]
               | map('string') | list) | join(','))
         }
       }}
@@ -110,43 +114,65 @@
     mode: "0644"
 
 ###############################################################################
-# 5. Disable Transparent Huge Pages (runtime)
+# 5-6. Transparent Huge Pages, now and at every boot (when patroni_thp_enabled is set)
 ###############################################################################
-- name: Disable THP - enabled
-  ansible.builtin.shell: echo never > /sys/kernel/mm/transparent_hugepage/enabled
-  changed_when: false
+# Empty patroni_thp_enabled leaves THP alone entirely, including a disable-thp
+# unit an earlier version of this role installed.
+- name: Configure Transparent Huge Pages
+  when: patroni_thp_enabled | length > 0
+  block:
+    # Earlier versions always turned THP off through disable-thp.service. Left in
+    # place it would race patroni-thp.service at boot.
+    - name: Check for the disable-thp unit
+      ansible.builtin.stat:
+        path: /etc/systemd/system/disable-thp.service
+      register: _patroni_legacy_thp_unit
 
-- name: Disable THP - defrag
-  ansible.builtin.shell: echo never > /sys/kernel/mm/transparent_hugepage/defrag
-  changed_when: false
+    - name: Remove the disable-thp unit
+      when: _patroni_legacy_thp_unit.stat.exists
+      block:
+        - name: Disable the disable-thp unit
+          ansible.builtin.systemd:
+            name: disable-thp
+            enabled: false
 
-###############################################################################
-# 6. Persist THP disable across reboots via systemd unit
-###############################################################################
-- name: Create disable-thp systemd unit
-  ansible.builtin.template:
-    src: disable-thp.service.j2
-    dest: /etc/systemd/system/disable-thp.service
-    owner: root
-    group: root
-    mode: "0644"
-  notify: reload systemd
+        - name: Delete the disable-thp unit file
+          ansible.builtin.file:
+            path: /etc/systemd/system/disable-thp.service
+            state: absent
 
-- name: Flush handlers (daemon-reload before enable)
-  ansible.builtin.meta: flush_handlers
+    # The file lists every mode with the active one in brackets, e.g.
+    # "always [madvise] never". A kernel built without THP doesn't have it.
+    - name: Apply THP setting now
+      ansible.builtin.shell: |
+        f=/sys/kernel/mm/transparent_hugepage/enabled
+        [ -f "$f" ] || exit 0
+        [ "$(sed -n 's/.*\[\(.*\)\].*/\1/p' "$f")" = '{{ patroni_thp_enabled }}' ] && exit 0
+        echo '{{ patroni_thp_enabled }}' > "$f"
+        echo changed
+      register: _patroni_thp_apply
+      changed_when: "'changed' in _patroni_thp_apply.stdout"
 
-- name: Enable disable-thp service
-  ansible.builtin.systemd:
-    name: disable-thp
-    enabled: true
-    state: started
+    - name: Deploy the THP unit
+      ansible.builtin.template:
+        src: patroni-thp.service.j2
+        dest: /etc/systemd/system/patroni-thp.service
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Enable the THP unit
+      ansible.builtin.systemd:
+        name: patroni-thp
+        enabled: true
+        daemon_reload: true
 
 ###############################################################################
 # 7. Auto-detect I/O scheduler (none for SSD, mq-deadline for HDD)
 ###############################################################################
-- name: Resolve block device for postgresql_dir
+- name: Resolve block device for patroni_postgresql_dir
   ansible.builtin.shell: |
-    DEV=$(df --output=source "{{ postgresql_dir }}" 2>/dev/null | tail -1)
+    DEV=$(df --output=source "{{ patroni_postgresql_dir }}" 2>/dev/null | tail -1)
     BDEV=$(lsblk -ndo PKNAME "${DEV}" 2>/dev/null || basename "${DEV}" | sed 's/[0-9]*$//')
     echo "${BDEV}"
   args:

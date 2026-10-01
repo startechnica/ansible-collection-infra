@@ -71,9 +71,9 @@ EXAMPLES = r'''
     replica_set: configReplSet
     configsvr: true
     members:
-      - "10.147.8.56:27018"
-      - "10.147.8.57:27018"
-      - "10.147.8.58:27018"
+      - "10.20.8.56:27018"
+      - "10.20.8.57:27018"
+      - "10.20.8.58:27018"
     tls_certfile: /etc/mongo/ssl/healthcheck.pem
     tls_cafile: /etc/mongo/ssl/ca.pem
 
@@ -82,9 +82,9 @@ EXAMPLES = r'''
     container: mongodb-mongod
     replica_set: rs0
     members:
-      - "10.147.8.56:27019"
-      - "10.147.8.57:27019"
-      - "10.147.8.58:27019"
+      - "10.20.8.56:27019"
+      - "10.20.8.57:27019"
+      - "10.20.8.58:27019"
     tls_certfile: /etc/mongo/ssl/healthcheck.pem
     tls_cafile: /etc/mongo/ssl/ca.pem
 '''

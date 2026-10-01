@@ -10,6 +10,14 @@
 #   instances_to_create — entries from `instances` whose name isn't on vCenter
 #   instances_to_skip   — entries from `instances` whose name IS on vCenter
 
+# Performance: this query only feeds existing_vm_names, which keeps a single
+# field per VM — guest_name. By default vmware_vm_info gathers cluster,
+# datacenter, datastore, ESXi host, folder, MAC, network and resource-pool
+# detail for every VM in the folder (and templates too), all of which is
+# discarded here. Disable every show_* flag and restrict to vm_type=vm so the
+# response is just the name list — a much smaller, faster payload (and less
+# prone to the truncated-read failures big responses trigger on busy vCenters).
+# guest_name is always returned regardless of the show_* flags.
 - name: Get all existing VMs in folder
   community.vmware.vmware_vm_info:
     hostname: "{{ vcenter_connect.hostname }}"
@@ -17,6 +25,18 @@
     password: "{{ vcenter_connect.password }}"
     validate_certs: "{{ vcenter_connect.validate_certs }}"
     folder: "{{ instance_folder_path }}"
+    vm_type: vm
+    show_cluster: false
+    show_datacenter: false
+    show_datastore: false
+    show_esxi_hostname: false
+    show_folder: false
+    show_mac_address: false
+    show_net: false
+    show_resource_pool: false
+    show_tag: false
+    show_allocated: false
+    show_attribute: false
   delegate_to: localhost
   run_once: true
   register: existing_vms_info

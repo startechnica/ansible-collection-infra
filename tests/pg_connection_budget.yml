@@ -1,0 +1,518 @@
+---
+# Regression coverage for the PostgreSQL connection budget.
+#
+# This guards the connection analogue of the memory bug in
+# tests/preflight_mem_budget.yml, and it starts from two real defects found by
+# doing the arithmetic by hand:
+#   1. `pgbouncer_default_pool_size` was a variable set to 20 that NOTHING read
+#      — templates/pgbouncer.ini.j2 hardcoded default_pool_size = 50, along with
+#      min_pool_size, reserve_pool_size and max_client_conn. Setting the
+#      variable in inventory changed nothing, silently.
+#   2. `max_connections: 200` was a literal in templates/patroni.yml.j2, so the
+#      ceiling every other cap was reasoned against could not be read, checked
+#      or raised from inventory.
+# Together they made the real constraint invisible: PgBouncer's pool sizes are
+# PER (user, database) pair, so the demand is a PRODUCT. Three app databases sit
+# at 180 of 200; a fourth wants 240 and clients start getting "FATAL: sorry, too
+# many clients already" — in the application, not in PostgreSQL's startup.
+#
+# Run from collection root:
+#   ansible-playbook tests/pg_connection_budget.yml
+
+- name: "Connections :: pair counting and the shipped defaults"
+  hosts: localhost
+  gather_facts: false
+  connection: local
+
+  tasks:
+    - name: "Patroni :: import role variables"
+      ansible.builtin.import_role:
+        name: patroni
+        tasks_from: export_vars
+
+    # These four defaults are the values templates/pgbouncer.ini.j2 hardcoded
+    # before they became variables. They must stay equal to those literals or
+    # wiring them up silently re-sizes every existing deployment's pools.
+    - name: "Defaults :: the pool sizes match what the template used to hardcode"
+      ansible.builtin.assert:
+        that:
+          - patroni_pgbouncer_max_client_conn == 1000
+          - patroni_pgbouncer_default_pool_size == 50
+          - patroni_pgbouncer_reserve_pool_size == 10
+          - patroni_pgbouncer_min_pool_size == 10
+        fail_msg: >-
+          A pool-sizing default no longer matches the value
+          templates/pgbouncer.ini.j2 hardcoded before this was wired up.
+          Changing one of these changes pool sizes on every existing
+          deployment on its next run — that needs a CHANGELOG breaking-change
+          entry, not just a new default.
+
+    - name: "Defaults :: the dead pre-rename variable is gone"
+      ansible.builtin.assert:
+        that:
+          - pgbouncer_default_pool_size is not defined
+        fail_msg: >-
+          pgbouncer_default_pool_size is back. It was renamed to
+          patroni_pgbouncer_default_pool_size precisely because the old name was
+          never read by the template; reintroducing it recreates a variable that
+          looks effective and isn't.
+
+    - name: "Defaults :: min_pool_size cannot exceed the pool it warms"
+      ansible.builtin.assert:
+        that:
+          - patroni_pgbouncer_min_pool_size | int <= patroni_pgbouncer_default_pool_size | int
+
+    - name: "Defaults :: the connection ceiling and overhead are readable"
+      ansible.builtin.assert:
+        that:
+          - patroni_pg_max_connections == 200
+          - patroni_pg_conn_overhead == 20
+          - patroni_pg_conn_strict is false
+
+    # PgBouncer opens one pool per (user, database) pair, so the multiplier is
+    # the pair count, not the database count. Each case below is a shape that
+    # reaches this from a real inventory.
+    - name: "Pairs :: verify the pair count derived from patroni_databases"
+      ansible.builtin.assert:
+        that:
+          - patroni_pg_conn_pairs | int == _case.want
+        fail_msg: >-
+          {{ _case.name }}: expected {{ _case.want }} pair(s), got
+          {{ patroni_pg_conn_pairs }}. The count is every user under every
+          declared database, plus one for PgBouncer's own auth_query pool.
+        success_msg: "{{ _case.name }} -> {{ patroni_pg_conn_pairs }} pair(s)"
+      vars:
+        patroni_databases: "{{ _case.dbs }}"
+      loop:
+        # The shipped default: no application databases yet, so the only pool is
+        # PgBouncer's auth_query pool against `postgres`.
+        - name: no databases declared
+          dbs: []
+          want: 1
+        # The GitLab case from the defaults' own comments: Rails' two databases
+        # plus Praefect, one user each.
+        - name: three databases, one user each
+          dbs:
+            - {name: gitlabhq_production, users: [{name: gitlab}]}
+            - {name: gitlabhq_production_ci, users: [{name: gitlab}]}
+            - {name: praefect_production, users: [{name: praefect}]}
+          want: 4
+        # A read-only companion user gets its own pool once it connects, so it
+        # counts. Conservative is the right direction for a budget.
+        - name: one database with a read-write and a read-only user
+          dbs:
+            - {name: app_main, users: [{name: app_main}, {name: app_main_ro}]}
+          want: 3
+        # `users` is optional — a database can be declared with just an owner.
+        # A bare map(attribute='users') raises on this shape.
+        - name: database declared without a users list
+          dbs:
+            - {name: app_main, owner: app_main}
+          want: 1
+        # `users:` written with nothing under it is valid YAML and parses to
+        # None, which `default=[]` on the attribute lookup does NOT catch — the
+        # attribute exists, it is just null. Both of these reached the original
+        # expression as "object of type 'NoneType' has no len()", failing a
+        # preflight check before anything had been deployed.
+        - name: database with an explicitly null users key
+          dbs:
+            - {name: app_main, users: null}
+          want: 1
+        - name: patroni_databases itself null
+          dbs: null
+          want: 1
+        - name: mixed, some with users and some without
+          dbs:
+            - {name: app_main, users: [{name: app_main}]}
+            - {name: app_scratch, owner: app_main}
+            - {name: app_legacy, users: null}
+          want: 2
+      loop_control:
+        loop_var: _case
+        label: "{{ _case.name }}"
+
+    # The finding this work produced, pinned so nobody "fixes" it by accident.
+    #
+    # At the shipped defaults the budget runs out at the THIRD user/database
+    # pair, not the fourth as the original hand arithmetic suggested — that
+    # estimate counted 3 x 60 = 180 against 200 and stopped, ignoring the
+    # pooler-bypass listener (20) and the non-pool backends (20). With those,
+    # three pairs is 220 and already over.
+    #
+    # Two pairs is therefore the most the defaults actually support, and the
+    # fleet sits right on the line: every PostgreSQL inventory that declares
+    # databases declares one database with two users, which is 2 declared pairs
+    # + PgBouncer's auth pool = 3, i.e. 220 of 200. Those clusters are fine in
+    # practice because PgBouncer fills pools on demand and the pools are never
+    # all saturated at once — which is precisely why this needed a check rather
+    # than an incident to surface it.
+    #
+    # The defaults are deliberately NOT adjusted to make this pass. 50/10 are
+    # the values templates/pgbouncer.ini.j2 has always rendered, so changing
+    # them re-sizes live pools, and raising max_connections would put every
+    # existing cluster into pending_restart via reconcile_pg_parameters.yml.
+    # Ship the truth, let the operator choose.
+    - name: "Budget :: the shipped defaults run out at the third pair"
+      ansible.builtin.assert:
+        that:
+          - _at_two | int <= patroni_pg_max_connections | int
+          - _at_three | int > patroni_pg_max_connections | int
+          # The pooled product alone fits at three pairs; it is the fixed terms
+          # that tip it over. Worth asserting separately, because it is why the
+          # original by-hand estimate (which omitted them) said four.
+          - (_per_pair | int) * 3 <= patroni_pg_max_connections | int
+        fail_msg: >-
+          Two pairs now costs {{ _at_two }} and three costs {{ _at_three }}
+          against max_connections {{ patroni_pg_max_connections }}. The shipped
+          defaults are meant to sit just under the ceiling at two pairs; if that
+          changed, re-read the sizing comments in defaults/main/pgbouncer.yml
+          and defaults/main/postgresql.yml before adjusting this expectation.
+        success_msg: >-
+          2 pairs = {{ _at_two }}, 3 pairs = {{ _at_three }},
+          max_connections = {{ patroni_pg_max_connections }}
+      vars:
+        _per_pair: >-
+          {{ (patroni_pgbouncer_default_pool_size | int)
+             + (patroni_pgbouncer_reserve_pool_size | int) }}
+        _fixed: >-
+          {{ (patroni_haproxy_direct_server_maxconn | int)
+             + (patroni_pg_conn_overhead | int) }}
+        _at_two: "{{ (_per_pair | int) * 2 + (_fixed | int) }}"
+        _at_three: "{{ (_per_pair | int) * 3 + (_fixed | int) }}"
+
+    # The finding is robust to the softest number in it. patroni_pg_conn_overhead
+    # is an estimate (3 superuser_reserved + Patroni + exporter + WAL-G + this
+    # role's own tasks + admin headroom), so if the verdict flipped when the
+    # estimate were halved, the check would be measuring my guess rather than
+    # the configuration. It doesn't: the pooled product plus the bypass path
+    # reaches the ceiling on its own.
+    - name: "Budget :: the third-pair verdict does not rest on the overhead estimate"
+      ansible.builtin.assert:
+        that:
+          - (_per_pair | int) * 3
+            + (patroni_haproxy_direct_server_maxconn | int)
+            >= patroni_pg_max_connections | int
+        fail_msg: >-
+          Three pairs plus the bypass listener is now under max_connections, so
+          whether the budget fits depends on patroni_pg_conn_overhead — an
+          estimate. Re-check the breakdown in defaults/main/postgresql.yml.
+      vars:
+        _per_pair: >-
+          {{ (patroni_pgbouncer_default_pool_size | int)
+             + (patroni_pgbouncer_reserve_pool_size | int) }}
+
+- name: "Connections :: preflight thresholds"
+  hosts: localhost
+  gather_facts: false
+  connection: local
+
+  tasks:
+    # Unlike memory there is no advisory band: PostgreSQL refuses connection
+    # max_connections + 1 outright, so there is one threshold and it is hard.
+    # Strict mode is the only observable behaviour, so every boundary is
+    # expressed as "does strict pass or fail".
+    - name: "Threshold :: a budget exactly at max_connections passes strict"
+      ansible.builtin.include_role:
+        name: preflight
+        tasks_from: pg_connections
+      vars:
+        pg_conn_max: 200
+        pg_conn_pool_size: 50
+        pg_conn_reserve_size: 10
+        pg_conn_pairs: 3
+        pg_conn_bypass: 0
+        pg_conn_overhead: 20
+        pg_conn_strict: true
+
+    - name: "Threshold :: one connection over max_connections fails strict"
+      block:
+        - name: "Threshold :: run strict at max_connections + 1"
+          ansible.builtin.include_role:
+            name: preflight
+            tasks_from: pg_connections
+          vars:
+            pg_conn_max: 200
+            pg_conn_pool_size: 50
+            pg_conn_reserve_size: 10
+            pg_conn_pairs: 3
+            pg_conn_bypass: 1
+            pg_conn_overhead: 20
+            pg_conn_strict: true
+
+        - name: "Threshold :: strict mode should not have reached here"
+          ansible.builtin.fail:
+            msg: >-
+              pg_conn_strict=true must fail once the budget exceeds
+              max_connections. Either the comparison is wrong, or pg_conn_bypass
+              is not being added to the total.
+      rescue:
+        - name: "Threshold :: confirm strict mode aborted"
+          ansible.builtin.debug:
+            msg: "strict correctly failed at 201 against max_connections 200"
+
+    # The product is the term people miss, so it gets its own boundary: the same
+    # pool sizes that pass at three pairs must fail at four with everything else
+    # held constant.
+    - name: "Threshold :: one more pair alone pushes it over"
+      block:
+        - name: "Threshold :: run strict with a fourth user/database pair"
+          ansible.builtin.include_role:
+            name: preflight
+            tasks_from: pg_connections
+          vars:
+            pg_conn_max: 200
+            pg_conn_pool_size: 50
+            pg_conn_reserve_size: 10
+            pg_conn_pairs: 4
+            pg_conn_bypass: 0
+            pg_conn_overhead: 20
+            pg_conn_strict: true
+
+        - name: "Threshold :: adding a pair should have failed strict"
+          ansible.builtin.fail:
+            msg: >-
+              pg_conn_pairs is not multiplying the pool size. Four pairs at
+              (50 + 10) each is 240 backends, which cannot fit in 200.
+      rescue:
+        - name: "Threshold :: confirm the pair count multiplies"
+          ansible.builtin.debug:
+            msg: "4 pairs correctly failed where 3 passed"
+
+    # reserve_pool_size is per pair too, which is easy to model as a one-off
+    # allowance. Dropping it must be the difference between fail and pass.
+    - name: "Threshold :: the reserve pool is counted per pair, not once"
+      block:
+        - name: "Threshold :: run strict with reserve large enough to matter"
+          ansible.builtin.include_role:
+            name: preflight
+            tasks_from: pg_connections
+          vars:
+            pg_conn_max: 200
+            pg_conn_pool_size: 50
+            pg_conn_reserve_size: 20
+            pg_conn_pairs: 3
+            pg_conn_bypass: 0
+            pg_conn_overhead: 10
+            pg_conn_strict: true
+
+        - name: "Threshold :: a per-pair reserve should have failed strict"
+          ansible.builtin.fail:
+            msg: >-
+              pg_conn_reserve_size is being added once instead of per pair.
+              3 x (50 + 20) + 10 is 220, which cannot fit in 200.
+      rescue:
+        - name: "Threshold :: confirm the reserve multiplies with the pool"
+          ansible.builtin.debug:
+            msg: "per-pair reserve correctly failed strict"
+
+    # Same opt-out contract as the memory check, and the same leakage trap: the
+    # numbers live in block-level `vars`, not facts, so a caller that passes no
+    # ceiling must do nothing rather than re-report the previous caller's budget.
+    - name: "Threshold :: no ceiling means no check"
+      ansible.builtin.include_role:
+        name: preflight
+        tasks_from: pg_connections
+      vars:
+        pg_conn_strict: true
+
+    # Defaults inside pg_connections.yml must not turn a partially-specified
+    # call into a false pass or a crash — an undefined optional term is 0.
+    - name: "Threshold :: only a ceiling and a pool size is enough to run"
+      ansible.builtin.include_role:
+        name: preflight
+        tasks_from: pg_connections
+      vars:
+        pg_conn_max: 200
+        pg_conn_pool_size: 50
+        pg_conn_strict: true
+
+# Everything above tests the two halves separately: patroni derives a pair count,
+# preflight does arithmetic on numbers handed to it. This play tests the GLUE —
+# the seven `vars:` lines on the preflight include in roles/patroni/tasks/main.yml
+# — by composing them from patroni's real variables. A typo'd name there would
+# otherwise only surface on a live host.
+- name: "Connections :: the wiring in patroni's preflight include"
+  hosts: localhost
+  gather_facts: false
+  connection: local
+
+  tasks:
+    - name: "Wiring :: import patroni role variables"
+      ansible.builtin.import_role:
+        name: patroni
+        tasks_from: export_vars
+
+    # Role defaults, no databases declared: 1 pair (PgBouncer's auth pool) at
+    # 60, plus 20 bypass and 20 overhead = 100 of 200. Strict must pass, so a
+    # fresh cluster is never blocked by this check.
+    - name: "Wiring :: a default cluster passes strict through the real variables"
+      ansible.builtin.include_role:
+        name: preflight
+        tasks_from: pg_connections
+      vars:
+        pg_conn_max: "{{ patroni_pg_max_connections }}"
+        pg_conn_pool_size: "{{ patroni_pgbouncer_default_pool_size }}"
+        pg_conn_reserve_size: "{{ patroni_pgbouncer_reserve_pool_size }}"
+        pg_conn_pairs: "{{ patroni_pg_conn_pairs }}"
+        pg_conn_bypass: "{{ patroni_haproxy_direct_server_maxconn }}"
+        pg_conn_overhead: "{{ patroni_pg_conn_overhead }}"
+        pg_conn_strict: true
+
+    # The fleet's actual shape, and the claim made in the CHANGELOG: one
+    # database with two users is 2 declared pairs + the auth pool = 3, which is
+    # 220 of 200. Asserted here so that claim can't quietly stop being true.
+    - name: "Wiring :: one database with two users is already over budget"
+      block:
+        - name: "Wiring :: run strict with a two-user database declared"
+          ansible.builtin.include_role:
+            name: preflight
+            tasks_from: pg_connections
+          vars:
+            patroni_databases:
+              - name: prd_app
+                users:
+                  - {name: prd_app}
+                  - {name: prd_app_ro}
+            pg_conn_max: "{{ patroni_pg_max_connections }}"
+            pg_conn_pool_size: "{{ patroni_pgbouncer_default_pool_size }}"
+            pg_conn_reserve_size: "{{ patroni_pgbouncer_reserve_pool_size }}"
+            pg_conn_pairs: "{{ patroni_pg_conn_pairs }}"
+            pg_conn_bypass: "{{ patroni_haproxy_direct_server_maxconn }}"
+            pg_conn_overhead: "{{ patroni_pg_conn_overhead }}"
+            pg_conn_strict: true
+
+        - name: "Wiring :: the fleet's shape should have failed strict"
+          ansible.builtin.fail:
+            msg: >-
+              A single database with two users no longer exceeds the connection
+              budget. That is the shape every PostgreSQL inventory in the fleet
+              uses, and the CHANGELOG entry for this feature says it warns —
+              if the defaults changed, update both.
+      rescue:
+        - name: "Wiring :: confirm the real defaults flag the real shape"
+          ansible.builtin.debug:
+            msg: "1 database x 2 users + auth pool = 3 pairs = 220 of 200, correctly failed"
+
+    # Default is advisory, so the same over-budget cluster still deploys. This is
+    # what patroni actually passes (patroni_pg_conn_strict defaults false), so it
+    # must not abort a run.
+    - name: "Wiring :: the same cluster is advisory at the shipped strictness"
+      ansible.builtin.include_role:
+        name: preflight
+        tasks_from: pg_connections
+      vars:
+        patroni_databases:
+          - name: prd_app
+            users:
+              - {name: prd_app}
+              - {name: prd_app_ro}
+        pg_conn_max: "{{ patroni_pg_max_connections }}"
+        pg_conn_pool_size: "{{ patroni_pgbouncer_default_pool_size }}"
+        pg_conn_reserve_size: "{{ patroni_pgbouncer_reserve_pool_size }}"
+        pg_conn_pairs: "{{ patroni_pg_conn_pairs }}"
+        pg_conn_bypass: "{{ patroni_haproxy_direct_server_maxconn }}"
+        pg_conn_overhead: "{{ patroni_pg_conn_overhead }}"
+        pg_conn_strict: "{{ patroni_pg_conn_strict }}"
+
+- name: "Connections :: rendered configuration"
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  vars:
+    _conn_render_dir: /tmp/pg-connection-budget-test
+    # patroni.yml.j2 needs the per-host identity its tasks normally supply.
+    node_name: pg-1
+    node_ip: 10.0.0.11
+    node_ips: [10.0.0.11, 10.0.0.12, 10.0.0.13]
+
+  tasks:
+    - name: "Render :: import patroni role variables"
+      ansible.builtin.import_role:
+        name: patroni
+        tasks_from: export_vars
+
+    - name: "Render :: recreate render directory"
+      ansible.builtin.file:
+        path: "{{ _conn_render_dir }}"
+        state: "{{ item }}"
+        mode: "0755"
+      loop: [absent, directory]
+
+    - name: "Render :: pgbouncer.ini and patroni.yml with defaults"
+      ansible.builtin.template:
+        src: "../roles/patroni/templates/{{ item }}.j2"
+        dest: "{{ _conn_render_dir }}/{{ item }}"
+        mode: "0640"
+      loop:
+        - pgbouncer.ini
+        - patroni.yml
+
+    # Non-default values on every one of the five, so a template that still
+    # hardcodes any of them shows up as a mismatch rather than a coincidence.
+    - name: "Render :: pgbouncer.ini and patroni.yml with overrides"
+      ansible.builtin.template:
+        src: "../roles/patroni/templates/{{ item }}.j2"
+        dest: "{{ _conn_render_dir }}/override-{{ item }}"
+        mode: "0640"
+      loop:
+        - pgbouncer.ini
+        - patroni.yml
+      vars:
+        patroni_pgbouncer_max_client_conn: 2500
+        patroni_pgbouncer_default_pool_size: 25
+        patroni_pgbouncer_reserve_pool_size: 5
+        patroni_pgbouncer_min_pool_size: 3
+        patroni_pg_max_connections: 400
+
+    - name: "Render :: read rendered files"
+      ansible.builtin.slurp:
+        src: "{{ _conn_render_dir }}/{{ item }}"
+      loop:
+        - pgbouncer.ini
+        - patroni.yml
+        - override-pgbouncer.ini
+        - override-patroni.yml
+      register: _conn_rendered
+
+    # Parsed into a dict so the assertions below read as config lookups rather
+    # than as regex results.
+    - name: "Render :: parse the connection settings out of both files"
+      ansible.builtin.set_fact:
+        _pgb: "{{ dict(_conn_rendered.results[0].content | b64decode | regex_findall('(?m)^([a-z_]+) = ([0-9]+)$')) }}"
+        _pgb_over: "{{ dict(_conn_rendered.results[2].content | b64decode | regex_findall('(?m)^([a-z_]+) = ([0-9]+)$')) }}"
+        _pat: "{{ (_conn_rendered.results[1].content | b64decode | from_yaml).bootstrap.dcs.postgresql.parameters }}"
+        _pat_over: "{{ (_conn_rendered.results[3].content | b64decode | from_yaml).bootstrap.dcs.postgresql.parameters }}"
+
+    - name: "Render :: every pool setting comes from its variable"
+      ansible.builtin.assert:
+        that:
+          - _pgb.max_client_conn == patroni_pgbouncer_max_client_conn | string
+          - _pgb.default_pool_size == patroni_pgbouncer_default_pool_size | string
+          - _pgb.reserve_pool_size == patroni_pgbouncer_reserve_pool_size | string
+          - _pgb.min_pool_size == patroni_pgbouncer_min_pool_size | string
+        fail_msg: >-
+          A pool setting in the rendered pgbouncer.ini does not match its
+          variable — {{ _pgb }}. A hardcoded value has crept back in.
+
+    - name: "Render :: max_connections comes from its variable"
+      ansible.builtin.assert:
+        that:
+          - _pat.max_connections | int == patroni_pg_max_connections | int
+        fail_msg: >-
+          patroni.yml renders max_connections as {{ _pat.max_connections }}
+          instead of {{ patroni_pg_max_connections }}.
+
+    # The real test of a wired-up variable: overriding it must move the output.
+    # This is exactly what pgbouncer_default_pool_size failed to do.
+    - name: "Render :: overrides reach both rendered files"
+      ansible.builtin.assert:
+        that:
+          - _pgb_over.max_client_conn == '2500'
+          - _pgb_over.default_pool_size == '25'
+          - _pgb_over.reserve_pool_size == '5'
+          - _pgb_over.min_pool_size == '3'
+          - _pat_over.max_connections | int == 400
+        fail_msg: >-
+          An override did not reach the rendered config. pgbouncer.ini:
+          {{ _pgb_over }}; patroni max_connections:
+          {{ _pat_over.max_connections | default('(absent)') }}.

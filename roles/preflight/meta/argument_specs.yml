@@ -4,6 +4,8 @@ argument_specs:
     short_description: Shared preflight for Docker-based cluster roles
     description:
       - Validates the Ansible controller has `cryptography` installed, the target host is root/become, Docker is running, and `docker compose` is available.
+      - On hosts in `patroni_nodes`, also checks the Patroni VIP settings (`patroni_vip_address`, `patroni_vip_mask`, `patroni_vip_engine`), importing only patroni's VIP defaults.
+      - Before the docker / podman checks, fails when the `container_engine` binary isn't on PATH.
       - Included as a role dependency by `mongodb` and `patroni`.
     options:
       debug:
@@ -13,8 +15,84 @@ argument_specs:
       container_mem_request_mb:
         type: int
         description: >-
-          Total RAM requested by containers on this host (MB). Used for a
-          sanity warning when ansible_facts['memtotal_mb'] is below the request.
+          RAM the CALLING role is about to commit on this host (MB) — container
+          memory caps plus any in-process allocation the role configures, such
+          as PostgreSQL's shared_buffers. Leave unset to skip the memory check
+          entirely.
+      container_mem_reserved_mb:
+        type: int
+        default: 0
+        description: >-
+          RAM already committed on this host by something OUTSIDE the calling
+          role — a second stack on the same node, a non-container daemon. Roles
+          cannot discover one another, so this is inventory's job: on a node
+          running both mongodb and patroni, set it to the other stack's total
+          so each run sees the whole budget.
+      container_mem_headroom_pct:
+        type: int
+        default: 15
+        description: >-
+          Share of total RAM deliberately left unbudgeted for the kernel, page
+          cache and anything not counted above. The check warns once the
+          committed total crosses `memtotal_mb * (100 - this) / 100`, rather
+          than waiting for it to exceed RAM outright.
+      container_mem_strict:
+        type: bool
+        default: false
+        description: >-
+          Fail the run when the committed total exceeds total RAM, instead of
+          warning. Off by default so an already over-committed host stays
+          manageable; the headroom warning is advisory either way.
+      pg_conn_max:
+        type: int
+        description: >-
+          PostgreSQL's max_connections on the cluster the calling role is about
+          to configure. Leave unset to skip the connection budget entirely —
+          which is what every non-PostgreSQL caller does.
+      pg_conn_pool_size:
+        type: int
+        default: 0
+        description: >-
+          PgBouncer default_pool_size — server connections PER (user, database)
+          pair. Multiplied by pg_conn_pairs, so this is the term that scales.
+      pg_conn_reserve_size:
+        type: int
+        default: 0
+        description: >-
+          PgBouncer reserve_pool_size — burst server connections above
+          pool_size, also PER pair, so each pair's worst case is
+          (pool_size + reserve_size).
+      pg_conn_pairs:
+        type: int
+        default: 1
+        description: >-
+          How many (user, database) pairs PgBouncer will open pools for. The
+          multiplier people miss: adding one application database silently adds
+          (pool_size + reserve_size) real PostgreSQL backends. patroni derives
+          this from patroni_databases plus PgBouncer's own auth_query pool.
+      pg_conn_bypass:
+        type: int
+        default: 0
+        description: >-
+          Connections reachable on the pooler-BYPASS path (HAProxy's pg-direct
+          listener). Every one is a real backend rather than a pooled client, so
+          it counts against max_connections directly.
+      pg_conn_overhead:
+        type: int
+        default: 0
+        description: >-
+          Backends held by everything else — superuser_reserved_connections,
+          Patroni's monitoring connection, the metrics exporter, WAL-G, admin
+          sessions.
+      pg_conn_strict:
+        type: bool
+        default: false
+        description: >-
+          Fail the run when the connection budget exceeds pg_conn_max, instead
+          of warning. Off by default for the same reason as
+          container_mem_strict: an already over-committed cluster has to stay
+          manageable. Unlike the memory check there is no advisory band —
+          PostgreSQL refuses connection max_connections + 1 outright.
       service_venv_path:
         type: str
         default: /opt/ansible-venv

@@ -1,0 +1,68 @@
+---
+# Regression coverage for where the vip-manager image comes from.
+#
+# What it guards:
+#   1. patroni_vip_manager_image is pinned to a -r<revision> tag.
+#   2. Both engines run that image, and compose has no local build context.
+#   3. The Quadlet orders vip-manager after etcd without Requires=etcd.service,
+#      which would stop vip-manager, and strand the VIP, with this node's etcd.
+#
+# Run from collection root:
+#   ansible-playbook tests/patroni_vip_manager_image.yml
+
+- name: "VIP manager :: runs the pulled image"
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  vars:
+    _vm_dir: /tmp/patroni-vip-manager-image-test
+    # What the compose and Quadlet templates read from the inventory and from
+    # shared/_computed_vars.yml (which needs a patroni_nodes group).
+    node_ip: 10.0.0.11
+    node_ips: [10.0.0.11, 10.0.0.12, 10.0.0.13]
+    etcd_cluster_state: new
+    patroni_postgresql_postgres_password: test-only
+    patroni_vip_enabled: true
+    use_vip_manager: true
+  tasks:
+    - name: Import patroni role variables
+      ansible.builtin.import_role:
+        name: patroni
+        tasks_from: export_vars
+
+    - name: Verify the image is pinned to a revision
+      ansible.builtin.assert:
+        that:
+          - patroni_vip_manager_image is search(':\d+\.\d+\.\d+-debian-\d+-r\d+$')
+
+    - name: Recreate render directory
+      ansible.builtin.file:
+        path: "{{ _vm_dir }}"
+        state: "{{ _vm_state }}"
+        mode: "0755"
+      loop: [absent, directory]
+      loop_control:
+        loop_var: _vm_state
+
+    - name: Render compose and the Quadlet
+      ansible.builtin.template:
+        src: "../roles/patroni/templates/{{ item.src }}"
+        dest: "{{ _vm_dir }}/{{ item.dest }}"
+        mode: "0644"
+      loop:
+        - {src: compose/docker-compose.yml.j2, dest: compose.yml}
+        - {src: quadlets/vip-manager.container.j2, dest: vip-manager.container}
+      loop_control:
+        label: "{{ item.dest }}"
+
+    - name: Verify both engines run the pulled image
+      ansible.builtin.assert:
+        that:
+          - _svc.image == patroni_vip_manager_image
+          - _svc.build is not defined
+          - _quadlet is search('(?m)^Image=' ~ (patroni_vip_manager_image | regex_escape) ~ '$')
+          - _quadlet is search('(?m)^After=.*\\betcd\\.service\\b')
+          - _quadlet is not search('(?m)^(Requires|BindsTo|PartOf)=.*\\betcd\\.service')
+      vars:
+        _svc: "{{ (lookup('file', _vm_dir ~ '/compose.yml') | from_yaml).services['vip-manager'] }}"
+        _quadlet: "{{ lookup('file', _vm_dir ~ '/vip-manager.container') }}"

@@ -73,6 +73,22 @@ options:
     description: Restore a specific collection only (requires db).
     default: ""
     type: str
+  tls:
+    description: Connect with TLS (mongorestore --tls).
+    default: false
+    type: bool
+  tls_host_ca_file:
+    description: >
+      Path to the CA certificate on the **host** — mounted read-only into
+      /tls/ca.pem inside the container.
+    default: ""
+    type: str
+  tls_cert_file:
+    description: >
+      Path to the client certificate (PEM) on the **host** for
+      mutual-TLS authentication.  Mounted read-only into /tls/client.pem.
+    default: ""
+    type: str
 '''
 
 EXAMPLES = r'''
@@ -136,6 +152,9 @@ def main():
             drop=dict(type='bool', default=False),
             db=dict(type='str', default=''),
             collection=dict(type='str', default=''),
+            tls=dict(type='bool', default=False),
+            tls_host_ca_file=dict(type='str', default=''),
+            tls_cert_file=dict(type='str', default=''),
         ),
         supports_check_mode=True,
     )
@@ -154,6 +173,9 @@ def main():
     drop = module.params['drop']
     db = module.params['db']
     collection = module.params['collection']
+    use_tls = module.params['tls']
+    tls_host_ca_file = module.params['tls_host_ca_file']
+    tls_cert_file = module.params['tls_cert_file']
 
     result = dict(
         changed=False,
@@ -183,6 +205,12 @@ def main():
         "--network", "container:%s" % container,
         "-v", "%s:/backup:ro" % parent_dir,
         "--user", "%d:%d" % (uid, gid),
+    ]
+    if tls_host_ca_file:
+        restore_cmd.extend(["-v", "%s:/tls/ca.pem:ro" % tls_host_ca_file])
+    if tls_cert_file:
+        restore_cmd.extend(["-v", "%s:/tls/client.pem:ro" % tls_cert_file])
+    restore_cmd.extend([
         image,
         "mongorestore",
         "--host", host,
@@ -190,8 +218,14 @@ def main():
         "--username", username,
         "--password", password,
         "--authenticationDatabase", auth_database,
-    ]
+    ])
 
+    if use_tls:
+        restore_cmd.append("--tls")
+        if tls_host_ca_file:
+            restore_cmd.extend(["--tlsCAFile", "/tls/ca.pem"])
+        if tls_cert_file:
+            restore_cmd.extend(["--tlsCertificateKeyFile", "/tls/client.pem"])
     if use_gzip:
         restore_cmd.append("--gzip")
     if drop:

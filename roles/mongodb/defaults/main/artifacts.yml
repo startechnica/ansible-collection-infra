@@ -1,0 +1,15 @@
+---
+# MongoDB role defaults: controller-side artifact paths and uninstall safety.
+# The role loads every file in defaults/main/ (see tasks/export_vars.yml).
+
+# ── Local artifacts (on the Ansible controller) ──
+# Single bridge from the play-level `artifacts_dir` (set on localhost by
+# playbooks/mongodb/_setup.yml — add_host nodes have inventory_file == None,
+# so we can only stash it there). All in-role paths derive from
+# `mongodb_artifacts_dir` so a consumer can override one var to relocate
+# every mongodb artifact (creds, certs, etc.).
+mongodb_artifacts_dir: "{{ hostvars['localhost'].artifacts_dir }}/mongodb"
+mongodb_local_certs_dir: "{{ mongodb_artifacts_dir }}/certs"
+
+# ── Uninstall safety ──
+mongodb_destroy_prune: false

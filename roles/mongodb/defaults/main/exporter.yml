@@ -1,0 +1,40 @@
+---
+# MongoDB role defaults: Prometheus mongodb_exporter.
+# The role loads every file in defaults/main/ (see tasks/export_vars.yml).
+#
+# The exporter's memory cap and OOM bias live in main/resources.yml with the
+# rest of the memory budget, and its CN in main/tls.yml with the rest of the
+# PKI naming — see those files for why.
+
+mongodb_exporter_enabled: true
+# Fully-qualified registry path is required for podman / Quadlet on
+# FCOS, which ships with short-name-mode=enforcing — `percona/...`
+# alone fails with "short-name resolution enforced but cannot prompt
+# without a TTY" inside a systemd service. docker is more forgiving
+# and auto-resolves bare names to docker.io, but explicit is better
+# than implicit.
+mongodb_exporter_image: "docker.io/percona/mongodb_exporter:0.52.0"
+mongodb_exporter_port: 9216
+
+# Sharded clusters only: extra exporters connected directly to this node's
+# shard mongod and config server. The exporter above talks to mongos, which
+# reports router state only; replication, oplog, WiredTiger and opcounter
+# metrics of the data-bearing processes need a direct connection to each.
+# They reuse the exporter's image, client cert, flags, memory cap and OOM bias.
+# (--discovering-mode doesn't replace them: it auto-discovers collections for
+# the collstats/indexstats collectors, not cluster members.)
+#
+# The shard exporter needs its X.509 user on the shard replica set itself:
+# users created through mongos live on the config servers, and a direct
+# connection to a shard mongod only sees the shard's own users. The role
+# creates it on each provision run (init_cluster.yml → exporter_users.yml),
+# the same way pbm_setup.yml creates PBM's shard-local user.
+#
+# Each exporter is its own scrape target on the same host. Give each target a
+# distinct label when scraping (the grafana_alloy role's extra scrapes take a
+# `labels` map), or the series without topology labels (mongodb_up, go_*,
+# process_*) collide.
+mongodb_exporter_shard_enabled: false
+mongodb_exporter_shard_port: 9217
+mongodb_exporter_configsvr_enabled: false
+mongodb_exporter_configsvr_port: 9218

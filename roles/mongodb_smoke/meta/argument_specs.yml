@@ -1,0 +1,49 @@
+---
+argument_specs:
+  main:
+    short_description: Post-deploy smoke test for a mongodb cluster
+    description:
+      - Reads live cluster state (mongod, configsvr, mongos, exporter, PBM, scheduled mongodump, TLS) and reports PASS/FAIL.
+      - All asserts are read-only; no destructive tests are run by default.
+      - Run via playbooks/test/mongodb-smoke.yml or via scripts/smoke.sh.
+    options:
+      mongodb_smoke_enabled:
+        type: bool
+        default: true
+        description: Master switch. When false, the role is a no-op.
+      mongodb_smoke_replication_wait_seconds:
+        type: int
+        default: 5
+        description: Seconds to wait after the mongos write before reading from primary.
+      mongodb_smoke_cert_min_days:
+        type: int
+        default: 30
+        description: Minimum days remaining for any cert to count as healthy.
+      mongodb_smoke_check_containers:
+        type: bool
+        default: true
+        description: Skip the per-node container-up check.
+      mongodb_smoke_check_cluster_state:
+        type: bool
+        default: true
+        description: Skip the mongodb_status module replica-set check.
+      mongodb_smoke_check_mongos:
+        type: bool
+        default: true
+        description: Skip the mongos ping check.
+      mongodb_smoke_check_endtoend:
+        type: bool
+        default: true
+        description: Skip the write+replicate end-to-end check.
+      mongodb_smoke_check_pbm:
+        type: bool
+        default: true
+        description: Skip the PBM status + base-backup check (when enabled).
+      mongodb_smoke_check_mongodump_timer:
+        type: bool
+        default: true
+        description: Skip the mongodb-backup.timer active check.
+      mongodb_smoke_check_tls:
+        type: bool
+        default: true
+        description: Skip the cert expiry check.

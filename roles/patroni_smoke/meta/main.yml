@@ -1,0 +1,5 @@
+---
+# Read-only smoke test for a deployed patroni cluster. No role deps.
+# The role assumes patroni / etcd / haproxy / etc. are already running
+# (this is a *post-deploy* verification, not a deployer).
+dependencies: []

@@ -37,7 +37,7 @@ instance_datacenter: ""
 
 ## @param instance_domain_name [default: ""] Domain name appended to VM hostnames.
 ## Set to empty string to use short hostnames only.
-## e.g. "vm-01" becomes "vm-01.id-central-1.compute.internal"
+## e.g. "vm-01" becomes "vm-01.example.internal"
 ##
 instance_domain_name: ""
 
@@ -65,7 +65,7 @@ instance_folder: ""
 
 ## @param instance_cluster_name [default: ""] vSphere cluster name for cluster-based deployments.
 ## Mutually exclusive with vsphere_esxi_hostname. Set one or the other.
-## e.g. "ProductionCluster", "Deviruchi"
+## e.g. "ProductionCluster", "cluster-01"
 ##
 instance_cluster_name: ""
 
@@ -140,18 +140,31 @@ instance_platform_preset: fedora-coreos
 ## content library item names. Item will be named "{{ template_prefix }}-{{ version }}".
 ## Only used when auto_import is true.
 ##
+## @param content_library_import_retries [default: 3] Number of import attempts
+## when vCenter's OVA transfer fails transiently ("IO error during transfer ...
+## Pipe closed" — a network/NFC/vSAN blip mid-pull). Each retry first deletes
+## the partial item so the re-import is clean, not a silent no-op.
+## @param content_library_import_retry_delay [default: 30] Seconds to wait
+## between import attempts (backoff).
+## @param content_library_import_timeout [default: 3600] Per-attempt upload
+## timeout in seconds passed to the import module; raise for slow links or
+## very large OVAs.
+##
 content_library_name: ""
 content_library_item_name: ""
 content_library_type: "ovf"
 content_library_auto_import: true
 content_library_template_prefix: "fedora-coreos"
+content_library_import_retries: 3
+content_library_import_retry_delay: 30
+content_library_import_timeout: 3600
 
 ## @section Network Parameters
 ## @description Port group configuration for VM networking.
 
 ## @param portgroup_name [default: ""] Portgroup name to attach VMs to.
 ## Must exist in vCenter or will be created if vlan_id is provided.
-## e.g. "v3244", "VM Network", "10g_1_v3244"
+## e.g. "vlan100", "VM Network", "10g_vlan100"
 ##
 ## @param portgroup_vlan_id [default: 0] VLAN ID for creating new portgroups.
 ## Only used when the portgroup doesn't exist and needs to be created.
@@ -161,7 +174,7 @@ content_library_template_prefix: "fedora-coreos"
 ##
 ## @param portgroup_dvswitch_name [default: ""] Distributed vSwitch name for cluster deployments.
 ## Only used when creating distributed portgroups on a cluster.
-## e.g. "DSwitch1-Data", "DSwitch0-Mgmt"
+## e.g. "dvs-data", "dvs-mgmt"
 ##
 ## @param portgroup_create [default: false] Auto-create missing portgroups
 ## in vCenter instead of failing in validate/network.yml. When false (the
