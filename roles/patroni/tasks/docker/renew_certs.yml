@@ -37,6 +37,18 @@
         services:
           - haproxy
 
+    # vip-manager reads its etcd client cert only at start. A restart leaves
+    # the VIP in place.
+    - name: Restart vip-manager
+      community.docker.docker_compose_v2:
+        project_src: "{{ patroni_dir }}"
+        state: restarted
+        services:
+          - vip-manager
+      when:
+        - patroni_vip_enabled
+        - use_vip_manager
+
 # -- Full restart (CA rotation) ---------------------------------------------
 - name: Full restart (CA rotation)
   when: rotate_ca | default(false) | bool

@@ -1,17 +1,35 @@
 ---
 # Docker Compose deploy path. Mirrors what tasks/docker_compose.yml +
 # tasks/start.yml used to do, consolidated into one file with clear
-# ordering: render compose → build local images (vip-manager OR
-# keepalived) → up → register services in NetBox.
+# ordering: render compose → pull vip-manager, OR build keepalived
+# → etcd, one node at a time → up → register services in NetBox.
+#
+# A changed compose file needs no restart handler: `up` recreates exactly the
+# services whose definition changed, and nothing else.
 
 - name: Render docker-compose.yml
   ansible.builtin.template:
     src: compose/docker-compose.yml.j2
     dest: "{{ patroni_dir }}/docker-compose.yml"
     mode: "0644"
-  notify: restart stack
 
-- name: Build vip-manager image
+# The VIP is off, or keepalived runs it now. `up` below would remove the
+# vip-manager container as an orphan and leave its VIP behind, so remove it
+# here and release the VIP.
+- name: Retire vip-manager
+  when: not (patroni_vip_enabled and use_vip_manager)
+  block:
+    - name: Remove the vip-manager container
+      community.docker.docker_container:
+        name: vip-manager
+        state: absent
+      register: _vm_removed
+
+    - name: Release the VIP vip-manager left
+      ansible.builtin.include_tasks: ../shared/vip_manager_release.yml
+      when: _vm_removed is changed
+
+- name: Pull vip-manager image
   ansible.builtin.include_tasks: vip_manager.yml
   when:
     - patroni_vip_enabled
@@ -40,6 +58,21 @@
   when:
     - patroni_walg_enabled
     - not patroni_walg_build_local
+
+# Left to `up`, a change to etcd's definition would recreate every member at
+# once. `up` then finds etcd converged.
+- name: Check whether etcd is running
+  community.docker.docker_container_info:
+    name: etcd
+  register: _etcd_before
+
+- name: Start or recreate etcd, one node at a time
+  ansible.builtin.include_tasks: ../shared/etcd_rolling_restart.yml
+  vars:
+    _etcd_was_running: "{{ _etcd_before.exists and _etcd_before.container.State.Running | default(false) }}"
+  loop: "{{ ansible_play_hosts }}"
+  loop_control:
+    loop_var: _etcd_node
 
 - name: Start the stack (docker compose up)
   community.docker.docker_compose_v2:

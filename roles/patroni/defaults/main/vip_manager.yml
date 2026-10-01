@@ -2,12 +2,15 @@
 # Patroni role defaults: vip-manager, the default VIP engine.
 # The role loads every file in defaults/main/ (see tasks/export_vars.yml).
 
-patroni_vip_manager_version: "4.0.0"
-# Architecture suffix for the vip-manager release binary. Auto-detected
-# from `ansible_architecture` (logic in vars/main/vip_manager.yml :: _vip_manager_arch).
-# Override here in inventory to force a specific value (cross-arch build,
-# air-gapped mirror with a renamed asset, …).
-patroni_vip_manager_arch: "{{ _vip_manager_arch }}"
+# Prebuilt image, published for amd64 only.
+# https://github.com/firmansyahn/containers/tree/main/containers/vip-manager
+#
+# Pin a -r<revision> tag (pushed once, never moved) or a digest, never a branch
+# tag or latest. 5.x, because 4.2.0 can leave the VIP up on two nodes after an
+# etcd watch is cancelled (cybertec-postgresql/vip-manager#394, fixed in 5.0.0
+# only). The image runs as uid 1001 with group 0, which reads the etcd client
+# key through its 0440 root:root mode, and must not get no-new-privileges.
+patroni_vip_manager_image: "ghcr.io/firmansyahn/containers/vip-manager:5.0.0-debian-13-r0"
 patroni_vip_manager_dir: /opt/vip-manager
 
 # Host-level OOM victim bias — holds the VIP, so a kill moves client traffic to

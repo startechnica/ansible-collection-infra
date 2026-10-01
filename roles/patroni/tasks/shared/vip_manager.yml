@@ -10,9 +10,9 @@
     mode: "0644"
   notify: restart vip-manager
 
-- name: Deploy vip-manager Dockerfile
-  ansible.builtin.template:
-    src: dockerfiles/vip-manager.Dockerfile.j2
-    dest: "{{ patroni_vip_manager_dir }}/Dockerfile"
-    mode: "0644"
-  notify: restart vip-manager
+# Earlier versions built the image on the node from this Dockerfile; the image
+# is pulled now.
+- name: Remove the old vip-manager Dockerfile
+  ansible.builtin.file:
+    path: "{{ patroni_vip_manager_dir }}/Dockerfile"
+    state: absent

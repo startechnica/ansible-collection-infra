@@ -147,12 +147,14 @@ argument_specs:
       patroni_pgbouncer_image:
         type: str
         default: "edoburu/pgbouncer:v1.25.1-p0"
-      patroni_vip_manager_version:
+      patroni_vip_manager_image:
         type: str
-        default: "4.0.0"
-      patroni_vip_manager_arch:
-        type: str
-        description: Computed from ansible_architecture.
+        default: "ghcr.io/firmansyahn/containers/vip-manager:5.0.0-debian-13-r0"
+        description: >-
+          Prebuilt vip-manager image, published for amd64 only. Pin a
+          -r<revision> tag or a digest. Runs as uid 1001 with group 0, so it
+          reads the etcd client key through its 0440 root:root mode, and must
+          not get no-new-privileges.
       patroni_walg_version:
         type: str
         default: "v3.0.8"

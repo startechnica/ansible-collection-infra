@@ -81,14 +81,15 @@
 # Locally-built images are tagged `localhost/...`; remove so a fresh
 # install rebuilds cleanly. Pulled images stay (cheap to re-pull,
 # expensive to download) — operator can `podman image prune` if
-# they really want to wipe everything.
+# they really want to wipe everything. That includes vip-manager, which
+# is pulled now; a `localhost/vip-manager:v<version>` left by older
+# versions is not removed.
 - name: Remove locally-built images
   containers.podman.podman_image:
     name: "{{ item }}"
     state: absent
     force: true
   loop:
-    - "localhost/vip-manager:v{{ patroni_vip_manager_version }}"
     - "localhost/keepalived:latest"
   loop_control:
     label: "{{ item }}"

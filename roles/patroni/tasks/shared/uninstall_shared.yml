@@ -4,6 +4,11 @@
 # Data dirs gated on `patroni_destroy_prune` (default false) so an
 # accidental `patroni_action=uninstall` doesn't wipe production data.
 
+# The engine teardown has stopped vip-manager, which leaves its VIP behind. Runs
+# before the config directories go: the address is read from vip-manager.yml.
+- name: Release the VIP vip-manager left
+  ansible.builtin.include_tasks: vip_manager_release.yml
+
 - name: Remove config directories
   ansible.builtin.file:
     path: "{{ item }}"
