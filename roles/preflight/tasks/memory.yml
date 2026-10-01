@@ -17,9 +17,9 @@
 # Why the headroom, and why `reserved`: the original check compared the request
 # against TOTAL RAM, so it only fired above 100% — by which point the host is
 # already doomed, and it still said nothing about a node running two stacks.
-# That combination is exactly what ziarahub hit: three 16 GB nodes running both
-# MongoDB and Patroni, each role sizing itself as if it owned the host, every
-# individual number under total RAM, and the node OOM-killing anyway.
+# That combination is exactly what a production cluster hit: three 16 GB nodes
+# running both MongoDB and Patroni, each role sizing itself as if it owned the
+# host, every individual number under total RAM, and the node OOM-killing anyway.
 #
 # A static sum of caps cannot catch every case — PostgreSQL's work_mem and
 # maintenance_work_mem are per-operation, so the true ceiling depends on

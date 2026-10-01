@@ -135,7 +135,7 @@
     msg: >-
       instance_networks.gateway4 is not set, but at least one VM
       declares a static IPv4 address. Those VMs won't get a default
-      IPv4 route — set instance_networks.gateway4 (e.g. "10.147.8.1")
+      IPv4 route — set instance_networks.gateway4 (e.g. "10.20.8.1")
       in inventory, or override per-NIC via networks[i].gateway4.
   when:
     - (instance_networks.gateway4 | default('')) | length == 0

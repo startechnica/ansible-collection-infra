@@ -6,7 +6,7 @@
 # by host:port, and the calling node must see at least one of those
 # entries as itself. On a podman bridge each container's only IPs are
 # 10.89.0.x (per-host bridge, not routed between hosts), so members
-# listed as 10.147.8.x:27019 — the actual host IPs Ansible knows about
+# listed as 10.20.8.x:27019 — the actual host IPs Ansible knows about
 # — never match the container's view of itself, and rs.initiate fails
 # with "no host described in new configuration maps to this node".
 # Host networking eliminates the gap: mongod binds directly on the

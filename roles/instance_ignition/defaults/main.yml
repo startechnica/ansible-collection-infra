@@ -52,7 +52,7 @@ fcos_zincati_enabled: false
 # cranky around 5s. iburst is appended automatically to each entry.
 #
 #   chrony_servers:
-#     - 10.147.8.1
+#     - 10.20.8.1
 #     - ntp.internal.lan
 chrony_servers: []
 # NetworkManager: interfaces NM should NOT touch. Defaults cover the

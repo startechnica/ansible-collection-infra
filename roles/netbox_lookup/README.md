@@ -133,7 +133,7 @@ After the role runs:
 instances:
   - name: app1-db
     netbox_id: 969
-    ipv4: 10.147.8.58/24
+    ipv4: 10.20.8.58/24
     tags: [mongodb, patroni]
   - ...
 ```
@@ -143,7 +143,7 @@ instances:
 ```yaml
 instances:
   - name: app1-db
-    ipv4: 10.147.8.56/24   # kept as-is
+    ipv4: 10.20.8.56/24   # kept as-is
   - name: app2-db          # enriched from NetBox
 ```
 
@@ -152,12 +152,12 @@ instances:
 ```yaml
 instances: []                          # or leave unset
 
-netbox_lookup_cluster: Deviruchi
+netbox_lookup_cluster: cluster-01
 netbox_lookup_role: database
 netbox_lookup_tags: [production]
 ```
 
-After the role runs, `instances` contains every VM in Deviruchi + database + production.
+After the role runs, `instances` contains every VM in cluster-01 + database + production.
 
 ## See also
 

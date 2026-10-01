@@ -3,7 +3,7 @@
 ; database — the only one where roles/patroni/tasks/pgbouncer_auth.yml
 ; provisions the `pgbouncer` schema + `user_search()` function. Without
 ; it, PgBouncer runs `SELECT * FROM pgbouncer.user_search($1)` against
-; whichever database the client is connecting to (e.g. prd_actionpay)
+; whichever database the client is connecting to (e.g. prd_app)
 ; and PG returns: ERROR: schema "pgbouncer" does not exist.
 {% if patroni_pgbouncer_database_overrides | length > 0 %}
 ;

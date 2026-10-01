@@ -6,10 +6,10 @@
 #   scripts/smoke.sh <inventory> [--patroni-only] [--mongodb-only] [<extra-ansible-args>...]
 #
 # Examples:
-#   scripts/smoke.sh inventories/artaku-db-idc3d.yml --ask-vault-pass
-#   scripts/smoke.sh inventories/manu.yml --ask-vault-pass --check
-#   scripts/smoke.sh inventories/artaku-db-idc3d.yml --patroni-only
-#   scripts/smoke.sh inventories/artaku-db-idc3d.yml --mongodb-only -v
+#   scripts/smoke.sh inventories/my-cluster.yml --ask-vault-pass
+#   scripts/smoke.sh inventories/my-cluster.yml --ask-vault-pass --check
+#   scripts/smoke.sh inventories/my-cluster.yml --patroni-only
+#   scripts/smoke.sh inventories/my-cluster.yml --mongodb-only -v
 set -euo pipefail
 
 INV="${1:-}"

@@ -31,14 +31,14 @@ all:
 
     # ── vCenter placement ───────────────────────────────────────────────────
     instance_datacenter: <your-datacenter>
-    instance_cluster_name: Deviruchi
+    instance_cluster_name: cluster-01
     instance_folder: <your-project>
-    portgroup_name: v3244
-    portgroup_dvswitch_name: DSwitch1-Data
+    portgroup_name: vlan100
+    portgroup_dvswitch_name: dvs-data
 
     # Per-NIC defaults — merged into every entry of every VM's `networks:`.
     instance_networks:
-      gateway4: 10.147.8.1
+      gateway4: 10.20.8.1
       mtu: 1500
 
     # Per-disk defaults — merged into every entry of every VM's `disks:`.
@@ -48,7 +48,7 @@ all:
       size_gb: 40
       type: thin
       datastore: vsanDatastore
-    instance_dns_servers: [10.147.1.1, 10.147.1.2]
+    instance_dns_servers: [10.20.1.1, 10.20.1.2]
     # NetBox scope for enrichment — resolves missing ipv4 from NetBox records.
     netbox_vrf: production
     netbox_lookup_enabled: true
@@ -64,7 +64,7 @@ all:
     instances:
       - hostname: host1-lin-db
         networks:
-          - ipv4: 10.147.8.56/24
+          - ipv4: 10.20.8.56/24
       - hostname: host2-lin-db # ipv4 enriched from NetBox into networks[0]
       - hostname: host3-lin-db
 
@@ -87,7 +87,7 @@ all:
     patroni_postgresql_postgres_password: "{{ vault_postgres_password }}"
     pgversion: 16
     patroni_vip_engine: vip-manager # keepalived | none | vip-manager
-    patroni_vip_address: 10.147.8.60
+    patroni_vip_address: 10.20.8.60
     # patroni_vip_mask + patroni_vip_iface inferred from instance_networks + node IP
 
     patroni_databases:
@@ -126,7 +126,7 @@ all:
     # ── Host firewall (UFW / firewalld) ─────────────────────────────────────
     firewall_enabled: true
     firewall_trusted_sources:
-      - 10.147.0.0/16 # jump-hosts + monitoring net
+      - 10.20.0.0/16 # jump-hosts + monitoring net
     # DB ports auto-included from mongodb_services / patroni_services facts.
     # Add anything else (e.g. node_exporter on 9100) below:
     firewall_rules:
@@ -134,7 +134,7 @@ all:
 
     # ── MikroTik address-list ───────────────────────────────────────────────
     routeros_enabled: true
-    routeros_host: 10.147.0.1
+    routeros_host: 10.20.0.1
     routeros_user: ansible
     routeros_password: "{{ vault_routeros_password }}"
     routeros_tls: true

@@ -6,7 +6,7 @@ path from "cloned the repo" to "PR ready to review."
 ## Dev setup
 
 ```bash
-git clone https://gitlab.com/skydata/ansible-collection-infra.git
+git clone https://github.com/startechnica/ansible-collection-infra.git
 cd ansible-collection-infra
 
 # 1. Python deps (controller-side)

@@ -141,7 +141,7 @@
         grafana_alloy_prometheus_password: test-only-secret
         grafana_alloy_prometheus_tenant_id: tenant-a
         grafana_alloy_host_metrics_module_enabled: true
-        grafana_alloy_external_labels: { region: id-central-1, zone: idcentral1-az1 }
+        grafana_alloy_external_labels: { region: region-1, zone: region-1a }
         grafana_alloy_self_metrics_enabled: true
         grafana_alloy_extra_scrapes: "{{ _ga_db_scrapes }}"
 
@@ -161,7 +161,7 @@
         grafana_alloy_prometheus_username: tenant-a
         grafana_alloy_prometheus_password: test-only-secret
         grafana_alloy_prometheus_tenant_id: tenant-a
-        grafana_alloy_external_labels: { region: id-central-1 }
+        grafana_alloy_external_labels: { region: region-1 }
         grafana_alloy_extra_scrapes:
           - job: integrations/etcd-dcs
             targets: ["127.0.0.1:2381"]
@@ -205,10 +205,10 @@
           - "'sys.env(\"ALLOY_PROMETHEUS_PASSWORD\")' not in _cfg"
           - "'test-only-secret' not in _cfg"
           # region/zone replace the module's defaults; no cluster_name at all.
-          - _cfg is search('(?s)host_metrics\.unix "node" \{.*external_labels = \{\s*region = "id-central-1",\s*zone = "idcentral1-az1",\s*\}')
+          - _cfg is search('(?s)host_metrics\.unix "node" \{.*external_labels = \{\s*region = "region-1",\s*zone = "region-1a",\s*\}')
           - _cfg is not search('cluster_name\s*=')
           # Loki gets the same region/zone.
-          - _cfg is search('(?s)loki\.write "default" \{.*?external_labels = \{\s*region = "id-central-1",\s*zone = "idcentral1-az1",\s*\}')
+          - _cfg is search('(?s)loki\.write "default" \{.*?external_labels = \{\s*region = "region-1",\s*zone = "region-1a",\s*\}')
           # Every scrape target sets instance to the host name.
           - _cfg | regex_findall('"__address__"') | length == 8
           - _cfg | regex_findall('"instance"\s+= constants\.hostname,') | length == 8
@@ -260,7 +260,7 @@
           - "'host_metrics' not in _cfg"
           - "'prometheus.exporter.unix \"node\"' in _cfg"
           - _cfg is search('"X-Scope-OrgID" = "tenant-a",')
-          - _cfg is search('(?s)external_labels = \{\s*host = constants\.hostname,\s*cluster = "legacy-pg",\s*region = "id-central-1",\s*\}')
+          - _cfg is search('(?s)external_labels = \{\s*host = constants\.hostname,\s*cluster = "legacy-pg",\s*region = "region-1",\s*\}')
           - _cfg is search('(?s)prometheus\.scrape "integrations_etcd_dcs" \{.*?"instance"\s+= constants\.hostname,.*?forward_to\s+= \[prometheus\.relabel\.integrations_etcd_dcs\.receiver\]')
           - _cfg is search('(?s)prometheus\.relabel "integrations_etcd_dcs" \{\s*forward_to = \[prometheus\.remote_write\.default\.receiver\]')
           # Backslashes in a regex are escaped for the Alloy string literal.
@@ -329,7 +329,7 @@
         grafana_alloy_host_metrics_module_enabled: true
         grafana_alloy_prometheus_tenant_id: tenant-a
         grafana_alloy_prometheus_password: "{{ _gv_loaded_secret }}"
-        grafana_alloy_external_labels: { region: id-central-1, zone: idcentral1-az1 }
+        grafana_alloy_external_labels: { region: region-1, zone: region-1a }
         grafana_alloy_self_metrics_enabled: true
         grafana_alloy_extra_scrapes: "{{ _gv_scrapes }}"
         _gv_loaded_secret: test-only-secret
