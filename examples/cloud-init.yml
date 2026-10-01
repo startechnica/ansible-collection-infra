@@ -42,7 +42,7 @@ all:
 
         # ── Network ──────────────────────────────────────────────────────
         portgroup_name: pg-app # distributed port group name
-        portgroup_dvswitch_name: DSwitch01
+        portgroup_dvswitch_name: dvs-data
         # Standalone ESXi (no DVS) — comment out portgroup_dvswitch_name, use:
         # portgroup_vswitch_name: vSwitch0
         # portgroup_vlan_id: 100

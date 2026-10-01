@@ -50,7 +50,7 @@ grafana_alloy_log_level: info
 grafana_alloy_cluster_label: ""
 # Extra labels added to every metric (remote_write external_labels) and every
 # log line (loki.write external_labels), e.g. the environment topology:
-#   grafana_alloy_external_labels: { region: id-central-1, zone: idcentral1-az1 }
+#   grafana_alloy_external_labels: { region: region-1, zone: region-1a }
 # Keys must be valid Prometheus label names. Empty (default) adds nothing.
 grafana_alloy_external_labels: {}
 

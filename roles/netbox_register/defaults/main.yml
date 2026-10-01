@@ -44,7 +44,7 @@ netbox_connect:
 ## host's connection address (IP or hostname used by the VMware API) often
 ## differs from the canonical asset name in NetBox DCIM.
 ## When empty, falls back to `vsphere_esxi_hostname`.
-## e.g. "esxi-prod-01" while vsphere_esxi_hostname="202.150.161.50"
+## e.g. "esxi-prod-01" while vsphere_esxi_hostname="203.0.113.50"
 ##
 netbox_device_name: ""
 

@@ -42,7 +42,7 @@ netbox_connect:
 ##       tenant: infrastructure
 ##       tags: [vmware, production]
 ##
-##     - name: Deviruchi
+##     - name: cluster-01
 ##       type: cluster
 ##       site: dc-jakarta-1
 ##       tags: [vmware]

@@ -1,10 +1,11 @@
 ---
 # Regression coverage for the preflight memory budget.
 #
-# The bug this guards against already happened. ziarahub runs MongoDB (sharded)
-# and Patroni on the same three 16 GB nodes; every individual limit was under
-# total RAM, so the old check — mongod+configsvr+mongos vs memtotal_mb, printed
-# as a debug line — said nothing, and the nodes OOM-killed in production anyway.
+# The bug this guards against already happened. A production cluster runs
+# MongoDB (sharded) and Patroni on the same three 16 GB nodes; every individual
+# limit was under total RAM, so the old check — mongod+configsvr+mongos vs
+# memtotal_mb, printed as a debug line — said nothing, and the nodes OOM-killed
+# in production anyway.
 # Three separate defects combined:
 #   1. patroni passed no request at all, so PG hosts had no check whatsoever;
 #   2. mongodb's sum omitted the PBM agents and the exporter (640MB on a sharded
@@ -20,7 +21,7 @@
   gather_facts: false
   connection: local
   vars:
-    # No facts are gathered, so play vars supply memtotal_mb. ziarahub's size.
+    # No facts are gathered, so play vars supply memtotal_mb: that cluster's size.
     ansible_facts:
       memtotal_mb: 16384
 
@@ -36,7 +37,7 @@
           - patroni_stack_overhead_mb == 640
         fail_msg: >-
           The stack overhead changed; update the expectations below, and check
-          whether ziarahub's patroni_mem_reserved_mb is still right.
+          whether co-located inventories' patroni_mem_reserved_mb is still right.
 
     # shared_buffers accepts PostgreSQL's suffixed forms. Each is exercised
     # because a mis-parse silently changes the budget by orders of magnitude —
@@ -66,7 +67,7 @@
         # Mixed case and stray whitespace both reach us from inventory.
         - {sb: " 2gb ", want: 2688}
         # Empty = auto-calculated as memtotal/4 = 4096, the value that made
-        # ziarahub over-commit. preflight runs BEFORE main.yml's auto-calculation
+        # that cluster over-commit. preflight runs BEFORE main.yml's auto-calculation
         # set_fact, so vars/main/memory.yml has to mirror that formula.
         - {sb: "", want: 4736}
       loop_control:
@@ -94,7 +95,7 @@
         fail_msg: >-
           Pinning all three patroni_pg_* settings must clear patroni_pg_autosized —
           otherwise the co-located-stack warning cries wolf on a host already
-          fixed. The 2688MB is also what ziarahub's node budget assumes.
+          fixed. The 2688MB is also what that cluster's node budget assumes.
       vars:
         patroni_pg_shared_buffers: "2GB"
         patroni_pg_work_mem: "64MB"
@@ -260,7 +261,7 @@
         that:
           - _ceiling | int == 13926
 
-    # ziarahub after the fix: Mongo 7296 reserved + Patroni 2688 = 9984 of
+    # That cluster after the fix: Mongo 7296 reserved + Patroni 2688 = 9984 of
     # 16384, against a 13926 ceiling. Comfortable — the point of the exercise.
     - name: "Threshold :: co-located stacks within the ceiling"
       ansible.builtin.include_role:
@@ -357,7 +358,7 @@
           Every container this role puts on the node must be counted — the PBM
           agents (one per data-bearing node) and the exporter included.
       loop:
-        # ziarahub's caps: 4096 + 1536 + 1024, two PBM agents, one exporter.
+        # That cluster's caps: 4096 + 1536 + 1024, two PBM agents, one exporter.
         - name: sharded with PBM and exporter
           sharded: true
           pbm: true

@@ -10,7 +10,7 @@ else. Default off — opt in by setting `firewall_enabled: true`.
 # inventories/<name>.yml
 firewall_enabled: true
 firewall_trusted_sources:
-  - 10.147.0.0/16                       # management / monitoring CIDRs
+  - 10.20.0.0/16                        # management / monitoring CIDRs
 firewall_rules:                         # extra rules beyond auto-discovery
   - { port: 9100, protocol: tcp, comment: node_exporter }
   - { port: 3000, protocol: tcp, source: "10.0.0.0/8", comment: grafana }

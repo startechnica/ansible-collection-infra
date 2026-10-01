@@ -212,8 +212,8 @@ without a snapshot.
 `container_engine`, `instance_init_type`, `instance_user_name`,
 `content_library_*`, `ignition_channel`, `_platform_preset` or `_platform_map`.
 Migration: import common `export_vars` and read `_resolved_*`. There is no
-compatibility alias. As of 2026-09-14, the `skydata-sites` playbooks do neither;
-its inventories only set the inputs.
+compatibility alias. As of 2026-09-14, the deployment playbooks we know of do
+neither; their inventories only set the inputs.
 
 **Watch `inherit_localhost_vars`.** After this phase it copies localhost's raw
 inputs to the targets, not resolved values. `_resolved_*` still gives the same

@@ -163,7 +163,7 @@ The role executes the following steps:
 | `vsphere_esxi_hostname` | `""` | ESXi host (for standalone deployments) |
 | `instance_disks.datastore` | `""` | Project-level datastore (per-disk override via `disks[i].datastore`) |
 | `instance_folder` | `""` | VM folder in vCenter |
-| `instance_domain_name` | `id-central-1.compute.internal` | Domain appended to hostname |
+| `instance_domain_name` | `""` | Domain appended to hostname; empty uses short hostnames |
 | `instance_dns_servers` | `[8.8.8.8, 1.1.1.1]` | DNS servers for VMs |
 
 > Set either `instance_cluster_name` or `vsphere_esxi_hostname`, not both.

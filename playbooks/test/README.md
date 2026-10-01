@@ -36,11 +36,11 @@ plus a `summary.yml` aggregator. Adding a new component (e.g. a future
 
 ```bash
 # Auto-pick the right smoke test from inventory instance_tags:
-./scripts/smoke.sh inventories/artaku-db-idc3d.yml --ask-vault-pass
+./scripts/smoke.sh inventories/my-cluster.yml --ask-vault-pass
 
 # Force a specific test (ignores tags):
-./scripts/smoke.sh inventories/artaku-db-idc3d.yml --patroni-only --ask-vault-pass
-./scripts/smoke.sh inventories/artaku-db-idc3d.yml --mongodb-only --ask-vault-pass
+./scripts/smoke.sh inventories/my-cluster.yml --patroni-only --ask-vault-pass
+./scripts/smoke.sh inventories/my-cluster.yml --mongodb-only --ask-vault-pass
 
 # Or run the playbook directly:
 ansible-playbook playbooks/test/patroni-smoke.yml -i inventories/<inv>.yml --ask-vault-pass

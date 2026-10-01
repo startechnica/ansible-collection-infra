@@ -27,7 +27,7 @@ INV_DIR      ?= inventories
 INV          ?=
 extra        ?=
 
-# Resolve INV=manu -> inventories/manu.yml; absolute paths and explicit .yml
+# Resolve INV=my-cluster -> inventories/my-cluster.yml; absolute paths and explicit .yml
 # both pass through unchanged so `make deploy INV=/tmp/foo.yml` also works.
 ifeq ($(INV),)
 INVENTORY :=

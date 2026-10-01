@@ -77,7 +77,7 @@ grafana_alloy_prometheus_password: "{{ vault_telemetry_password }}"
 # Host metrics from host_metrics.unix (import.git): job integrations/unix,
 # instance and node = host name. No cluster_name unless you add one below.
 grafana_alloy_host_metrics_module_enabled: true
-grafana_alloy_external_labels: { region: id-central-1, zone: idcentral1-az1 }
+grafana_alloy_external_labels: { region: region-1, zone: region-1a }
 
 # Alloy's own /metrics as job integrations/alloy.
 grafana_alloy_self_metrics_enabled: true

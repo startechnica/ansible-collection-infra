@@ -239,7 +239,7 @@ Add asserts (in `_computed_vars.yml` or a small `validate_standby.yml`):
 
 ## Notes
 
-- Only edit `ansible-collection-infra`; the vendored skydata-sites copy is synced by the user.
+- Only edit `ansible-collection-infra`; vendored copies in deployment repos are synced separately.
 - Full feature lands together (deploy + reconcile + promote + standby-aware leader detection +
   both TLS paths + guardrails + docs); build and lint-verify section by section, with
   template-render and leader-selector unit checks before any live test.

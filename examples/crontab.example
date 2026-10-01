@@ -11,7 +11,7 @@
 # Shared environment
 ANSIBLE_COLLECTIONS_PATH=/home/ansible/.ansible/collections
 PATH=/usr/bin:/usr/local/bin:/home/ansible/.venv/bin
-INV=/home/ansible/deploy/inventories/rockefeller.yml
+INV=/home/ansible/deploy/inventories/my-cluster.yml
 
 # ── MongoDB ─────────────────────────────────────────────────────────────────
 # Nightly backup (02:00 UTC)

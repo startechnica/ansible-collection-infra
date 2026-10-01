@@ -10,15 +10,15 @@
 #
 # Usage:
 #   ansible-playbook playbooks/deploy_patroni.yml \
-#     -i inventories/d3trans.yml --ask-vault-pass
+#     -i inventories/my-cluster.yml --ask-vault-pass
 #
 # Skip VM provisioning (docker + cluster only):
 #   ansible-playbook playbooks/deploy_patroni.yml \
-#     -i inventories/d3trans.yml --ask-vault-pass --tags patroni
+#     -i inventories/my-cluster.yml --ask-vault-pass --tags patroni
 #
 # Skip Patroni (provision only):
 #   ansible-playbook playbooks/deploy_patroni.yml \
-#     -i inventories/d3trans.yml --ask-vault-pass --tags provision
+#     -i inventories/my-cluster.yml --ask-vault-pass --tags provision
 
 # ── Stage 1: Gather facts from NetBox (optional) ─────────────────────────────
 

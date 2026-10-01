@@ -24,7 +24,7 @@ netbox_connect:
 ## All filters are optional — omit or leave empty to skip that filter.
 
 ## @param netbox_lookup_cluster [default: ""] Filter VMs by cluster name.
-## e.g. "Deviruchi"
+## e.g. "cluster-01"
 ##
 netbox_lookup_cluster: ""
 
