@@ -39,13 +39,16 @@
 ###############################################################################
 # 3. Build the full sysctl parameter dict
 ###############################################################################
-# Reserve all patroni-stack service ports so the kernel never picks
-# them as ephemeral source ports for outbound connections. Without
-# this, ip_local_port_range covers 1024-65535 and a heavy outbound
-# client (e.g., a co-located mongos opening many connections to
-# mongod) will eventually grab one of our service ports as a
-# source port — and when that happens, the corresponding daemon
-# can't bind on restart ("Address already in use").
+# The ephemeral (source) port range stays at the kernel default, 32768-60999.
+# Earlier versions widened it to 1024-65535, which put every service port on
+# the host inside it, including ports of other stacks this role knows nothing
+# about (a co-located MongoDB's 27017-27019): any outbound connection could
+# take one as its source port, and the daemon behind it then couldn't bind on
+# restart ("Address already in use").
+#
+# Every default port of this stack is below 32768, so reserving them only
+# matters for a port moved into the range. ip_local_reserved_ports is one
+# host-wide list, so this replaces any reservation made elsewhere.
 - name: Define base sysctl parameters
   ansible.builtin.set_fact:
     _sysctl_params: >-
@@ -64,7 +67,6 @@
           'net.ipv4.tcp_keepalive_intvl': '10',
           'net.ipv4.tcp_keepalive_probes': '6',
           'net.ipv4.ip_nonlocal_bind': '1',
-          'net.ipv4.ip_local_port_range': '1024 65535',
           'net.ipv4.ip_local_reserved_ports':
             (([patroni_haproxy_primary_port, patroni_haproxy_replicas_port,
                patroni_haproxy_direct_port, patroni_haproxy_stats_port,
@@ -112,6 +114,28 @@
     owner: root
     group: root
     mode: "0644"
+
+# Earlier versions persisted the widened port range in /etc/sysctl.conf (the
+# `Apply sysctl parameters` loop writes there too) as well as in the file
+# above. Drop it, and put the live range back to the kernel default unless
+# some other sysctl file still sets one.
+- name: Remove the widened port range from /etc/sysctl.conf
+  ansible.posix.sysctl:
+    name: net.ipv4.ip_local_port_range
+    state: absent
+    reload: false
+
+- name: Restore the kernel's default port range
+  ansible.builtin.shell: |
+    f=/proc/sys/net/ipv4/ip_local_port_range
+    [ "$(awk '{print $1, $2}' "$f")" = '1024 65535' ] || exit 0
+    grep -qs '^[[:space:]]*net[./]ipv4[./]ip_local_port_range' \
+      /etc/sysctl.conf /etc/sysctl.d/*.conf /run/sysctl.d/*.conf \
+      /usr/local/lib/sysctl.d/*.conf /usr/lib/sysctl.d/*.conf && exit 0
+    echo '32768 60999' > "$f"
+    echo changed
+  register: _patroni_port_range
+  changed_when: "'changed' in _patroni_port_range.stdout"
 
 ###############################################################################
 # 5-6. Transparent Huge Pages, now and at every boot (when patroni_thp_enabled is set)

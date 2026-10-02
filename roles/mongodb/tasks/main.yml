@@ -8,6 +8,8 @@
 #   restore      — Restore from mongodump (-e restore_path=...)
 #   renew-certs  — Regenerate member certificates
 #   upgrade      — Rolling MongoDB version upgrade (-e mongodb_image_tag_new=...)
+#   restart      — Restart this node's services from their current definition
+#                  (run with serial: 1 — playbooks/mongodb/restart.yml)
 #   status       — Show cluster health and cert expiry
 #   uninstall    — Remove all MongoDB provisioning
 #
@@ -243,6 +245,12 @@
     - mongodb_action | default('provision') == 'provision'
     - mongodb_backup_pbm_enabled | bool
 
+# Last, so the list reflects everything this run wrote.
+- name: Report containers waiting for a rolling restart
+  ansible.builtin.include_tasks: pending_restarts.yml
+  when:
+    - mongodb_action | default('provision') == 'provision'
+
 # ── On-demand actions ──
 
 - name: PBM setup (retrofit onto an already-running cluster)
@@ -284,6 +292,11 @@
   ansible.builtin.include_tasks: rolling_upgrade.yml
   when:
     - mongodb_action | default('provision') == 'upgrade'
+
+- name: Rolling restart
+  ansible.builtin.include_tasks: rolling_restart.yml
+  when:
+    - mongodb_action | default('provision') == 'restart'
 
 - name: Show cluster status
   ansible.builtin.include_tasks: status.yml

@@ -1,0 +1,124 @@
+---
+# Regression coverage for how the mongodb role restarts a running cluster.
+#
+# What it guards:
+#   1. The services a deploy holds back and the rolling restart restarts:
+#      configsvr, mongod, mongos on a sharded cluster (config servers first,
+#      before the mongos that reads them), mongod on a replica set, and what
+#      each mongodb_restart_target selects. A target the cluster type doesn't
+#      run selects nothing, which rolling_restart.yml rejects.
+#   2. Nothing in the deploy restarts every host at once: no handler listens on
+#      "restart mongodb" and no task notifies it; every `docker compose up` in
+#      the deploy path either sets `recreate` or names its services (an
+#      unrestricted `up` recreates any changed container); the Quadlet restart
+#      skips mongod, configsvr and mongos once the cluster is bootstrapped.
+#
+# Run from collection root:
+#   ansible-playbook tests/mongodb_rolling_restart.yml
+
+- name: "Rolling restart :: services and deploy-path guards"
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  vars:
+    _tasks_dir: ../roles/mongodb/tasks
+  tasks:
+    - name: Import mongodb role variables
+      ansible.builtin.import_role:
+        name: mongodb
+        tasks_from: export_vars
+
+    - name: Verify the services of a sharded cluster
+      ansible.builtin.assert:
+        that:
+          - _mongodb_data_services == ['configsvr', 'mongod', 'mongos']
+          - _mongodb_restart_services == ['configsvr', 'mongod', 'mongos']
+        fail_msg: "data {{ _mongodb_data_services }}, restart {{ _mongodb_restart_services }}"
+      vars:
+        mongodb_cluster_type: sharded
+        mongodb_restart_target: all
+
+    - name: Verify the services of a replica set
+      ansible.builtin.assert:
+        that:
+          - _mongodb_data_services == ['mongod']
+          - _mongodb_restart_services == ['mongod']
+        fail_msg: "data {{ _mongodb_data_services }}, restart {{ _mongodb_restart_services }}"
+      vars:
+        mongodb_cluster_type: replicaset
+        mongodb_restart_target: all
+
+    - name: Verify a single target on a sharded cluster
+      ansible.builtin.assert:
+        that:
+          - _mongodb_restart_services == [mongodb_restart_target]
+        fail_msg: "{{ mongodb_restart_target }} selected {{ _mongodb_restart_services }}"
+      vars:
+        mongodb_cluster_type: sharded
+        mongodb_restart_target: "{{ _target }}"
+      loop: [configsvr, mongod, mongos]
+      loop_control:
+        loop_var: _target
+
+    - name: Verify a replica set has no configsvr or mongos to restart
+      ansible.builtin.assert:
+        that:
+          - _mongodb_restart_services == []
+        fail_msg: "{{ mongodb_restart_target }} selected {{ _mongodb_restart_services }}"
+      vars:
+        mongodb_cluster_type: replicaset
+        mongodb_restart_target: "{{ _target }}"
+      loop: [configsvr, mongos]
+      loop_control:
+        loop_var: _target
+
+    - name: Verify nothing restarts MongoDB on every host at once
+      ansible.builtin.assert:
+        that:
+          - _restart_handlers == []
+          - _notifying == []
+          - _unrestricted_up == []
+          - _quadlet_restart_when is search('_bootstrap_marker\.stat\.exists')
+        fail_msg: >-
+          handlers {{ _restart_handlers }}, notifying {{ _notifying }},
+          unrestricted compose up {{ _unrestricted_up }}, Quadlet restart
+          when {{ _quadlet_restart_when }}
+      vars:
+        _handlers: "{{ lookup('ansible.builtin.file', '../roles/mongodb/handlers/main.yml') | from_yaml }}"
+        _restart_handlers: >-
+          {{ _handlers | selectattr('listen', 'defined')
+             | selectattr('listen', 'eq', 'restart mongodb')
+             | map(attribute='name') | list }}
+        _task_files: "{{ query('ansible.builtin.fileglob', playbook_dir ~ '/' ~ _tasks_dir ~ '/*.yml') }}"
+        # Top-level tasks and one level of block, which is all these files use.
+        _all_tasks: >-
+          {%- set out = [] -%}
+          {%- for f in _task_files -%}
+            {%- for t in (lookup('ansible.builtin.file', f) | from_yaml) or [] -%}
+              {%- set _ = out.append(t | combine({'_file': f | basename})) -%}
+              {%- for b in t.block | default([]) -%}
+                {%- set _ = out.append(b | combine({'_file': f | basename})) -%}
+              {%- endfor -%}
+            {%- endfor -%}
+          {%- endfor -%}
+          {{ out }}
+        _notifying: >-
+          {{ _all_tasks | selectattr('notify', 'defined')
+             | selectattr('notify', 'search', 'restart mongodb')
+             | map(attribute='name') | list }}
+        _unrestricted_up: >-
+          {%- set out = [] -%}
+          {%- for t in _all_tasks
+                if t._file in ['docker_compose.yml', 'init_cluster.yml']
+                and 'community.docker.docker_compose_v2' in t -%}
+            {%- set a = t['community.docker.docker_compose_v2'] -%}
+            {%- if a.state | default('present') == 'present'
+                  and 'recreate' not in a and 'services' not in a -%}
+              {%- set _ = out.append(t._file ~ ': ' ~ t.name) -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {{ out }}
+        _quadlet_restart_when: >-
+          {{ (_all_tasks | selectattr('_file', 'eq', 'quadlet.yml')
+              | selectattr('name', 'eq', 'Restart services whose Quadlet changed (skip ones started fresh)')
+              | first).when | join(' ; ') }}

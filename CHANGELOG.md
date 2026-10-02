@@ -4,6 +4,48 @@ All notable changes to this collection are documented in this file. The format
 is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this collection adheres to [Semantic Versioning](https://semver.org/).
 
+## 1.0.4 (unreleased)
+
+### Breaking changes
+
+- **`mongodb`: a deploy no longer restarts MongoDB on a running cluster.** A
+  changed container definition (image, memory limit, command flags) or
+  `mongodb_sysctl` restarted mongod, configsvr and mongos on every host in the
+  play at once, taking each replica set down until they came back. On a
+  bootstrapped cluster the deploy now writes the new `docker-compose.yml` or
+  Quadlet, leaves those containers on the old one, and ends with a `WARNING`
+  listing them, on every run until they're restarted. Exporters still update
+  right away. A sysctl change needs no restart: the containers see it live,
+  except `net.core.somaxconn`, which applies at their next restart.
+  **Apply held-back changes with `playbooks/mongodb/restart.yml`**, which now
+  restarts one node at a time from the current definition: on each node it
+  checks the replica set is healthy, hands off a primary, restarts, and waits
+  for the set to be whole again before the next service. It now also works on
+  podman. Its step-down used the healthcheck user, which may not step down, so
+  a primary was restarted without handing off; it now uses the member
+  certificate. The `restart mongodb` handler is gone. See
+  [docs/UPGRADING.md](docs/UPGRADING.md).
+
+### Fixed
+
+- **`patroni` no longer widens the ephemeral port range.** It set
+  `net.ipv4.ip_local_port_range` to `1024 65535` host-wide and reserved only
+  its own ports, so on a node that also runs MongoDB any outbound connection
+  could take 27017-27019 as its source port, and mongod or mongos then couldn't
+  bind on restart. The range now stays at the kernel default (`32768 60999`),
+  which every default port of both stacks is below. The next run removes the
+  setting from `/etc/sysctl.conf` and `99-patroni-postgres.conf` and puts the
+  live range back to the default, unless another sysctl file sets one. Patroni's
+  ports are still reserved, in case one is moved into the range.
+- **`mongodb` no longer sets `net.ipv4.tcp_keepalive_time`.** It set 120
+  host-wide where patroni sets 60, so on a node running both stacks, a mongodb
+  run slowed dead-connection cleanup for PostgreSQL, PgBouncer and HAProxy from
+  2 to 3 minutes until the next patroni run. MongoDB doesn't need the setting:
+  mongod and mongos already lower the idle time to 300 s on their own
+  connections. On the Docker engine, mongod's network namespace never saw the
+  host value anyway. On a MongoDB-only host the live value stays at 120 until
+  the next reboot.
+
 ## 1.0.3 (2026-10-02)
 
 ### Breaking changes

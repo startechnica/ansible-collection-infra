@@ -5,6 +5,41 @@ caveat: **pre-1.0 minor bumps may contain breaking changes**. Read the release
 notes in [../CHANGELOG.md](../CHANGELOG.md) before upgrading; this file
 documents the migration steps for breaking changes.
 
+## 1.0.4 (unreleased)
+
+### Breaking — a mongodb deploy no longer restarts a running cluster
+
+A deploy runs on every host at once. When it changed the container definition
+of mongod, configsvr or mongos (image, memory limit, command flags) or
+`mongodb_sysctl`, it restarted them on all hosts together, and each replica set
+was down until they came back.
+
+On a cluster with the `.bootstrap_complete` marker, a deploy now writes the new
+`docker-compose.yml` or Quadlet but leaves those three on the old one. The run
+ends with a warning listing them, and repeats it on every run until they're
+restarted:
+
+```text
+WARNING: these MongoDB containers still run their previous definition. ...
+mongo-1: mongodb-mongod, mongodb-mongos
+```
+
+Apply the change with the rolling restart, which restarts each node's services
+one at a time from their current definition, waiting for each replica set to be
+whole again before the next:
+
+```bash
+ansible-playbook playbooks/mongodb/restart.yml -i inventories/<your-inventory>.yml
+```
+
+Exporters are not held back. A sysctl change needs no restart, except
+`net.core.somaxconn`, which applies at the next restart. A cluster that isn't
+bootstrapped yet starts and restarts as before.
+
+If your own playbooks notified the role's `restart mongodb` handler, that
+handler is gone: run `restart.yml` instead. `restart.yml` now also runs on
+podman, and still takes `-e restart_target=mongod|configsvr|mongos`.
+
 ## 1.0.3 (2026-10-02)
 
 ### Breaking — every `patroni` role variable is now `patroni_`-prefixed

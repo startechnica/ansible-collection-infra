@@ -154,6 +154,12 @@
 # already loaded the new template. The restart only matters when the
 # service was already running before this play and now needs to pick
 # up new args.
+#
+# On a running cluster (marker present) only the exporter restarts here. The
+# deploy runs on every host at once, so restarting mongod, configsvr or mongos
+# would take each replica set down on all of them together. They keep the old
+# definition until playbooks/mongodb/restart.yml restarts them one node at a
+# time; pending_restarts.yml lists what's waiting at the end of the run.
 - name: Compute which services were already running before this play
   ansible.builtin.set_fact:
     _services_already_running: >-
@@ -176,6 +182,7 @@
   when:
     - item.changed
     - item.svc in _services_already_running
+    - item.svc == 'mongodb-exporter.service' or not _bootstrap_marker.stat.exists
     - item.svc != 'mongodb-exporter.service' or (mongodb_exporter_enabled | bool)
     - item.svc != 'mongodb-configsvr.service' or (mongodb_cluster_type == 'sharded')
     - item.svc != 'mongodb-mongos.service' or (mongodb_cluster_type == 'sharded')

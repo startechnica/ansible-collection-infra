@@ -258,7 +258,7 @@ cluster. Design notes: [docs/design/mongodb-pbm.md](../../docs/design/mongodb-pb
 | PBM backup (sharded-safe, cluster-consistent) | `playbooks/mongodb/pbm-backup.yml` |
 | PBM restore / PITR (sharded) | `playbooks/mongodb/pbm-restore.yml -e pbm_backup=<name>` or `-e pbm_target='YYYY-MM-DDThh:mm:ss'` |
 | PBM status (agents, storage, PITR window, backups) | `playbooks/mongodb_pbm_status.yml` (FQCN: `startechnica.infra.mongodb_pbm_status`) |
-| Rolling restart | `playbooks/mongodb/restart.yml` |
+| Rolling restart, which also applies container changes a deploy held back | `playbooks/mongodb/restart.yml [-e restart_target=mongod\|configsvr\|mongos]` |
 | Renew leaf certificates | `playbooks/mongodb/renew-certs.yml` |
 | Rolling version upgrade | `playbooks/mongodb/upgrade.yml -e mongodb_image_tag_new=8.3.8` |
 | Scale up (add replica) | `playbooks/mongodb/add-node.yml -e target_node=<host>` |
@@ -297,6 +297,7 @@ Highlights:
 | Transparent huge pages | `mongodb_thp_enabled` — the THP mode: `never`, `madvise`, `always`, or empty to leave THP alone. `always` for `mongodb_version` 8.0+, `never` for 7.0 and earlier, as MongoDB recommends; `madvise` and `always` also set `defrag=defer+madvise`, `max_ptes_none=0` and `vm.overcommit_memory=1`. Next to Patroni it defaults to `never`, to spare memory on a node shared by two stacks (the patroni role leaves THP alone unless `patroni_thp_enabled` is set). Applied now and at boot by `mongodb-thp.service` |
 | Memory budget | `mongodb_mem_reserved_mb` — *additive* escape hatch for memory the collection can't introspect. When `patroni_enabled` is true this role imports patroni's own `patroni_mem_request_mb`, so a plain mongodb+patroni node needs no number here |
 | OOM victim order | `mongodb_mongod_oom_score_adj` / `mongodb_configsvr_oom_score_adj` (0), `mongodb_mongos_oom_score_adj` (500), `mongodb_backup_pbm_oom_score_adj` (800), `mongodb_exporter_oom_score_adj` (1000) — applies when the **host** runs out of memory, not when one container hits its own cap |
+| Rolling restart | `mongodb_restart_target` — `all` (default), `mongod`, or on a sharded cluster `configsvr` or `mongos`; `playbooks/mongodb/restart.yml` sets it from `-e restart_target` |
 | Uninstall | `mongodb_destroy_prune`, `mongodb_skip_confirm` |
 
 ## Artifacts (controller-side)
@@ -402,6 +403,7 @@ run a kernel below that boundary and use 8.0.x for PBM-backed PITR.
 > **Note:** `mongodb_kernel_guard_min_version` and `mongodb_fixed_kernel` are
 > now **inert** compatibility variables. They remain accepted so existing
 > inventories do not fail, but the guard is the kernel-only check above.
+- **A deploy doesn't restart MongoDB on a running cluster.** It runs on every host at once, so restarting mongod, configsvr or mongos would take each replica set down on all of them together. When a run changes their container definition (image, memory limit, command flags), it writes the new `docker-compose.yml` or Quadlet, leaves the containers on the old one, and ends with a `WARNING` listing them, on every run until they're restarted. `playbooks/mongodb/restart.yml` applies it one node at a time: on each node it checks the replica set is healthy, hands off a primary, restarts, and waits for the set to be whole again. Exporters are not held back. A cluster that isn't bootstrapped yet (no `.bootstrap_complete` marker) still restarts as before.
 - **FCV (featureCompatibilityVersion)** is NOT auto-bumped on version upgrade. After a major upgrade (6→7, 7→8), run `db.adminCommand({setFeatureCompatibilityVersion: "7.0"})` manually after a soak period.
 - **Auto-generated admin password persists** — once `admin.password` exists in the artifacts dir, it's reused on every run. Delete the file if you want a fresh password.
 - **Cert rotation is zero-downtime** — renew-certs.yml uses a rolling restart, one node at a time. The CA is NOT rotated unless you explicitly do so (breaking change).

@@ -1,0 +1,40 @@
+---
+# Rolling restart (mongodb_action: restart). Restarts this node's services one
+# at a time; playbooks/mongodb/restart.yml runs it with `serial: 1`, so only
+# one node's members are ever down.
+#
+# Each service restarts from its current definition: docker recreates it from
+# docker-compose.yml, and a podman restart re-reads the Quadlet. That makes this
+# the way to apply a container change a deploy held back on a running cluster
+# (pending_restarts.yml).
+
+- name: Check the restart target
+  ansible.builtin.assert:
+    that:
+      - _mongodb_restart_services | length > 0
+    fail_msg: >-
+      mongodb_restart_target={{ mongodb_restart_target }} isn't a service of a
+      {{ mongodb_cluster_type }} cluster. Use one of: all,
+      {{ _mongodb_data_services | join(', ') }}.
+    quiet: true
+
+- name: Resolve the container engine binary
+  ansible.builtin.include_tasks: _engine_bin.yml
+
+# Before anything goes down, so the download doesn't add to the time a member is
+# out. Only when missing: an image already here is the one the definition names.
+- name: Pull the MongoDB image if this node doesn't have it
+  ansible.builtin.shell: |
+    "$ENGINE" image inspect "$IMAGE" >/dev/null 2>&1 && exit 0
+    "$ENGINE" pull "$IMAGE" >&2 && echo IMAGE_PULLED
+  environment:
+    ENGINE: "{{ _mongodb_engine_bin }}"
+    IMAGE: "{{ mongodb_image }}"
+  register: _mongodb_restart_pull
+  changed_when: "'IMAGE_PULLED' in _mongodb_restart_pull.stdout"
+
+- name: Restart each service in turn
+  ansible.builtin.include_tasks: _restart_service.yml
+  loop: "{{ _mongodb_restart_services }}"
+  loop_control:
+    loop_var: _svc

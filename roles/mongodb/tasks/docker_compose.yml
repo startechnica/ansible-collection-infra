@@ -20,10 +20,34 @@
   vars:
     mongodb_bootstrap: "{{ not _bootstrap_marker.stat.exists }}"
 
+# On a running cluster (marker present) this recreates nothing. The deploy runs
+# on every host at once, so recreating mongod, configsvr or mongos here would
+# take each replica set down on all of them together. Missing containers are
+# still created and stopped ones started. A changed definition waits for
+# playbooks/mongodb/restart.yml, which applies it one node at a time;
+# pending_restarts.yml lists what's waiting at the end of the run.
 - name: Start MongoDB containers
   community.docker.docker_compose_v2:
     project_src: "{{ mongodb_root_dir }}"
     state: present
+    recreate: "{{ 'never' if _bootstrap_marker.stat.exists else 'auto' }}"
+
+# The exporters serve no clients, so they take a changed definition right away.
+# Without their dependencies: the mongos exporter's would bring mongos along.
+- name: Apply exporter changes
+  community.docker.docker_compose_v2:
+    project_src: "{{ mongodb_root_dir }}"
+    state: present
+    services: "{{ _exporters }}"
+    dependencies: false
+  vars:
+    _exporters: >-
+      {{ (['mongodb-exporter'] if mongodb_exporter_enabled | bool else [])
+         + (mongodb_exporter_members | map(attribute='name')
+            | map('regex_replace', '^', 'mongodb-exporter-') | list) }}
+  when:
+    - _bootstrap_marker.stat.exists
+    - _exporters | length > 0
 
 - name: Wait for containers to be running
   community.docker.docker_container_info:
