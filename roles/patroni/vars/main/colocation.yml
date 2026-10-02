@@ -1,0 +1,17 @@
+---
+# Computed: whether MongoDB runs on this host too, read per host from the
+# mongodb_nodes group. mongodb_enabled is one value for the whole inventory and
+# doesn't say which hosts run MongoDB. deploy.yml and
+# playbooks/{mongodb,patroni}/* all build the group with common's
+# build_host_groups: the hosts tagged `mongodb`, when mongodb_enabled is true.
+# In a playbook of your own, a host in mongodb_nodes is one that runs MongoDB.
+_patroni_mongodb_colocated: "{{ 'mongodb_nodes' in group_names }}"
+
+# What other stacks commit on this node: MongoDB's own budget where it runs here
+# (tasks/main.yml imports mongodb_mem_request_mb), plus patroni_mem_reserved_mb
+# for anything else. Passed to preflight as container_mem_reserved_mb, and arms
+# the auto-sizing warning in tasks/shared/_mem_budget.yml. The mongodb role does
+# the same the other way round.
+_patroni_mem_others_mb: >-
+  {{ (mongodb_mem_request_mb | int if _patroni_mongodb_colocated | bool else 0)
+     + (patroni_mem_reserved_mb | int) }}

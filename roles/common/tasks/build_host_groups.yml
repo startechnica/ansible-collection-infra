@@ -5,9 +5,18 @@
 # Parameters:
 #   target_groups:  list of groups to add ALL instances to (default: [cluster_nodes])
 #   use_tags:       filter instances into groups by tags (default: false)
-#                     - "mongodb" tag → mongodb_nodes
-#                     - "patroni" tag → patroni_nodes
+#                     - "mongodb" tag → mongodb_nodes, if mongodb_enabled
+#                     - "patroni" tag → patroni_nodes, if patroni_enabled
 #                     - All VMs      → cluster_nodes (always)
+#
+# With use_tags, a VM is in mongodb_nodes / patroni_nodes exactly when it runs
+# that stack, which is what the roles read to tell whether the other stack
+# shares a host. Every playbook that deploys or operates either stack builds
+# its groups here (deploy.yml, playbooks/mongodb/_setup.yml,
+# playbooks/patroni/_setup.yml), so they all agree on which VMs run what.
+# A VM's tags are the union of its own `tags` and the inventory-wide
+# `instance_tags`. An unset mongodb_enabled / patroni_enabled counts as false,
+# the roles' own default: a tagged VM whose stack is off runs nothing.
 #
 # Connection parameters are derived from:
 #   - IP:       instances[].ipv4 (CIDR stripped)
@@ -115,7 +124,7 @@
   # If either contains 'mongodb', the VM joins mongodb_nodes.
   when:
     - use_tags | default(false) | bool
-    - mongodb_enabled | default(true) | bool
+    - mongodb_enabled | default(false) | bool
     - "'mongodb' in ((item.tags | default([])) + (instance_tags | default([])) | unique)"
 
 - name: Add patroni-tagged VMs to patroni_nodes group
@@ -127,7 +136,7 @@
     label: "{{ item.hostname }}"
   when:
     - use_tags | default(false) | bool
-    - patroni_enabled | default(true) | bool
+    - patroni_enabled | default(false) | bool
     - "'patroni' in ((item.tags | default([])) + (instance_tags | default([])) | unique)"
 
 - name: Display group assignments (tag mode)
@@ -135,9 +144,9 @@
     msg: >-
       {{ ['cluster_nodes: ' ~ (groups['cluster_nodes'] | default([]) | join(', '))]
          + (['mongodb_nodes: ' ~ (groups['mongodb_nodes'] | default([]) | join(', '))]
-            if (mongodb_enabled | default(true) | bool) else [])
+            if (mongodb_enabled | default(false) | bool) else [])
          + (['patroni_nodes: ' ~ (groups['patroni_nodes'] | default([]) | join(', '))]
-            if (patroni_enabled | default(true) | bool) else []) }}
+            if (patroni_enabled | default(false) | bool) else []) }}
   when: use_tags | default(false) | bool
 
 - name: Display group assignments

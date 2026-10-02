@@ -25,6 +25,16 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   a primary was restarted without handing off; it now uses the member
   certificate. The `restart mongodb` handler is gone. See
   [docs/UPGRADING.md](docs/UPGRADING.md).
+- **`patroni` counts a co-located MongoDB's memory itself.** On a host that
+  also runs MongoDB, the role now imports the `mongodb` role's budget, the new
+  `mongodb_mem_request_mb` (the caps of every MongoDB container on the node),
+  and counts it in preflight's memory check, as `mongodb` already did with
+  Patroni's. **An inventory that set `patroni_mem_reserved_mb` to MongoDB's
+  share now counts MongoDB twice**, and preflight warns (or fails, with
+  `container_mem_strict`) about memory that isn't committed: remove it, or
+  keep only what isn't MongoDB. The warning about PostgreSQL sizing itself
+  from total RAM now fires on such a host without it. See
+  [docs/UPGRADING.md](docs/UPGRADING.md).
 
 - **`mongodb`: the exporter is off by default.** `mongodb_exporter_enabled`
   now defaults to `false`. A deployment that relied on the old default loses
@@ -35,6 +45,30 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   `playbooks/mongodb/restart.yml`. To keep the exporter, set
   `mongodb_exporter_enabled: true`. See [docs/UPGRADING.md](docs/UPGRADING.md).
 
+- **`playbooks/mongodb/*` and `playbooks/patroni/*` route by tags, like
+  `deploy.yml`.** They ran their stack on every VM in `instances`, whatever its
+  tags, so an inventory that puts the stacks on separate VMs got both stacks
+  everywhere unless it was deployed with `deploy.yml`. Their `_setup.yml` now
+  builds the groups with `common`'s `build_host_groups`: a VM runs a stack when
+  it is tagged with it (its own `tags` or `instance_tags`) and the stack's
+  `*_enabled` is true. **An inventory without tags now matches no VM**, and
+  the playbooks fail saying so: add `instance_tags` with the stacks it runs.
+  They also take the connection user and container engine from
+  `instance_platform_preset` when the inventory doesn't set them, as
+  `deploy.yml` does, instead of falling back to `ubuntu` and the role default.
+  `playbooks/mongodb/add-node.yml` now refuses a target outside
+  `mongodb_nodes`, as the patroni one already did. See
+  [docs/UPGRADING.md](docs/UPGRADING.md).
+
+- **A tag alone no longer puts a VM in `mongodb_nodes` / `patroni_nodes`.**
+  `deploy.yml` routed tagged VMs even with `mongodb_enabled` /
+  `patroni_enabled` unset. The role then ended itself, but the firewall still
+  opened that stack's ports on them, and the other role took the host as
+  shared. An unset switch now counts as false everywhere, as in the roles,
+  `validate_inventory` included, which now warns about VMs tagged for a
+  service that is switched off. The README and the example inventories now
+  set both switches; without them they never deployed either stack.
+
 ### Added
 
 - **`mongodb_exporter_path`** (default `/metrics`): the HTTP path every MongoDB
@@ -43,6 +77,20 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   `metrics_path` in the grafana_alloy role's extra scrapes.
 
 ### Fixed
+
+- **`mongodb` decides per host whether Patroni shares it.** It read
+  `patroni_enabled`, which is one value for the whole inventory, so in an
+  inventory that runs Patroni on some hosts only, a MongoDB-only host still
+  defaulted THP to `never`, left `vm.overcommit_memory` unset, and counted
+  PostgreSQL's memory in the preflight check, which could fail it for nothing.
+  The role now reads whether the host is in `patroni_nodes`, and `patroni`
+  likewise reads `mongodb_nodes`. Every playbook now builds both groups the
+  same way (see the routing entry under Breaking changes). Hosts that run both
+  stacks get the same settings as before. On them, a mongodb playbook now also
+  runs preflight's Patroni VIP check, as `deploy.yml` already did.
+- **`validate_inventory` described tag precedence wrongly.** It said a VM's own
+  `tags` replace `instance_tags`; routing has always added them up. The note
+  now says so, and lists the VMs by `hostname` (it printed an empty list).
 
 - **`patroni` no longer widens the ephemeral port range.** It set
   `net.ipv4.ip_local_port_range` to `1024 65535` host-wide and reserved only

@@ -47,7 +47,10 @@ argument_specs:
         default: false
         description: >-
           When true, route VMs to mongodb_nodes / patroni_nodes based on their
-          tags, in addition to the always-present cluster_nodes group.
+          tags (their own `tags` plus `instance_tags`), in addition to the
+          always-present cluster_nodes group. A tagged VM joins a group only
+          when mongodb_enabled / patroni_enabled is true; unset counts as
+          false, as in the roles.
 
   validate_inventory:
     short_description: Inventory preconditions validator — asserts before deploy.

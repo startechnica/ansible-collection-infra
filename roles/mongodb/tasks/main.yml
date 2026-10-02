@@ -105,17 +105,13 @@
 # operator to keep a copy of that number in inventory. patroni_mem_request_mb is
 # a lazy expression in patroni's vars/main/memory.yml, so importing the role's
 # export anchor is enough — no tasks run, and nothing has to have run on the
-# host first.
+# host first. The patroni role imports this role's mongodb_mem_request_mb the
+# same way.
 #
 # Narrow on purpose: `defaults_from` loads ONLY patroni's postgresql.yml, which
-# is the single file the budget depends on. Importing all of patroni's defaults
-# would also bring mongodb_tls_key_curve, which patroni defaults to secp384r1 and this
-# role to secp256r1 — silently changing the curve of every certificate this role
-# then generates. `vars_from` likewise loads only the memory vars.
-#
-# Note this is an import (static), so the variables load regardless of whether
-# Patroni is actually deployed here; the reservation below is what's gated on
-# patroni_enabled. Harmless either way — nothing else reads pg_*.
+# is the single file the budget depends on, and `vars_from` only the memory
+# vars. The import loads on every host in the play; only the hosts that run
+# Patroni count it (_mongodb_mem_others_mb in vars/main/colocation.yml).
 - name: Import Patroni's memory budget (co-located stacks)
   ansible.builtin.import_role:
     name: patroni
@@ -127,30 +123,12 @@
   ansible.builtin.include_role:
     name: preflight
   vars:
-    # Every container this role puts on the node, not just the mongod family.
-    # The PBM agents and the exporter were omitted, which under-reported a
-    # sharded node with PBM by 640MB (two agents at 256 + exporter at 128) —
-    # enough to matter on exactly the hosts where the check is worth having.
-    # PBM renders one agent per data-bearing node: shard, plus config when
-    # sharded (see tasks/pbm.yml :: _pbm_agents).
-    container_mem_request_mb: >-
-      {{ (mongodb_mongod_mem_limit_mb | int)
-         + ((mongodb_configsvr_mem_limit_mb | int) + (mongodb_mongos_mem_limit_mb | int)
-            if mongodb_cluster_type == 'sharded' else 0)
-         + ((mongodb_backup_pbm_mem_limit_mb | int)
-            * (2 if mongodb_cluster_type == 'sharded' else 1)
-            if mongodb_backup_pbm_enabled | bool else 0)
-         + ((mongodb_exporter_mem_limit_mb | int)
-            if mongodb_exporter_enabled | bool else 0)
-         + ((mongodb_exporter_mem_limit_mb | int) * (mongodb_exporter_members | length)) }}
-    # What something OTHER than this role commits on the same node. Patroni's
-    # share is read from the role itself (imported above) so there's no second
-    # copy of the number to keep in step; mongodb_mem_reserved_mb is the manual
-    # escape hatch for anything the collection can't introspect.
-    container_mem_reserved_mb: >-
-      {{ (patroni_mem_request_mb | int
-          if patroni_enabled | default(false) | bool else 0)
-         + (mongodb_mem_reserved_mb | default(0) | int) }}
+    # Every container this role puts on the node (vars/main/memory.yml).
+    container_mem_request_mb: "{{ mongodb_mem_request_mb }}"
+    # What something OTHER than this role commits on the same node: Patroni's
+    # share where it runs here, read from the role imported above, plus
+    # mongodb_mem_reserved_mb (vars/main/colocation.yml).
+    container_mem_reserved_mb: "{{ _mongodb_mem_others_mb }}"
   when: >-
     mongodb_action | default('provision') in
     ['provision', 'init', 'backup', 'restore', 'renew-certs', 'upgrade']

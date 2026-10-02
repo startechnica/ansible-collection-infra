@@ -5,9 +5,9 @@
 # mongodb_thp_enabled is, in which case tasks/thp.yml doesn't run.
 #
 # never also turns defrag off; any other mode gets the rest of MongoDB's recipe.
-# vm.overcommit_memory is part of it but is left out next to Patroni: the
-# patroni role sets strict overcommit (2) on hosts with swap, and the two values
-# would otherwise flip on every run.
+# vm.overcommit_memory is part of it but is left out on a host that also runs
+# Patroni (vars/main/colocation.yml): the patroni role sets strict overcommit
+# (2) on hosts with swap, and the two values would otherwise flip on every run.
 mongodb_thp_settings: >-
   {{ {} if mongodb_thp_enabled | length == 0
      else {'/sys/kernel/mm/transparent_hugepage/enabled': 'never',
@@ -16,5 +16,5 @@ mongodb_thp_settings: >-
      else ({'/sys/kernel/mm/transparent_hugepage/enabled': mongodb_thp_enabled,
             '/sys/kernel/mm/transparent_hugepage/defrag': 'defer+madvise',
             '/sys/kernel/mm/transparent_hugepage/khugepaged/max_ptes_none': '0'}
-           | combine({} if patroni_enabled | default(false) | bool
+           | combine({} if _mongodb_patroni_colocated | bool
                      else {'/proc/sys/vm/overcommit_memory': '1'})) }}

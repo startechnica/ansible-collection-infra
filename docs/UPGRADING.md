@@ -65,6 +65,64 @@ If your own playbooks notified the role's `restart mongodb` handler, that
 handler is gone: run `restart.yml` instead. `restart.yml` now also runs on
 podman, and still takes `-e restart_target=mongod|configsvr|mongos`.
 
+### Breaking — patroni counts a co-located MongoDB's memory itself
+
+On a host that also runs MongoDB, the patroni role now imports the mongodb
+role's memory budget, `mongodb_mem_request_mb` (the caps of every MongoDB
+container on the node), and counts it in preflight's memory check, as the
+mongodb role already did with Patroni's. `patroni_mem_reserved_mb` is now only
+for memory the collection can't see, such as a daemon outside it.
+
+If an inventory sets `patroni_mem_reserved_mb` to what MongoDB commits, MongoDB
+is now counted twice. Preflight then reports memory that isn't committed: a
+warning by default, a failure with `container_mem_strict: true`. Delete the
+line, or lower it to whatever on the node isn't MongoDB:
+
+```yaml
+# before
+patroni_mem_reserved_mb: 4224   # MongoDB's caps
+# after: the line is gone
+```
+
+A host runs MongoDB when it is in `mongodb_nodes`: tagged `mongodb`, with
+`mongodb_enabled` true (next section). In a playbook of your own, put the host
+in that group.
+
+### Breaking — the mongodb and patroni playbooks route by tags
+
+`playbooks/mongodb/*` and `playbooks/patroni/*` used to run their stack on
+every VM in `instances`, whatever its tags. They now build their groups the
+way `deploy.yml` does. A VM runs a stack when both hold:
+
+- the stack is switched on: `mongodb_enabled: true` / `patroni_enabled: true`.
+  Unset counts as false, as it always did in the roles. `deploy.yml` used to
+  route a tagged VM anyway (and the role then skipped itself), so a firewall
+  run opened the stack's ports there; it no longer does.
+- the VM is tagged with it, in `instance_tags` (every VM) or its own `tags`.
+  The two add up, so to run a stack on some VMs only, leave it out of
+  `instance_tags` and tag those VMs.
+
+An inventory that runs a stack must therefore set both. One that used the
+mongodb or patroni playbooks without tags now fails in their first play
+("No VM runs MongoDB"):
+
+```yaml
+# a node running both stacks
+mongodb_enabled: true
+patroni_enabled: true
+instance_tags:
+  - mongodb
+  - patroni
+```
+
+`validate_inventory` (stage 0 of `deploy.yml`, or `--tags validate`) warns
+about VMs tagged for a stack that is switched off.
+
+These playbooks now also take `instance_user_name` and `container_engine` from
+`instance_platform_preset` when the inventory doesn't set them, as `deploy.yml`
+does. Before, they connected as `ubuntu` and used the role's default engine. Set
+either in the inventory to pin it.
+
 ## 1.0.3 (2026-10-02)
 
 ### Breaking — every `patroni` role variable is now `patroni_`-prefixed

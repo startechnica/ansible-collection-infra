@@ -50,11 +50,14 @@ patroni_wal_archive_dir: "{{ patroni_postgresql_dir }}/wal_archive"
 # direction, on an estimate that is already approximate.
 patroni_stack_overhead_mb: 640
 
-# Memory committed on this node by something OTHER than this role — set it on a
-# host that also runs MongoDB (or anything else sizeable) so preflight's budget
-# sees the whole picture rather than half of it. Passed through to preflight as
-# container_mem_reserved_mb. Per-role rather than host-wide on purpose: each
-# role needs "everything except me", so one shared figure would double-count.
+# Memory committed on this node by something OTHER than this role that the
+# collection can't see — a non-container daemon, another tenant. A co-located
+# MongoDB is counted already: on a host in mongodb_nodes the role imports the
+# mongodb role's own mongodb_mem_request_mb, so leave MongoDB out of this
+# number or it is counted twice. ADDED to that in preflight's budget
+# (container_mem_reserved_mb, see vars/main/colocation.yml). Per-role rather
+# than host-wide on purpose: each role needs "everything except me", so one
+# shared figure would double-count.
 patroni_mem_reserved_mb: 0
 
 patroni_pg_shared_buffers: ""

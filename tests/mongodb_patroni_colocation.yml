@@ -1,0 +1,178 @@
+---
+# Regression coverage for how the mongodb and patroni roles tell that they share
+# a host.
+#
+# What it guards:
+#   1. Each role decides per host, from the other stack's group (patroni_nodes,
+#      mongodb_nodes), and never from the inventory-wide patroni_enabled /
+#      mongodb_enabled. mongodb used to read patroni_enabled, so on a host
+#      running only MongoDB in an inventory that runs Patroni elsewhere, it kept
+#      THP at never, left vm.overcommit_memory unset and reserved PostgreSQL's
+#      memory, which could fail the preflight memory check for nothing.
+#   2. Each role counts the other's memory budget on the hosts both run,
+#      imported from the other role (patroni_mem_request_mb,
+#      mongodb_mem_request_mb), so no inventory restates either number.
+#
+# How the groups themselves are built, the same way by every playbook, is
+# tests/host_group_routing.yml.
+#
+# Run from collection root:
+#   ansible-playbook tests/mongodb_patroni_colocation.yml
+
+- name: "Colocation :: hosts"
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  tasks:
+    - name: Add a shared host, a MongoDB-only host and a Patroni-only host
+      ansible.builtin.add_host:
+        name: "{{ item.name }}"
+        groups: "{{ item.groups }}"
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
+      loop:
+        - {name: shared-1, groups: [mongodb_nodes, patroni_nodes]}
+        - {name: mongo-1, groups: [mongodb_nodes]}
+        - {name: pg-1, groups: [patroni_nodes]}
+      loop_control:
+        label: "{{ item.name }}"
+
+- name: "Colocation :: mongodb sees Patroni per host"
+  hosts: mongodb_nodes
+  gather_facts: false
+  vars:
+    # Inventory-wide, as in every real inventory: true even for mongo-1.
+    patroni_enabled: true
+    mongodb_version: "8.0.28"
+    patroni_pg_shared_buffers: 2GB
+    ansible_facts:
+      memtotal_mb: 16384
+    _shared: "{{ inventory_hostname in groups['patroni_nodes'] }}"
+  tasks:
+    - name: Import mongodb role variables
+      ansible.builtin.import_role:
+        name: mongodb
+        tasks_from: export_vars
+
+    # Same import as roles/mongodb/tasks/main.yml.
+    - name: Import Patroni's memory budget
+      ansible.builtin.import_role:
+        name: patroni
+        tasks_from: export_vars
+        defaults_from: main/postgresql.yml
+        vars_from: main/memory.yml
+
+    - name: Verify THP, overcommit and the memory reservation follow patroni_nodes
+      ansible.builtin.assert:
+        that:
+          - _mongodb_patroni_colocated | bool == _shared | bool
+          - mongodb_thp_enabled == ('never' if _shared | bool else 'always')
+          - ('/proc/sys/vm/overcommit_memory' in mongodb_thp_settings) == (not _shared | bool)
+          # 2 GB shared_buffers + 640 MB stack overhead.
+          - _mongodb_mem_others_mb | int == (2688 if _shared | bool else 0)
+        fail_msg: >-
+          {{ inventory_hostname }}: colocated {{ _mongodb_patroni_colocated }},
+          THP {{ mongodb_thp_enabled }}, settings {{ mongodb_thp_settings }},
+          reserved {{ _mongodb_mem_others_mb }}MB
+
+    - name: Verify mongodb_mem_reserved_mb adds to Patroni's share
+      ansible.builtin.assert:
+        that:
+          - _mongodb_mem_others_mb | int == (2688 + 500 if _shared | bool else 500)
+        fail_msg: "{{ inventory_hostname }}: reserved {{ _mongodb_mem_others_mb }}MB"
+      vars:
+        mongodb_mem_reserved_mb: 500
+
+- name: "Colocation :: patroni sees MongoDB per host"
+  hosts: patroni_nodes
+  gather_facts: false
+  vars:
+    # Inventory-wide, as in every real inventory: true even for pg-1.
+    mongodb_enabled: true
+    mongodb_cluster_type: sharded
+    mongodb_backup_pbm_enabled: true
+    mongodb_exporter_enabled: true
+    ansible_facts:
+      memtotal_mb: 16384
+    _shared: "{{ inventory_hostname in groups['mongodb_nodes'] }}"
+  tasks:
+    - name: Import patroni role variables
+      ansible.builtin.import_role:
+        name: patroni
+        tasks_from: export_vars
+
+    # Same imports as roles/patroni/tasks/main.yml.
+    - name: Import MongoDB's memory budget and caps
+      ansible.builtin.import_role:
+        name: mongodb
+        tasks_from: export_vars
+        defaults_from: main/resources.yml
+        vars_from: main/memory.yml
+
+    - name: Import MongoDB's cluster type
+      ansible.builtin.import_role:
+        name: mongodb
+        tasks_from: export_vars
+        defaults_from: main/mongodb.yml
+        vars_from: empty.yml
+
+    - name: Import MongoDB's PBM switch
+      ansible.builtin.import_role:
+        name: mongodb
+        tasks_from: export_vars
+        defaults_from: main/pbm.yml
+        vars_from: empty.yml
+
+    - name: Import MongoDB's exporter switches
+      ansible.builtin.import_role:
+        name: mongodb
+        tasks_from: export_vars
+        defaults_from: main/exporter.yml
+        vars_from: empty.yml
+
+    # 2048 mongod + 512 configsvr + 1024 mongos + 2 PBM agents at 256 + one
+    # exporter at 128, the role's default caps.
+    - name: Verify the memory reservation follows mongodb_nodes
+      ansible.builtin.assert:
+        that:
+          - _patroni_mongodb_colocated | bool == _shared | bool
+          - mongodb_mem_request_mb | int == 4224
+          - _patroni_mem_others_mb | int == (4224 if _shared | bool else 0)
+        fail_msg: >-
+          {{ inventory_hostname }}: colocated {{ _patroni_mongodb_colocated }},
+          MongoDB {{ mongodb_mem_request_mb }}MB, reserved {{ _patroni_mem_others_mb }}MB
+
+    - name: Verify patroni_mem_reserved_mb adds to MongoDB's share
+      ansible.builtin.assert:
+        that:
+          - _patroni_mem_others_mb | int == (4224 + 300 if _shared | bool else 300)
+        fail_msg: "{{ inventory_hostname }}: reserved {{ _patroni_mem_others_mb }}MB"
+      vars:
+        patroni_mem_reserved_mb: 300
+
+    # The warning about PostgreSQL sizing itself from total RAM is armed by
+    # _patroni_mem_others_mb, so on the shared host it now fires without
+    # patroni_mem_reserved_mb. Running it also checks its message renders.
+    - name: Run the auto-sizing warning (fires on shared-1 only)
+      ansible.builtin.include_tasks: ../roles/patroni/tasks/shared/_mem_budget.yml
+
+- name: "Colocation :: static guards"
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  tasks:
+    - name: Verify neither role reads the other's inventory-wide switch
+      ansible.builtin.assert:
+        that:
+          - _mongodb_reads == ''
+          - _patroni_reads == ''
+        fail_msg: >-
+          patroni_enabled / mongodb_enabled say whether a stack runs anywhere
+          in the inventory, not on this host. Use _mongodb_patroni_colocated /
+          _patroni_mongodb_colocated instead.
+          mongodb: {{ _mongodb_reads }} patroni: {{ _patroni_reads }}
+      vars:
+        # Lines where the name appears before any `#`, in YAML and templates.
+        _grep: "grep -rnE --include='*.yml' --include='*.j2' '^[^#]*\\b{0}\\b' {1} || true"
+        _mongodb_reads: "{{ lookup('ansible.builtin.pipe', _grep.format('patroni_enabled', playbook_dir ~ '/../roles/mongodb')) }}"
+        _patroni_reads: "{{ lookup('ansible.builtin.pipe', _grep.format('mongodb_enabled', playbook_dir ~ '/../roles/patroni')) }}"

@@ -1,0 +1,34 @@
+---
+# Computed: what this role commits on the node, the memory cap of every
+# container it runs there. Read by preflight as container_mem_request_mb, and by
+# the patroni role when both stacks share a node.
+#
+# A LAZY expression rather than a set_fact, like patroni's
+# patroni_mem_request_mb: another role reads it through
+# `tasks_from: export_vars` without anything having run on the host, and
+# overriding any input at a higher precedence re-evaluates it.
+#
+# It reads four defaults files and nothing else, so a consumer imports exactly
+# those, one import each (`defaults_from` takes a single file):
+#   main/resources.yml   the caps
+#   main/mongodb.yml     mongodb_cluster_type
+#   main/pbm.yml         mongodb_backup_pbm_enabled
+#   main/exporter.yml    the exporter switches
+# That is why the per-member exporters are counted from their switches here
+# rather than from mongodb_exporter_members (vars/main/exporter.yml), which also
+# needs the port settings. tests/preflight_mem_budget.yml checks the two agree.
+#
+# PBM runs one agent per data-bearing node: the shard, plus the config server
+# when sharded (see tasks/pbm.yml :: _pbm_agents).
+mongodb_mem_request_mb: >-
+  {{ (mongodb_mongod_mem_limit_mb | int)
+     + ((mongodb_configsvr_mem_limit_mb | int) + (mongodb_mongos_mem_limit_mb | int)
+        if mongodb_cluster_type == 'sharded' else 0)
+     + ((mongodb_backup_pbm_mem_limit_mb | int)
+        * (2 if mongodb_cluster_type == 'sharded' else 1)
+        if mongodb_backup_pbm_enabled | bool else 0)
+     + ((mongodb_exporter_mem_limit_mb | int)
+        * (1 + ([mongodb_exporter_shard_enabled, mongodb_exporter_configsvr_enabled]
+                | map('bool') | select | list | length
+                if mongodb_cluster_type == 'sharded' else 0))
+        if mongodb_exporter_enabled | bool else 0) }}

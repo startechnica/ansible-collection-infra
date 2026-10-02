@@ -52,7 +52,7 @@ ansible-playbook playbooks/deploy.yml -i inventories/<inv>.yml --diff
 # or: ansible-playbook startechnica.infra.deploy -i inventories/<inv>.yml --diff
 ```
 
-VMs tagged `patroni` (NetBox or inventory `instance_tags`) get routed to this role.
+VMs tagged `patroni` (NetBox, per-VM `tags` or inventory `instance_tags`) get routed to this role when `patroni_enabled` is true; a tag alone deploys nothing. The `playbooks/patroni/*` playbooks route the same way.
 
 ### Direct role include
 
@@ -475,7 +475,7 @@ Highlights:
 | S3 | `patroni_s3_bucket`, `patroni_s3_endpoint`, `patroni_s3_access_key`, `patroni_s3_secret_key`, `patroni_walg_s3_prefix` |
 | GCS | `patroni_walg_gcs_bucket`, `patroni_walg_gcs_service_account_json` (vault the service-account key), `patroni_walg_gcs_prefix` |
 | Memory (auto) | `patroni_pg_shared_buffers`, `patroni_pg_effective_cache`, `patroni_pg_work_mem`, `patroni_pg_maint_mem` — all derived from **total host RAM** as if PostgreSQL were the only consumer; set them explicitly on a node shared with another memory-hungry stack |
-| Memory budget | `patroni_mem_reserved_mb` (what another stack on the same node commits; also arms the warning that fires when a `pg_*` setting is still auto-sized on such a host), `patroni_stack_overhead_mb` (640 — everything besides `shared_buffers`: etcd, patroni, haproxy, pgbouncer, VIP manager, exporter), `patroni_postgres_exporter_mem_limit_mb`. The computed total is exported as `patroni_mem_request_mb` — other roles read it with `tasks_from: export_vars`, `defaults_from: main/postgresql.yml`, `vars_from: main/memory.yml` |
+| Memory budget | `patroni_mem_reserved_mb` (memory something else on the node commits that the collection can't see; a co-located MongoDB is already counted, because on a host in `mongodb_nodes` this role imports the mongodb role's `mongodb_mem_request_mb`; either reservation arms the warning that fires when a `pg_*` setting is still auto-sized on such a host), `patroni_stack_overhead_mb` (640 — everything besides `shared_buffers`: etcd, patroni, haproxy, pgbouncer, VIP manager, exporter), `patroni_postgres_exporter_mem_limit_mb`. The computed total is exported as `patroni_mem_request_mb` — other roles read it with `tasks_from: export_vars`, `defaults_from: main/postgresql.yml`, `vars_from: main/memory.yml` |
 | OOM victim order | `patroni_etcd_oom_score_adj` (-900), `patroni_oom_score_adj` (-500), `patroni_keepalived_oom_score_adj` / `patroni_vip_manager_oom_score_adj` (-500), `patroni_haproxy_oom_score_adj` / `patroni_pgbouncer_oom_score_adj` (-300), `patroni_postgres_exporter_oom_score_adj` (1000), plus `patroni_pg_backend_oom_adjust_enabled` / `patroni_pg_backend_oom_score_adj` so the postmaster survives and a backend is killed instead |
 
 ## Artifacts (controller-side)

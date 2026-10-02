@@ -58,8 +58,15 @@ Takes no parameters. Uses `/tmp/.ansible_localhost_vars.yml` as a scratch file.
 
 When `use_tags: true`:
 - All VMs → `cluster_nodes`
-- VMs with `mongodb` tag → also `mongodb_nodes`
-- VMs with `patroni` tag → also `patroni_nodes`
+- VMs with `mongodb` tag → also `mongodb_nodes`, when `mongodb_enabled` is true
+- VMs with `patroni` tag → also `patroni_nodes`, when `patroni_enabled` is true
+
+A VM's tags are its own `tags` plus the inventory-wide `instance_tags`. An unset
+`mongodb_enabled` / `patroni_enabled` counts as false, as in the roles. With
+these rules a VM is in `mongodb_nodes` / `patroni_nodes` exactly when it runs
+that stack, which the mongodb and patroni roles read to tell whether the other
+stack shares a host. `deploy.yml` and the `_setup.yml` of `playbooks/mongodb/`
+and `playbooks/patroni/` all build their groups this way.
 
 ### `validate_inventory`
 

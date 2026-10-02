@@ -94,6 +94,45 @@
 # Skipped on uninstall/status/etc. so we don't burn cycles on kernel /
 # time-sync / ulimit checks just to tear things down or read state.
 
+# Learn what MongoDB commits when it shares this node, instead of asking the
+# operator to keep a copy of that number in inventory. mongodb_mem_request_mb is
+# a lazy expression in mongodb's vars/main/memory.yml, so importing the role's
+# export anchor is enough — no tasks run, and nothing has to have run on the
+# host first. The mongodb role imports this role's patroni_mem_request_mb the
+# same way.
+#
+# Narrow on purpose: the budget reads four of mongodb's defaults files, and
+# `defaults_from` takes one, so each gets its own import and nothing else of
+# mongodb's loads. The imports load on every host in the play; only the hosts
+# that run MongoDB count them (_patroni_mem_others_mb in vars/main/colocation.yml).
+- name: Import MongoDB's memory budget and caps (co-located stacks)
+  ansible.builtin.import_role:
+    name: mongodb
+    tasks_from: export_vars
+    defaults_from: main/resources.yml
+    vars_from: main/memory.yml
+
+- name: Import MongoDB's cluster type (co-located stacks)
+  ansible.builtin.import_role:
+    name: mongodb
+    tasks_from: export_vars
+    defaults_from: main/mongodb.yml
+    vars_from: empty.yml
+
+- name: Import MongoDB's PBM switch (co-located stacks)
+  ansible.builtin.import_role:
+    name: mongodb
+    tasks_from: export_vars
+    defaults_from: main/pbm.yml
+    vars_from: empty.yml
+
+- name: Import MongoDB's exporter switches (co-located stacks)
+  ansible.builtin.import_role:
+    name: mongodb
+    tasks_from: export_vars
+    defaults_from: main/exporter.yml
+    vars_from: empty.yml
+
 # Runs before preflight so the co-located-stack warning lands next to the memory
 # budget it's about. The budget itself needs no task — patroni_mem_request_mb is
 # a lazy expression in vars/main/memory.yml.
@@ -105,9 +144,11 @@
     name: preflight
   vars:
     container_mem_request_mb: "{{ patroni_mem_request_mb }}"
-    # See mongodb/tasks/main.yml for why this is a per-role var and not one
-    # host-wide figure: each role needs "everything except me".
-    container_mem_reserved_mb: "{{ patroni_mem_reserved_mb | default(0) }}"
+    # What something OTHER than this role commits on the same node: MongoDB's
+    # share where it runs here, read from the role imported above, plus
+    # patroni_mem_reserved_mb (vars/main/colocation.yml). Per role rather than
+    # one host-wide figure: each role needs "everything except me".
+    container_mem_reserved_mb: "{{ _patroni_mem_others_mb }}"
     # Connection budget. Passed as components rather than one total so
     # preflight's failure message can name whichever term is oversized —
     # and because the pooled term is a product, the one people miss.
