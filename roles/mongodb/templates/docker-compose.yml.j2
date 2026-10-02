@@ -185,6 +185,8 @@ services:
     user: "{{ mongodb_uid }}:{{ mongodb_gid }}"
     command:
       - --mongodb.uri=mongodb://localhost:27017/?tls=true&tlsCertificateKeyFile=/etc/mongo/ssl/exporter.pem&tlsCAFile=/etc/mongo/ssl/ca.pem&authMechanism=MONGODB-X509&authSource=$$external
+      - --web.listen-address=:{{ mongodb_exporter_port }}
+      - --web.telemetry-path={{ mongodb_exporter_path }}
       - --collect-all
       - --compatible-mode
     network_mode: service:{{ 'mongos' if mongodb_cluster_type == 'sharded' else 'mongod' }}
@@ -210,7 +212,7 @@ services:
   # Per-member exporter for this node's {{ _member.compose_svc }} — see
   # mongodb_exporter_{{ _member.name }}_enabled. Host network: it reaches
   # {{ _member.compose_svc }} on its published port {{ _member.node_port }} and serves
-  # /metrics on the host's :{{ _member.port }}.
+  # {{ mongodb_exporter_path }} on the host's :{{ _member.port }}.
   mongodb-exporter-{{ _member.name }}:
     image: {{ mongodb_exporter_image }}
     container_name: mongodb-exporter-{{ _member.name }}
@@ -219,6 +221,7 @@ services:
     command:
       - --mongodb.uri=mongodb://localhost:{{ _member.node_port }}/?tls=true&tlsCertificateKeyFile=/etc/mongo/ssl/exporter.pem&tlsCAFile=/etc/mongo/ssl/ca.pem&authMechanism=MONGODB-X509&authSource=$$external
       - --web.listen-address=:{{ _member.port }}
+      - --web.telemetry-path={{ mongodb_exporter_path }}
       - --collect-all
       - --compatible-mode
     network_mode: host

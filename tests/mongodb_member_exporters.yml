@@ -24,6 +24,8 @@
   vars:
     _me_dir: /tmp/mongodb-member-exporters-test
     _me_templates: "{{ playbook_dir }}/../roles/mongodb/templates"
+    # Off by default; the member exporters need it.
+    mongodb_exporter_enabled: true
     mongodb_nodes:
       - { name: m-1, ipv4: 10.0.0.11 }
       - { name: m-2, ipv4: 10.0.0.12 }

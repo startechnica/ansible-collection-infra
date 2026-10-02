@@ -26,6 +26,22 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   certificate. The `restart mongodb` handler is gone. See
   [docs/UPGRADING.md](docs/UPGRADING.md).
 
+- **`mongodb`: the exporter is off by default.** `mongodb_exporter_enabled`
+  now defaults to `false`. A deployment that relied on the old default loses
+  its exporter on the next deploy: the role removes the exporter containers,
+  and `mongodb_services` no longer lists port 9216 for NetBox or the firewall.
+  On docker the exporter's port is published on mongos (mongod on a replica
+  set), so that container's definition changes too and waits for
+  `playbooks/mongodb/restart.yml`. To keep the exporter, set
+  `mongodb_exporter_enabled: true`. See [docs/UPGRADING.md](docs/UPGRADING.md).
+
+### Added
+
+- **`mongodb_exporter_path`** (default `/metrics`): the HTTP path every MongoDB
+  exporter serves its metrics on (`--web.telemetry-path`), including the shard
+  and configsvr exporters. A scraper must ask for the same path, e.g.
+  `metrics_path` in the grafana_alloy role's extra scrapes.
+
 ### Fixed
 
 - **`patroni` no longer widens the ephemeral port range.** It set
@@ -37,6 +53,15 @@ and this collection adheres to [Semantic Versioning](https://semver.org/).
   setting from `/etc/sysctl.conf` and `99-patroni-postgres.conf` and puts the
   live range back to the default, unless another sysctl file sets one. Patroni's
   ports are still reserved, in case one is moved into the range.
+- **`mongodb`: switching an exporter off removes it.** The Quadlet path left
+  the mongos exporter running when `mongodb_exporter_enabled` was turned off,
+  and the docker path left every switched-off exporter running, because
+  compose doesn't touch a container whose service is gone from the file. Both
+  engines now remove every exporter that isn't switched on.
+- **`mongodb` (docker): the exporter listens on `mongodb_exporter_port`.** It
+  wasn't given `--web.listen-address`, so it kept its built-in 9216 while the
+  port mapping followed the variable; any other port published nothing. The
+  exporters are recreated once on the next deploy for the new flags.
 - **`mongodb` no longer sets `net.ipv4.tcp_keepalive_time`.** It set 120
   host-wide where patroni sets 60, so on a node running both stacks, a mongodb
   run slowed dead-connection cleanup for PostgreSQL, PgBouncer and HAProxy from

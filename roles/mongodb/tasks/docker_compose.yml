@@ -38,16 +38,20 @@
   community.docker.docker_compose_v2:
     project_src: "{{ mongodb_root_dir }}"
     state: present
-    services: "{{ _exporters }}"
+    services: "{{ _mongodb_exporter_containers }}"
     dependencies: false
-  vars:
-    _exporters: >-
-      {{ (['mongodb-exporter'] if mongodb_exporter_enabled | bool else [])
-         + (mongodb_exporter_members | map(attribute='name')
-            | map('regex_replace', '^', 'mongodb-exporter-') | list) }}
   when:
     - _bootstrap_marker.stat.exists
-    - _exporters | length > 0
+    - _mongodb_exporter_containers | length > 0
+
+# Compose leaves alone a container whose service is gone from the file, so an
+# exporter switched off would keep running. A node that never ran one is
+# untouched.
+- name: Remove exporters that are switched off
+  community.docker.docker_container:
+    name: "{{ item }}"
+    state: absent
+  loop: "{{ _mongodb_exporter_all_containers | difference(_mongodb_exporter_containers) }}"
 
 - name: Wait for containers to be running
   community.docker.docker_container_info:
