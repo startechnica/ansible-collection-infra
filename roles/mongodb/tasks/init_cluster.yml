@@ -508,10 +508,13 @@
 # service during the auth-mode re-render above (including the exporter),
 # so this step is a no-op there. Keep the Docker Compose path explicit.
 
+# Recreates nothing on a cluster that was already running when this run began,
+# for the reason in docker_compose.yml.
 - name: Start all services including exporter (mongodb_container_engine=docker)
   community.docker.docker_compose_v2:
     project_src: "{{ mongodb_root_dir }}"
     state: present
+    recreate: "{{ 'never' if _mongodb_init_marker.stat.exists else 'auto' }}"
   when: mongodb_container_engine == 'docker'
 
 # Touched on every node once bootstrap finishes successfully.

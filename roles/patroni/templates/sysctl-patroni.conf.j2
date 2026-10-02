@@ -26,12 +26,12 @@ net.ipv4.tcp_keepalive_time = 60
 net.ipv4.tcp_keepalive_intvl = 10
 net.ipv4.tcp_keepalive_probes = 6
 net.ipv4.ip_nonlocal_bind = 1
-net.ipv4.ip_local_port_range = 1024 65535
 
-# Reserved so the kernel never picks these as ephemeral source ports —
-# otherwise a busy outbound client on this host (e.g. a co-located
-# mongos) can grab one of our service ports and block the matching
-# daemon from binding on restart.
+# ip_local_port_range is left at the kernel default (32768-60999), which every
+# default port of this stack and of MongoDB is below. These are reserved so the
+# kernel never picks them as ephemeral source ports if one is moved into the
+# range; otherwise a busy outbound client could take it and block the
+# matching daemon from binding on restart.
 net.ipv4.ip_local_reserved_ports = {{
   ([patroni_haproxy_primary_port, patroni_haproxy_replicas_port,
     patroni_haproxy_direct_port | default(5434),

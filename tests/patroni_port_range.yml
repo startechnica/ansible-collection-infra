@@ -1,0 +1,61 @@
+---
+# Regression coverage for the patroni role's ephemeral port range.
+#
+# What it guards:
+#   1. Neither the live sysctl parameters (shared/os_tuning.yml) nor the
+#      persisted 99-patroni-postgres.conf widen net.ipv4.ip_local_port_range.
+#      1024-65535 put every service port on the host inside the range, so a
+#      co-located MongoDB's 27017-27019 could be taken as source ports, and
+#      mongod then couldn't bind on restart.
+#   2. Patroni's own service ports are still reserved.
+#
+# Run from collection root:
+#   ansible-playbook tests/patroni_port_range.yml
+
+- name: "Port range :: left at the kernel default"
+  hosts: localhost
+  gather_facts: true
+  gather_subset: [hardware]
+  connection: local
+  vars:
+    _render_dir: /tmp/patroni-port-range-test
+  tasks:
+    - name: Import patroni role variables
+      ansible.builtin.import_role:
+        name: patroni
+        tasks_from: export_vars
+
+    - name: Recreate render directory
+      ansible.builtin.file:
+        path: "{{ _render_dir }}"
+        state: "{{ _render_state }}"
+        mode: "0755"
+      loop: [absent, directory]
+      loop_control:
+        loop_var: _render_state
+
+    - name: Render 99-patroni-postgres.conf
+      ansible.builtin.template:
+        src: ../roles/patroni/templates/sysctl-patroni.conf.j2
+        dest: "{{ _render_dir }}/99-patroni-postgres.conf"
+        mode: "0644"
+
+    - name: Verify nothing widens the range and the service ports stay reserved
+      ansible.builtin.assert:
+        that:
+          - _conf is not search('(?m)^\s*net\.ipv4\.ip_local_port_range')
+          - _tuning is not search("'net\.ipv4\.ip_local_port_range':")
+          - _reserved == _want
+        fail_msg: "reserved {{ _reserved }}, want {{ _want }}"
+      vars:
+        _conf: "{{ lookup('ansible.builtin.file', _render_dir ~ '/99-patroni-postgres.conf') }}"
+        _tuning: "{{ lookup('ansible.builtin.file', '../roles/patroni/tasks/shared/os_tuning.yml') }}"
+        _reserved: >-
+          {{ (_conf | regex_search('(?m)^net\.ipv4\.ip_local_reserved_ports = (.*)$', '\1') | first)
+             .split(',') | map('int') | sort }}
+        _want: >-
+          {{ [patroni_haproxy_primary_port, patroni_haproxy_replicas_port,
+              patroni_haproxy_direct_port, patroni_haproxy_stats_port,
+              patroni_pgbouncer_port, patroni_api_port, patroni_postgresql_port,
+              patroni_etcd_client_port, patroni_etcd_peer_port]
+             | map('int') | sort }}

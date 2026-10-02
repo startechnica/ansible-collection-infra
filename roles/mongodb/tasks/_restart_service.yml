@@ -1,0 +1,136 @@
+---
+# Restart one service on this node, for rolling_restart.yml. `_svc` is the
+# compose service name: configsvr, mongod or mongos.
+#
+# A replica set member (configsvr, mongod) goes down only while the rest of its
+# set is healthy, so the set keeps its majority, and hands off the primary
+# first, so clients see a step-down rather than a failover. Nothing moves on
+# until the set is whole again.
+
+- name: "Restart {{ _svc }}"
+  vars:
+    _member: "{{ _svc in ['configsvr', 'mongod'] }}"
+    _port: >-
+      {{ {'configsvr': mongodb_configsvr_exec_port,
+          'mongod': mongodb_mongod_exec_port,
+          'mongos': mongodb_mongos_exec_port}[_svc] }}
+    _mongosh: >-
+      {{ [_mongodb_engine_bin, 'exec', 'mongodb-' ~ _svc,
+          'mongosh', '--port', _port | string, '--quiet', '--tls',
+          '--tlsCAFile', '/etc/mongo/ssl/ca.pem',
+          '--authenticationMechanism', 'MONGODB-X509',
+          '--authenticationDatabase', '$external'] }}
+    # The healthcheck user (clusterMonitor) reads replica set state. Stepping
+    # down needs more: the member certificate authenticates as the cluster
+    # itself.
+    _healthcheck_cert: [--tlsCertificateKeyFile, /etc/mongo/ssl/healthcheck.pem]
+    _member_cert: [--tlsCertificateKeyFile, "/etc/mongo/ssl/mongodb-{{ _svc }}.pem"]
+    _rs_health_js: >-
+      const s = rs.status();
+      const ok = s.members.every(m => m.health === 1 && ['PRIMARY', 'SECONDARY'].includes(m.stateStr))
+        && s.members.some(m => m.stateStr === 'PRIMARY');
+      print((ok ? 'RS_OK ' : 'RS_WAIT ') + s.members.map(m => m.name + '=' + m.stateStr).join(' '));
+    # rs.stepDown fails when no secondary has caught up within 10 s; the
+    # rethrow stops the restart rather than take down a primary that can't hand
+    # off. A one-member set has nobody to hand off to.
+    _stepdown_js: >-
+      if (rs.status().members.length < 2 || !db.hello().isWritablePrimary) {
+        print('NOT_PRIMARY');
+      } else {
+        try { rs.stepDown(60); } catch (e) { if (db.hello().isWritablePrimary) throw e; }
+        print('STEPPED_DOWN');
+      }
+    # On docker the mongos exporter (mongod's on a replica set) and the PBM
+    # agents run inside these containers' network namespace, which a recreate
+    # replaces. On podman everything is on the host network, and the exporters
+    # and agents restart with their service through Requires=.
+    _docker_exporter: >-
+      {{ mongodb_container_engine == 'docker'
+         and mongodb_exporter_enabled | bool
+         and _svc == ('mongos' if mongodb_cluster_type == 'sharded' else 'mongod') }}
+    _docker_pbm_agent: "{{ {'mongod': 'mongodb-pbm-shard', 'configsvr': 'mongodb-pbm-config'}.get(_svc, '') }}"
+  block:
+    - name: "Check the replica set is healthy before the restart — {{ _svc }}"
+      ansible.builtin.command:
+        argv: "{{ _mongosh + _healthcheck_cert + ['--eval', _rs_health_js] }}"
+      register: _mongodb_rs_before
+      changed_when: false
+      until: _mongodb_rs_before.stdout is search('^RS_OK', multiline=True)
+      retries: 12
+      delay: 5
+      when: _member | bool
+
+    - name: "Hand off the primary — {{ _svc }}"
+      ansible.builtin.command:
+        argv: "{{ _mongosh + _member_cert + ['--eval', _stepdown_js] }}"
+      register: _mongodb_stepdown
+      changed_when: "'STEPPED_DOWN' in _mongodb_stepdown.stdout"
+      when: _member | bool
+
+    - name: "Stop the exporter in the service's network (docker) — {{ _svc }}"
+      community.docker.docker_compose_v2:
+        project_src: "{{ mongodb_root_dir }}"
+        services: [mongodb-exporter]
+        state: stopped
+      when: _docker_exporter | bool
+
+    - name: "Recreate from docker-compose.yml (docker) — {{ _svc }}"
+      community.docker.docker_compose_v2:
+        project_src: "{{ mongodb_root_dir }}"
+        services: ["{{ _svc }}"]
+        state: present
+        recreate: always
+        dependencies: false
+      when: mongodb_container_engine == 'docker'
+
+    - name: "Recreate the exporter in the new network (docker) — {{ _svc }}"
+      community.docker.docker_compose_v2:
+        project_src: "{{ mongodb_root_dir }}"
+        services: [mongodb-exporter]
+        state: present
+        recreate: always
+        dependencies: false
+      when: _docker_exporter | bool
+
+    # pbm.yml starts the agents with `--network container:<name>`, which a
+    # restart resolves again, to the new container.
+    - name: "Restart the PBM agent in the new network (docker) — {{ _svc }}"
+      ansible.builtin.command:
+        argv: ["{{ _mongodb_engine_bin }}", restart, "{{ _docker_pbm_agent }}"]
+      register: _mongodb_pbm_restart
+      changed_when: _mongodb_pbm_restart.rc == 0
+      failed_when:
+        - _mongodb_pbm_restart.rc != 0
+        - "'No such container' not in _mongodb_pbm_restart.stderr"
+      when:
+        - mongodb_container_engine == 'docker'
+        - _docker_pbm_agent | length > 0
+
+    - name: "Restart (podman) — {{ _svc }}"
+      ansible.builtin.systemd:
+        name: "mongodb-{{ _svc }}.service"
+        state: restarted
+        daemon_reload: true
+      when: mongodb_container_engine == 'podman'
+
+    - name: "Wait until the replica set is whole again — {{ _svc }}"
+      ansible.builtin.command:
+        argv: "{{ _mongosh + _healthcheck_cert + ['--eval', _rs_health_js] }}"
+      register: _mongodb_rs_after
+      changed_when: false
+      until: _mongodb_rs_after.stdout is search('^RS_OK', multiline=True)
+      retries: 60
+      delay: 5
+      when: _member | bool
+
+    # mongos opens its port only once it has read the cluster metadata from the
+    # config servers, so an answer means it can route.
+    - name: Wait until mongos answers
+      ansible.builtin.command:
+        argv: "{{ _mongosh + _healthcheck_cert + ['--eval', 'db.adminCommand(\"ping\")'] }}"
+      register: _mongodb_mongos_ping
+      changed_when: false
+      until: _mongodb_mongos_ping.rc == 0
+      retries: 60
+      delay: 5
+      when: not _member | bool

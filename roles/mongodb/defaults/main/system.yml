@@ -12,13 +12,14 @@ mongodb_configsvr_data_dir: "{{ mongodb_root_dir }}/data/configsvr"
 mongodb_tls_dir: "{{ mongodb_root_dir }}/ssl"
 
 # ── Kernel tuning ──
+# TCP keepalive is left to the host: mongod and mongos already lower the idle
+# time to 300 s on their own connections.
 mongodb_sysctl:
   vm.swappiness: 1
   vm.dirty_ratio: 15
   vm.dirty_background_ratio: 5
   net.core.somaxconn: 65535
   net.ipv4.tcp_fin_timeout: 30
-  net.ipv4.tcp_keepalive_time: 120
 
 # ── Ulimits ──
 mongodb_ulimit_nofile: 64000

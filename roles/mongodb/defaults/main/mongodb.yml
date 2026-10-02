@@ -69,3 +69,8 @@ mongodb_network: mongodb-cluster
 # ── Replica set names ──
 mongodb_shard_replset: rs0
 mongodb_config_replset: configReplSet
+
+# ── Rolling restart (mongodb_action: restart) ──
+# Which service playbooks/mongodb/restart.yml restarts on each node: all,
+# mongod, or on a sharded cluster configsvr or mongos.
+mongodb_restart_target: all

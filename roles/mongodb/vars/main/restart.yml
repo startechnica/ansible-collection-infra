@@ -1,0 +1,18 @@
+---
+# Computed: the services that serve clients, in restart order (configsvr before
+# the mongos that reads it). Compose service names; the containers and the
+# Quadlet units are `mongodb-<name>`.
+#
+# A deploy on a running cluster runs on every host at once, so it leaves these
+# on their old definition instead of restarting them all together
+# (docker_compose.yml, quadlet.yml, pending_restarts.yml). rolling_restart.yml
+# restarts them one node at a time, which applies the new one.
+_mongodb_data_services: >-
+  {{ ['configsvr', 'mongod', 'mongos'] if mongodb_cluster_type == 'sharded'
+     else ['mongod'] }}
+
+# What rolling_restart.yml restarts on each node. Empty when
+# mongodb_restart_target names a service this cluster type doesn't run.
+_mongodb_restart_services: >-
+  {{ _mongodb_data_services if mongodb_restart_target == 'all'
+     else _mongodb_data_services | select('eq', mongodb_restart_target) | list }}

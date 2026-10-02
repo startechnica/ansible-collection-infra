@@ -1,0 +1,75 @@
+---
+# Lists the mongod, configsvr and mongos containers still running an older
+# definition than the one on disk. A deploy on a running cluster writes the new
+# one but doesn't restart them (docker_compose.yml, quadlet.yml), because it
+# runs on every host at once. playbooks/mongodb/restart.yml applies it one node
+# at a time.
+#
+# Checked on every run, not only the one that changed the definition, so the
+# reminder stays until the restart happens.
+#
+#   docker  compose's own answer: a dry run of `up` for those services, which
+#           says Recreate for each container that differs from its service.
+#   podman  a restart re-reads the Quadlet, so a service started before its
+#           .container file last changed still runs the old one.
+
+- name: Find containers that differ from docker-compose.yml (docker)
+  community.docker.docker_compose_v2:
+    project_src: "{{ mongodb_root_dir }}"
+    state: present
+    services: "{{ _mongodb_data_services }}"
+    dependencies: false
+  check_mode: true
+  register: _mongodb_compose_dry_run
+  when: mongodb_container_engine == 'docker'
+
+- name: Resolve the container engine binary (podman)
+  ansible.builtin.include_tasks: _engine_bin.yml
+  when: mongodb_container_engine == 'podman'
+
+# A container that doesn't exist is skipped: nothing runs an old definition.
+- name: Find services started before their Quadlet changed (podman)
+  ansible.builtin.shell: |
+    for svc in $SERVICES; do
+      started=$("$ENGINE" inspect -f '{% raw %}{{.State.StartedAt.Unix}}{% endraw %}' "mongodb-$svc" 2>/dev/null) || continue
+      changed=$(stat -c %Y "/etc/containers/systemd/mongodb-$svc.container") || continue
+      if [ "$changed" -gt "$started" ]; then echo "mongodb-$svc"; fi
+    done
+  environment:
+    ENGINE: "{{ _mongodb_engine_bin }}"
+    SERVICES: "{{ _mongodb_data_services | join(' ') }}"
+  register: _mongodb_quadlet_stale
+  changed_when: false
+  check_mode: false
+  when: mongodb_container_engine == 'podman'
+
+- name: Record containers waiting for a rolling restart
+  ansible.builtin.set_fact:
+    _mongodb_pending_restart: >-
+      {{ _mongodb_compose_dry_run.actions | default([])
+         | selectattr('what', 'eq', 'container')
+         | selectattr('status', 'eq', 'Recreate')
+         | map(attribute='id') | list
+         if mongodb_container_engine == 'docker'
+         else _mongodb_quadlet_stale.stdout_lines }}
+
+- name: Report containers waiting for a rolling restart
+  ansible.builtin.debug:
+    msg: "{{ [_warning] + _pending }}"
+  vars:
+    _warning: >-
+      WARNING: these MongoDB containers still run their previous definition. A
+      deploy runs on every host at once, so it doesn't restart them on a
+      running cluster. Apply the change one node at a time with
+      playbooks/mongodb/restart.yml.
+    _pending: >-
+      {%- set out = [] -%}
+      {%- for h in ansible_play_hosts -%}
+        {%- set p = hostvars[h]._mongodb_pending_restart | default([]) -%}
+        {%- if p | length > 0 -%}
+          {%- set _ = out.append(h ~ ': ' ~ p | join(', ')) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+  run_once: true
+  when: _pending | length > 0

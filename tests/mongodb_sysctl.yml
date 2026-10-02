@@ -1,0 +1,35 @@
+---
+# Regression coverage for the mongodb role's kernel parameters.
+#
+# What it guards:
+#   1. mongodb_sysctl sets no TCP keepalive value. mongod and mongos lower the
+#      idle time to 300 s themselves, and a host-wide value fights a co-located
+#      patroni's, which PostgreSQL, PgBouncer and HAProxy depend on.
+#   2. Writing the sysctl file restarts nothing: the containers see the new
+#      values live, and the restart recreated every MongoDB container on every
+#      host in the play at once.
+#
+# Run from collection root:
+#   ansible-playbook tests/mongodb_sysctl.yml
+
+- name: "Sysctl :: mongodb kernel parameters"
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  tasks:
+    - name: Import mongodb role variables
+      ansible.builtin.import_role:
+        name: mongodb
+        tasks_from: export_vars
+
+    - name: Verify no keepalive value and no restart
+      ansible.builtin.assert:
+        that:
+          - _keepalive | length == 0
+          - _notifying | length == 0
+        fail_msg: "keepalive keys {{ _keepalive }}, tasks notifying {{ _notifying }}"
+      vars:
+        _keepalive: "{{ mongodb_sysctl.keys() | select('search', 'tcp_keepalive') | list }}"
+        _notifying: >-
+          {{ lookup('ansible.builtin.file', '../roles/mongodb/tasks/sysctl.yml') | from_yaml
+             | selectattr('notify', 'defined') | map(attribute='name') | list }}
