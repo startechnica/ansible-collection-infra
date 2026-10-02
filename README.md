@@ -121,8 +121,11 @@ to run *only* the checks.
 
 ### Full-stack install
 
-Provisions VMs → installs Docker → deploys any service tagged in the inventory's
-`instance_tags` list (`mongodb`, `patroni`, or both).
+Provisions VMs → installs Docker → deploys each service switched on with
+`mongodb_enabled` / `patroni_enabled` to the VMs tagged with it, through the
+inventory's `instance_tags` list (`mongodb`, `patroni`, or both) or a VM's own
+`tags`. The `playbooks/mongodb/*` and `playbooks/patroni/*` playbooks route the
+same way.
 
 ```bash
 # From source tree
@@ -245,7 +248,11 @@ instances:
     networks:
       - {}   # ipv4 enriched from NetBox into networks[0]
 
-# Which services to deploy (drives deploy.yml routing)
+# Which services to deploy, and where (drives the routing of deploy.yml and
+# playbooks/{mongodb,patroni}/*). A service runs on the VMs tagged with it, in
+# instance_tags (every VM) or a VM's own `tags`, only when it is switched on.
+mongodb_enabled: true
+patroni_enabled: true
 instance_tags:
   - mongodb
   - patroni

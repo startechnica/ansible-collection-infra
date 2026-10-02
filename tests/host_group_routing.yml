@@ -1,0 +1,162 @@
+---
+# Regression coverage for how VMs are routed to mongodb_nodes / patroni_nodes.
+#
+# What it guards:
+#   1. common's build_host_groups puts a VM in a stack's group only when the
+#      VM is tagged with it (its own `tags` plus `instance_tags`) AND the
+#      stack's mongodb_enabled / patroni_enabled is true. An unset switch
+#      counts as false, the roles' own default: it used to count as true, so a
+#      tagged VM landed in the group of a stack that never ran there.
+#   2. playbooks/mongodb/_setup.yml and playbooks/patroni/_setup.yml route
+#      through build_host_groups too. They used to put every VM in their own
+#      group whatever its tags, so an inventory that splits the stacks across
+#      VMs got both stacks everywhere outside deploy.yml.
+#
+# The mongodb and patroni roles read these groups to tell whether the other
+# stack shares a host (tests/mongodb_patroni_colocation.yml), so a VM must be in
+# a group exactly when it runs that stack.
+#
+# Run from collection root:
+#   ansible-playbook tests/host_group_routing.yml
+
+- name: "Routing :: the roles' own switches default to off"
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  tasks:
+    - name: Import mongodb's switch
+      ansible.builtin.import_role:
+        name: mongodb
+        tasks_from: export_vars
+        defaults_from: main/mongodb.yml
+        vars_from: empty.yml
+
+    - name: Import patroni's switch
+      ansible.builtin.import_role:
+        name: patroni
+        tasks_from: export_vars
+        defaults_from: main/patroni.yml
+        vars_from: empty.yml
+
+    # build_host_groups reads an unset switch as false. If a role's default
+    # ever changes, routing has to change with it.
+    - name: Verify both default to false, as build_host_groups assumes
+      ansible.builtin.assert:
+        that:
+          - not (mongodb_enabled | bool)
+          - not (patroni_enabled | bool)
+
+# Each case uses its own host names: groups only grow within a run, so the
+# assertions look at that case's hosts alone.
+- name: "Routing :: build_host_groups"
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  vars:
+    # Both switches set on purpose; the unset case is its own task below,
+    # since a loop can't leave a variable undefined for one iteration.
+    _cases:
+      - name: patroni switched off
+        prefix: off-
+        vars: {mongodb_enabled: true, patroni_enabled: false, instance_tags: [mongodb, patroni]}
+        vms: [{hostname: off-1}]
+        want: {mongodb_nodes: [off-1], patroni_nodes: []}
+      - name: no tags at all
+        prefix: untagged-
+        vars: {mongodb_enabled: true, patroni_enabled: true, instance_tags: []}
+        vms: [{hostname: untagged-1}]
+        want: {mongodb_nodes: [], patroni_nodes: []}
+      # The split topology: MongoDB everywhere via instance_tags, Patroni on
+      # one VM via its own tags. Per-VM tags add to instance_tags.
+      - name: split by per-VM tags
+        prefix: split-
+        vars: {mongodb_enabled: true, patroni_enabled: true, instance_tags: [mongodb]}
+        vms: [{hostname: split-1, tags: [patroni]}, {hostname: split-2}]
+        want: {mongodb_nodes: [split-1, split-2], patroni_nodes: [split-1]}
+      - name: separate VMs per stack
+        prefix: sep-
+        vars: {mongodb_enabled: true, patroni_enabled: true, instance_tags: []}
+        vms: [{hostname: sep-mongo, tags: [mongodb]}, {hostname: sep-pg, tags: [patroni]}]
+        want: {mongodb_nodes: [sep-mongo], patroni_nodes: [sep-pg]}
+    _unset:
+      name: switches unset
+      prefix: unset-
+      vms: [{hostname: unset-1}]
+      want: {mongodb_nodes: [], patroni_nodes: []}
+    _network: {networks: [{ipv4: 10.0.0.10/24}]}
+  tasks:
+    - name: Route with both switches unset
+      ansible.builtin.include_role:
+        name: common
+        tasks_from: build_host_groups
+      vars:
+        use_tags: true
+        instance_tags: [mongodb, patroni]
+        instances: "{{ _unset.vms | map('combine', _network) | list }}"
+
+    - name: Route each case
+      ansible.builtin.include_role:
+        name: common
+        tasks_from: build_host_groups
+      vars:
+        use_tags: true
+        mongodb_enabled: "{{ _case.vars.mongodb_enabled }}"
+        patroni_enabled: "{{ _case.vars.patroni_enabled }}"
+        instance_tags: "{{ _case.vars.instance_tags }}"
+        instances: "{{ _case.vms | map('combine', _network) | list }}"
+      loop: "{{ _cases }}"
+      loop_control:
+        loop_var: _case
+        label: "{{ _case.name }}"
+
+    - name: Verify each case's groups
+      ansible.builtin.assert:
+        that:
+          - _got == _case.want
+          - _case.vms | map(attribute='hostname') | difference(groups['cluster_nodes']) == []
+        fail_msg: "{{ _case.name }}: got {{ _got }}, want {{ _case.want }}"
+      loop: "{{ [_unset] + _cases }}"
+      loop_control:
+        loop_var: _case
+        label: "{{ _case.name }}"
+      vars:
+        _got:
+          mongodb_nodes: "{{ groups['mongodb_nodes'] | default([]) | select('match', _case.prefix) | sort }}"
+          patroni_nodes: "{{ groups['patroni_nodes'] | default([]) | select('match', _case.prefix) | sort }}"
+
+- name: "Routing :: the per-service playbooks use build_host_groups"
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  tasks:
+    # Static: the files also probe SSH, which a test can't run.
+    - name: Verify each _setup.yml routes by tags and adds no host itself
+      ansible.builtin.assert:
+        that:
+          - _routes | length == 1
+          - _add_host == []
+        fail_msg: >-
+          playbooks/{{ item }}/_setup.yml must build its groups with
+          common/build_host_groups and use_tags: true, the routing deploy.yml
+          uses, and add no host itself. Found: {{ _routes | length }}
+          build_host_groups include(s), add_host tasks {{ _add_host }}.
+      loop: [mongodb, patroni]
+      vars:
+        _tasks: "{{ lookup('ansible.builtin.file', playbook_dir ~ '/../playbooks/' ~ item ~ '/_setup.yml') | from_yaml }}"
+        # Jinja's selectattr reads a dotted name as a path, so the module keys
+        # are looked up by hand.
+        _routes: >-
+          {%- set out = [] -%}
+          {%- for t in _tasks
+                if t['ansible.builtin.include_role'] is defined
+                and t['ansible.builtin.include_role'] == {'name': 'common', 'tasks_from': 'build_host_groups'}
+                and t.vars | default({}) == {'use_tags': true} -%}
+            {%- set _ = out.append(t.name) -%}
+          {%- endfor -%}
+          {{ out }}
+        _add_host: >-
+          {%- set out = [] -%}
+          {%- for t in _tasks if t['ansible.builtin.add_host'] is defined -%}
+            {%- set _ = out.append(t.name) -%}
+          {%- endfor -%}
+          {{ out }}

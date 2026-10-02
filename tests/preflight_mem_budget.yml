@@ -36,8 +36,8 @@
         that:
           - patroni_stack_overhead_mb == 640
         fail_msg: >-
-          The stack overhead changed; update the expectations below, and check
-          whether co-located inventories' patroni_mem_reserved_mb is still right.
+          The stack overhead changed; update the expectations below and in
+          tests/mongodb_patroni_colocation.yml.
 
     # shared_buffers accepts PostgreSQL's suffixed forms. Each is exercised
     # because a mis-parse silently changes the budget by orders of magnitude —
@@ -103,7 +103,7 @@
 
 # The design decision that makes cross-role discovery safe, tested directly.
 # mongodb reads patroni's budget by importing ONE defaults file rather than all
-# of them.
+# of them, and patroni reads mongodb's by importing the four it needs.
 #
 # This used to be guarded by asserting one specific collision: both roles
 # defined a bare `tls_key_curve` with DIFFERENT values (secp256r1 for mongodb,
@@ -242,6 +242,68 @@
           on another defaults file (see roles/patroni/vars/main/memory.yml,
           which is written to depend on exactly one).
 
+- name: "Budget :: narrow cross-role import, the other way"
+  hosts: localhost
+  gather_facts: false
+  connection: local
+
+  tasks:
+    - name: "Import :: load patroni's variables first, as its own run would"
+      ansible.builtin.import_role:
+        name: patroni
+        tasks_from: export_vars
+
+    # Same imports as roles/patroni/tasks/main.yml.
+    - name: "Import :: pull in mongodb's memory budget and caps"
+      ansible.builtin.import_role:
+        name: mongodb
+        tasks_from: export_vars
+        defaults_from: main/resources.yml
+        vars_from: main/memory.yml
+
+    - name: "Import :: pull in mongodb's cluster type"
+      ansible.builtin.import_role:
+        name: mongodb
+        tasks_from: export_vars
+        defaults_from: main/mongodb.yml
+        vars_from: empty.yml
+
+    - name: "Import :: pull in mongodb's PBM switch"
+      ansible.builtin.import_role:
+        name: mongodb
+        tasks_from: export_vars
+        defaults_from: main/pbm.yml
+        vars_from: empty.yml
+
+    - name: "Import :: pull in mongodb's exporter switches"
+      ansible.builtin.import_role:
+        name: mongodb
+        tasks_from: export_vars
+        defaults_from: main/exporter.yml
+        vars_from: empty.yml
+
+    - name: "Import :: the budget arrived and nothing else followed it"
+      ansible.builtin.assert:
+        that:
+          # What we came for. Rendering it proves the four files are all it
+          # reads: an input from any other file would be undefined here.
+          - mongodb_mem_request_mb | int > 0
+          # mongodb topics the narrow imports deliberately leave behind.
+          - mongodb_tls_key_curve is not defined
+          - mongodb_s3_bucket is not defined
+          - mongodb_mongod_node_port is not defined
+          - mongodb_exporter_members is not defined
+          - mongodb_thp_settings is not defined
+          # patroni's own settings are untouched.
+          - patroni_tls_key_curve == 'secp384r1'
+          - patroni_mem_request_mb | int > 0
+        fail_msg: >-
+          The narrow import leaked, or mongodb_mem_request_mb grew a dependency.
+          mongodb's variables must reach a patroni run only from main/resources.yml,
+          main/mongodb.yml, main/pbm.yml, main/exporter.yml and vars/main/memory.yml
+          (see roles/mongodb/vars/main/memory.yml, which is written to depend on
+          exactly those).
+
 - name: "Budget :: preflight thresholds"
   hosts: localhost
   gather_facts: false
@@ -346,15 +408,22 @@
           - mongodb_exporter_mem_limit_mb == 128
           - mongodb_backup_pbm_mem_limit_mb == 256
 
-    # Mirrors the expression in roles/mongodb/tasks/main.yml. Kept as a literal
-    # copy on purpose: if that sum is edited, this fails and forces a look at
-    # whether the new term belongs in the budget.
+    # mongodb_mem_request_mb (roles/mongodb/vars/main/memory.yml) is lazy, so
+    # task vars re-evaluate it per case. _request below is a literal copy of the
+    # sum on purpose: if the expression is edited, this fails and forces a look
+    # at whether the new term belongs in the budget.
     - name: "Mongodb :: verify the aggregate covers every container"
       ansible.builtin.assert:
         that:
           - _request | int == _case.want
+          - mongodb_mem_request_mb | int == _case.want
+          # The budget counts member exporters from their switches; the role
+          # runs the ones in mongodb_exporter_members. They must agree.
+          - mongodb_exporter_members | length == _case.members | default(0) | int
         fail_msg: >-
-          {{ _case.name }}: expected {{ _case.want }}MB, got {{ _request }}MB.
+          {{ _case.name }}: expected {{ _case.want }}MB, got
+          {{ mongodb_mem_request_mb }}MB (literal copy {{ _request }}MB) with
+          {{ mongodb_exporter_members | length }} member exporters.
           Every container this role puts on the node must be counted — the PBM
           agents (one per data-bearing node) and the exporter included.
       loop:
@@ -385,7 +454,7 @@
           configsvr: 512
           mongos: 1024
           want: 2432
-        # Role defaults, sharded, PBM off (the shipped default).
+        # Default caps, sharded, PBM off (the shipped default), exporter on.
         - name: default sharded without PBM
           sharded: true
           pbm: false
@@ -399,15 +468,46 @@
           sharded: true
           pbm: true
           exporter: true
+          switches: 2
           members: 2
           mongod: 2048
           configsvr: 512
           mongos: 1024
           want: 4480
+        # Member exporters run only on a sharded cluster...
+        - name: replicaset with the member exporters switched on
+          sharded: false
+          pbm: false
+          exporter: true
+          switches: 2
+          members: 0
+          mongod: 2048
+          configsvr: 512
+          mongos: 1024
+          want: 2176
+        # ...and only alongside the mongos exporter, whose client cert they reuse.
+        - name: sharded with the member exporters but not the exporter
+          sharded: true
+          pbm: false
+          exporter: false
+          switches: 2
+          members: 0
+          mongod: 2048
+          configsvr: 512
+          mongos: 1024
+          want: 3584
       loop_control:
         loop_var: _case
         label: "{{ _case.name }}"
       vars:
+        mongodb_cluster_type: "{{ 'sharded' if _case.sharded else 'replicaset' }}"
+        mongodb_backup_pbm_enabled: "{{ _case.pbm }}"
+        mongodb_exporter_enabled: "{{ _case.exporter }}"
+        mongodb_exporter_shard_enabled: "{{ _case.switches | default(0) | int > 0 }}"
+        mongodb_exporter_configsvr_enabled: "{{ _case.switches | default(0) | int > 1 }}"
+        mongodb_mongod_mem_limit_mb: "{{ _case.mongod }}"
+        mongodb_configsvr_mem_limit_mb: "{{ _case.configsvr }}"
+        mongodb_mongos_mem_limit_mb: "{{ _case.mongos }}"
         _request: >-
           {{ (_case.mongod | int)
              + ((_case.configsvr | int) + (_case.mongos | int)

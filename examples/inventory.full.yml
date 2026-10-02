@@ -68,6 +68,10 @@ all:
       - hostname: host2-lin-db # ipv4 enriched from NetBox into networks[0]
       - hostname: host3-lin-db
 
+    # Which services run, and where: a service is deployed to the VMs tagged
+    # with it only when it is switched on.
+    mongodb_enabled: true
+    patroni_enabled: true
     instance_tags:
       - mongodb
       - patroni

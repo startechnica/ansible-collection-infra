@@ -18,8 +18,8 @@
 # defaults/main/ has one file per topic: mongodb, engine, system, ports,
 # resources, tls, auth, backup, pbm, s3, exporter, artifacts. To import only the
 # variables you use, name one with `defaults_from`, and pass
-# `vars_from: empty.yml` to skip the computed vars in vars/main/ (image.yml,
-# ports.yml, services.yml, pbm.yml):
+# `vars_from: empty.yml` to skip the computed vars in vars/main/ (colocation,
+# exporter, image, memory, pbm, ports, restart, services, thp):
 #
 #   - ansible.builtin.import_role:
 #       name: mongodb
@@ -29,8 +29,10 @@
 #
 # `vars_from` must name an existing file; without it, all of vars/main/ loads.
 # main/resources.yml is deliberately self-contained (plain numbers, no
-# references to other defaults files) so the memory budget can be imported that
-# way — the same discipline patroni keeps for main/postgresql.yml.
+# references to other defaults files) so the memory caps can be imported that
+# way — the same discipline patroni keeps for main/postgresql.yml. The total,
+# mongodb_mem_request_mb in vars/main/memory.yml, also needs main/mongodb.yml,
+# main/pbm.yml and main/exporter.yml; roles/patroni/tasks/main.yml imports it.
 #
 # Every variable here is mongodb_-prefixed, with no exceptions, so importing this
 # role cannot redefine another role's settings. Where the role needs the value of

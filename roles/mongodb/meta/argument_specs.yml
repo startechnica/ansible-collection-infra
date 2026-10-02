@@ -89,10 +89,10 @@ argument_specs:
             THP is host-wide; the role applies it now and at every boot through mongodb-thp.service. Empty
             skips every THP task.
           - Defaults to always for mongodb_version 8.0 and later, which is MongoDB's recommendation for its
-            upgraded TCMalloc, and never for 7.0 and earlier. Next to Patroni (patroni_enabled) it defaults to
-            never, to spare memory on a node shared by two stacks. The patroni role leaves THP alone unless
-            patroni_thp_enabled is set; to let that decide instead, set this empty. vm.overcommit_memory is
-            never set next to Patroni, which owns it.
+            upgraded TCMalloc, and never for 7.0 and earlier. On a host that also runs Patroni (one in the
+            patroni_nodes group) it defaults to never, to spare memory on a node shared by two stacks. The
+            patroni role leaves THP alone unless patroni_thp_enabled is set; to let that decide instead, set
+            this empty. vm.overcommit_memory is never set on such a host, because the patroni role owns it.
 
       mongodb_image_registry:
         type: str
@@ -194,9 +194,10 @@ argument_specs:
           Extra memory committed on this node that the collection cannot
           introspect — a non-container daemon, another tenant, something outside
           this collection. Added on top of what is discovered automatically:
-          when `patroni_enabled` is true this role imports patroni's own
-          `patroni_mem_request_mb` rather than asking you to restate it, so a
-          plain mongodb+patroni node leaves this at 0.
+          on a host that also runs Patroni (one in the `patroni_nodes` group)
+          this role imports patroni's own `patroni_mem_request_mb` rather than
+          asking you to restate it, so a plain mongodb+patroni node leaves this
+          at 0.
 
       # ── TLS / PKI ──
       mongodb_tls_days:

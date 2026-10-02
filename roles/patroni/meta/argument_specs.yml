@@ -790,13 +790,17 @@ argument_specs:
         type: int
         default: 0
         description: >-
-          Memory committed on this node by something OTHER than this role — set
-          it on a host that also runs MongoDB so preflight's budget sees the
-          whole picture. Passed to preflight as `container_mem_reserved_mb`.
-          Per-role rather than host-wide on purpose: each role needs
-          "everything except me", so one shared figure would double-count. Also
-          arms the warning that fires when any pg_* memory setting is still
-          auto-calculated from total host RAM on a node with reservations.
+          Memory committed on this node by something OTHER than this role that
+          the collection can't see — a non-container daemon, another tenant.
+          A co-located MongoDB is counted already: on a host in the
+          `mongodb_nodes` group this role imports the mongodb role's own
+          `mongodb_mem_request_mb`, so leave MongoDB out of this number or it
+          is counted twice. Added to that and passed to preflight as
+          `container_mem_reserved_mb`. Per-role rather than host-wide on
+          purpose: each role needs "everything except me", so one shared
+          figure would double-count. Either reservation also arms the warning
+          that fires when any pg_* memory setting is still auto-calculated
+          from total host RAM.
       patroni_stack_overhead_mb:
         type: int
         default: 640

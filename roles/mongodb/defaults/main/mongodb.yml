@@ -51,16 +51,17 @@ mongodb_skip_kernel_check: false
 # which the role sets alongside any mode but never; 7.0 and earlier want
 # `never`. https://www.mongodb.com/docs/manual/administration/tcmalloc-performance/
 #
-# THP is host-wide. Next to Patroni the default is never: `always` backs any
-# 2 MB-aligned region a process touches with a whole 2 MB page, which grows the
-# resident memory of every process on a node already split between two stacks
-# (kernels before 6.12 can't split underused ones back). `madvise` limits THP to
-# memory a process asks for with madvise(2). The patroni role leaves THP alone
-# unless patroni_thp_enabled is set, so on a shared node this setting decides;
-# set it empty to hand THP to patroni_thp_enabled instead.
+# THP is host-wide. On a host that also runs Patroni (in patroni_nodes, see
+# vars/main/colocation.yml) the default is never: `always` backs any 2 MB-aligned
+# region a process touches with a whole 2 MB page, which grows the resident
+# memory of every process on a node already split between two stacks (kernels
+# before 6.12 can't split underused ones back). `madvise` limits THP to memory a
+# process asks for with madvise(2). The patroni role leaves THP alone unless
+# patroni_thp_enabled is set, so on a shared node this setting decides; set it
+# empty to hand THP to patroni_thp_enabled instead.
 mongodb_thp_enabled: >-
   {{ 'always' if mongodb_version is version('8.0', '>=')
-                 and not (patroni_enabled | default(false) | bool)
+                 and not (_mongodb_patroni_colocated | bool)
      else 'never' }}
 
 # ── Networking ──

@@ -34,7 +34,8 @@
           - target_node in (groups['patroni_nodes'] | default([]))
         fail_msg: >-
           Pass -e target_node=<hostname> where <hostname> is in instances[] and
-          therefore in groups['patroni_nodes'] after _setup.yml.
+          tagged `patroni` (its own `tags` or `instance_tags`), and therefore in
+          groups['patroni_nodes'] after _setup.yml.
         success_msg: "Adding node '{{ target_node }}' to patroni_nodes."
 
 - name: Install Patroni stack on new node

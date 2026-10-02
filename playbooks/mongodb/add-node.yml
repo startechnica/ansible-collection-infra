@@ -40,6 +40,15 @@
         msg: "No target nodes. Pass -e target_node=<hostname> or populate instances[] in the inventory."
       when: _new_members | length == 0
 
+    - name: Require the target to run MongoDB
+      ansible.builtin.assert:
+        that:
+          - _new_members | difference(groups['mongodb_nodes'] | default([])) | length == 0
+        fail_msg: >-
+          {{ _new_members | difference(groups['mongodb_nodes'] | default([])) | join(', ') }}
+          is not in mongodb_nodes. Tag it `mongodb` (its own `tags` or
+          `instance_tags`) in instances[]. Available: {{ groups['mongodb_nodes'] | default([]) }}.
+
 - name: Provision stack on new member(s)
   hosts: "{{ target_node | default('mongodb_nodes') }}"
   become: true

@@ -1,0 +1,22 @@
+---
+# Computed: whether Patroni runs on this host too. Three things follow from it:
+#   - mongodb_thp_enabled defaults to never (defaults/main/mongodb.yml)
+#   - mongodb_thp_settings leaves vm.overcommit_memory to the patroni role
+#     (vars/main/thp.yml)
+#   - preflight counts Patroni's memory as already committed (below)
+#
+# Read per host from the patroni_nodes group, not from patroni_enabled:
+# patroni_enabled is one value for the whole inventory and doesn't say which
+# hosts run Patroni. deploy.yml and playbooks/{mongodb,patroni}/* all build the
+# group with common's build_host_groups: the hosts tagged `patroni`, when
+# patroni_enabled is true. In a playbook of your own, a host in patroni_nodes is
+# one that runs Patroni.
+_mongodb_patroni_colocated: "{{ 'patroni_nodes' in group_names }}"
+
+# What other stacks commit on this node, passed to preflight as
+# container_mem_reserved_mb: Patroni's own budget where it runs here (tasks/main.yml
+# imports patroni_mem_request_mb), plus mongodb_mem_reserved_mb for anything
+# the collection can't see. The patroni role does the same the other way round.
+_mongodb_mem_others_mb: >-
+  {{ (patroni_mem_request_mb | int if _mongodb_patroni_colocated | bool else 0)
+     + (mongodb_mem_reserved_mb | int) }}

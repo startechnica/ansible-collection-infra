@@ -124,14 +124,14 @@
       ansible.builtin.debug:
         msg: "No VMs tagged 'mongodb' — stage 5 will be skipped."
       when:
-        - mongodb_enabled | default(true) | bool
+        - mongodb_enabled | default(false) | bool
         - groups['mongodb_nodes'] | default([]) | length == 0
 
     - name: "INFO: no patroni-tagged VMs"
       ansible.builtin.debug:
         msg: "No VMs tagged 'patroni' — stage 6 will be skipped."
       when:
-        - patroni_enabled | default(true) | bool
+        - patroni_enabled | default(false) | bool
         - groups['patroni_nodes'] | default([]) | length == 0
 
 # ── Stage 3.4: Wait for FCOS bootstrap to fully settle ──────────────────────

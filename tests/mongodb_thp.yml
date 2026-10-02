@@ -4,8 +4,9 @@
 #
 # What it guards:
 #   1. mongodb_thp_enabled is a THP mode following MongoDB's advice per version
-#      (always for 8.0+, never for 7.0 and earlier) and defaults to never next
-#      to Patroni.
+#      (always for 8.0+, never for 7.0 and earlier) and defaults to never on a
+#      host that also runs Patroni (_mongodb_patroni_colocated; how that is read
+#      per host is tests/mongodb_patroni_colocation.yml).
 #   2. mongodb-thp.service sets exactly MongoDB's values: madvise and always
 #      come with defer+madvise, max_ptes_none=0 and vm.overcommit_memory=1;
 #      never is never/never. Next to Patroni, overcommit is left out, because
@@ -50,7 +51,7 @@
         label: "{{ item.name }}"
       vars:
         mongodb_version: "{{ item.version }}"
-        patroni_enabled: "{{ item.patroni }}"
+        _mongodb_patroni_colocated: "{{ item.patroni }}"
 
     - name: Verify empty sets nothing
       ansible.builtin.assert:
@@ -84,7 +85,7 @@
         label: "{{ item.name }}"
       vars:
         mongodb_thp_enabled: "{{ item.thp }}"
-        patroni_enabled: "{{ item.patroni }}"
+        _mongodb_patroni_colocated: "{{ item.patroni }}"
 
     - name: Verify each unit sets exactly MongoDB's values
       ansible.builtin.assert:

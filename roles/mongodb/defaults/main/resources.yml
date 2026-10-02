@@ -3,12 +3,13 @@
 # The role loads every file in defaults/main/ (see tasks/export_vars.yml).
 #
 # Deliberately self-contained — every value here is a plain number with no
-# reference to another defaults file. That is what lets a consumer import the
-# memory budget with a single `defaults_from: main/resources.yml`, the same
-# discipline patroni's main/postgresql.yml keeps for patroni_mem_request_mb.
-# The exporter's and PBM's caps therefore live HERE rather than beside their
-# other settings in exporter.yml / pbm.yml: they are part of the budget, and
-# splitting the budget across files would defeat the narrow import.
+# reference to another defaults file, so a consumer can import the caps with a
+# single `defaults_from: main/resources.yml`, the same discipline patroni's
+# main/postgresql.yml keeps for patroni_mem_request_mb. The exporter's and PBM's
+# caps therefore live HERE rather than beside their other settings in
+# exporter.yml / pbm.yml. The total, mongodb_mem_request_mb in
+# vars/main/memory.yml, also reads which containers run (cluster type, PBM and
+# exporter switches), so a consumer of the total imports those three files too.
 
 # ── Container resources (MB) ──
 # mongod and configsvr get --wiredTigerCacheSizeGB at 50% of their limit, so
@@ -33,8 +34,9 @@ mongodb_backup_pbm_mem_limit_mb: 256
 # node also runs another memory-hungry stack (e.g. co-located Patroni). They
 # matter most without swap: FCOS never has any, so page cache is the only
 # reclaimable memory and the kernel goes straight from "full" to an OOM kill
-# with no paging step. On Ubuntu, swap plus the strict-overcommit sysctls the
-# patroni role applies when swap is present make these a backstop instead.
+# with no paging step. On an Ubuntu host that also runs Patroni, swap plus the
+# strict-overcommit sysctls the patroni role applies when swap is present make
+# these a backstop instead.
 #
 # Left at the kernel default (0) the victim is chosen by proportional RSS,
 # i.e. whichever process is biggest — mongod here. That is the most expensive
@@ -54,8 +56,8 @@ mongodb_exporter_oom_score_adj: 1000
 
 # Extra memory committed on this node that the collection cannot introspect —
 # a non-container daemon, another tenant, something outside this collection.
-# ADDED to preflight's budget on top of what is discovered automatically: when
-# patroni_enabled is true this role imports patroni's own patroni_mem_request_mb
-# rather than asking you to restate it here, so leave this at 0 for a plain
-# mongodb+patroni node.
+# ADDED to preflight's budget on top of what is discovered automatically: on a
+# host that also runs Patroni (in patroni_nodes) this role imports patroni's own
+# patroni_mem_request_mb rather than asking you to restate it here, so leave
+# this at 0 for a plain mongodb+patroni node.
 mongodb_mem_reserved_mb: 0

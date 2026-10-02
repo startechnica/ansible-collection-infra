@@ -64,7 +64,9 @@ all:
         networks:
           - ipv4: 10.0.0.12/24
 
-    # Global tag applied to every VM — routes them into mongodb_nodes group.
+    # Global tag applied to every VM — routes them into the mongodb_nodes group,
+    # which only happens when mongodb_enabled is true.
+    mongodb_enabled: true
     instance_tags:
       - mongodb
 
