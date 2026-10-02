@@ -30,6 +30,7 @@ Network=host
 # docker-compose template uses for its `$$external` healthchecks.
 Exec=--mongodb.uri=mongodb://localhost:{{ _peer_port }}/?tls=true&tlsCertificateKeyFile=/etc/mongo/ssl/exporter.pem&tlsCAFile=/etc/mongo/ssl/ca.pem&authMechanism=MONGODB-X509&authSource=$$external \
   --web.listen-address=:{{ mongodb_exporter_port }} \
+  --web.telemetry-path={{ mongodb_exporter_path }} \
   --collect-all \
   --compatible-mode
 

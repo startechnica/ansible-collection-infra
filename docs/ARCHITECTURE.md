@@ -118,7 +118,7 @@ flowchart LR
     mongos["mongos :27017<br/>client entry (sharded)"]
     configsvr["configsvr :27018<br/>cluster metadata (sharded)"]
     mongod["mongod :27019<br/>data"]
-    exp["mongodb-exporter :9216"]
+    exp["mongodb-exporter :9216<br/>(optional)"]
 
     mongos <--> configsvr
     mongos <--> mongod

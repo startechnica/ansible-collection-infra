@@ -285,13 +285,23 @@ argument_specs:
       # ── Exporter ──
       mongodb_exporter_enabled:
         type: bool
-        default: true
+        default: false
+        description: >-
+          Run the Prometheus exporter, connected to mongos (mongod on a replica
+          set). Switching it off removes the exporter containers from the node.
       mongodb_exporter_image:
         type: str
         default: "docker.io/percona/mongodb_exporter:0.52.0"
       mongodb_exporter_port:
         type: int
         default: 9216
+      mongodb_exporter_path:
+        type: str
+        default: /metrics
+        description: >-
+          HTTP path every exporter serves its metrics on
+          (--web.telemetry-path), including the shard and configsvr
+          exporters. Scrapers must use the same path.
       mongodb_exporter_shard_enabled:
         type: bool
         default: false
@@ -302,7 +312,7 @@ argument_specs:
       mongodb_exporter_shard_port:
         type: int
         default: 9217
-        description: Port the shard exporter serves /metrics on.
+        description: Port the shard exporter serves its metrics on.
       mongodb_exporter_configsvr_enabled:
         type: bool
         default: false
@@ -312,7 +322,7 @@ argument_specs:
       mongodb_exporter_configsvr_port:
         type: int
         default: 9218
-        description: Port the configsvr exporter serves /metrics on.
+        description: Port the configsvr exporter serves its metrics on.
 
       # ── Percona Backup for MongoDB (PBM) ──
       mongodb_backup_pbm_enabled:

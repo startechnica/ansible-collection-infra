@@ -7,6 +7,31 @@ documents the migration steps for breaking changes.
 
 ## 1.0.4 (unreleased)
 
+### Breaking — the mongodb exporter is off by default
+
+`mongodb_exporter_enabled` now defaults to `false`. On an inventory that didn't
+set it, the next deploy:
+
+- removes the `mongodb-exporter` container (and the shard and configsvr
+  exporters, which need it) from every node, on docker and podman alike;
+- drops the exporter's port from `mongodb_services`, so NetBox and the
+  firewall role stop listing it;
+- on docker, also changes mongos (mongod on a replica set), which published
+  the exporter's port. The deploy leaves it running and lists it in its
+  end-of-run warning; `playbooks/mongodb/restart.yml` applies the change one
+  node at a time.
+
+To keep the exporter, set it before deploying:
+
+```yaml
+mongodb_exporter_enabled: true
+```
+
+Anything scraping the exporter stops getting data once it's removed. The new
+`mongodb_exporter_path` (default `/metrics`) sets the path it serves; if you
+change it, change the scraper's path too (`metrics_path` in grafana_alloy's
+extra scrapes).
+
 ### Breaking — a mongodb deploy no longer restarts a running cluster
 
 A deploy runs on every host at once. When it changed the container definition

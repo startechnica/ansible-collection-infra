@@ -6,7 +6,11 @@
 # rest of the memory budget, and its CN in main/tls.yml with the rest of the
 # PKI naming — see those files for why.
 
-mongodb_exporter_enabled: true
+# Off by default. Switching it off on a deployed node removes the exporter
+# containers. On docker the port is published on mongos (mongod on a replica
+# set), so switching it on or off on a running cluster also changes that
+# container, which then waits for playbooks/mongodb/restart.yml.
+mongodb_exporter_enabled: false
 # Fully-qualified registry path is required for podman / Quadlet on
 # FCOS, which ships with short-name-mode=enforcing — `percona/...`
 # alone fails with "short-name resolution enforced but cannot prompt
@@ -15,6 +19,10 @@ mongodb_exporter_enabled: true
 # than implicit.
 mongodb_exporter_image: "docker.io/percona/mongodb_exporter:0.52.0"
 mongodb_exporter_port: 9216
+# HTTP path every exporter serves its metrics on (--web.telemetry-path). A
+# scraper must ask for the same path: the grafana_alloy role's extra scrapes
+# take it as `metrics_path`.
+mongodb_exporter_path: /metrics
 
 # Sharded clusters only: extra exporters connected directly to this node's
 # shard mongod and config server. The exporter above talks to mongos, which

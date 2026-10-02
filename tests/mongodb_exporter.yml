@@ -1,0 +1,194 @@
+---
+# Regression coverage for the MongoDB exporter's switch and HTTP path.
+#
+# What it guards:
+#   1. Off by default: no exporter service in the compose file, no exporter
+#      port published on mongos (mongod on a replica set), and no exporter in
+#      mongodb_services, so NetBox and the firewall don't list a port nothing
+#      listens on.
+#   2. mongodb_exporter_path reaches every exporter as --web.telemetry-path,
+#      on both engines, and the docker exporter listens on
+#      mongodb_exporter_port (it used to keep its built-in 9216).
+#   3. Switching an exporter off takes it off the node: both engines remove
+#      every exporter container the role can run that isn't switched on.
+#
+# Run from collection root:
+#   ansible-playbook tests/mongodb_exporter.yml
+
+- name: "Exporter :: switch, path and cleanup"
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  vars:
+    _ex_dir: /tmp/mongodb-exporter-test
+    _ex_templates: "{{ playbook_dir }}/../roles/mongodb/templates"
+    _ex_tasks: "{{ playbook_dir }}/../roles/mongodb/tasks"
+    _all: [mongodb-exporter, mongodb-exporter-shard, mongodb-exporter-configsvr]
+    mongodb_nodes:
+      - { name: m-1, ipv4: 10.0.0.11 }
+      - { name: m-2, ipv4: 10.0.0.12 }
+      - { name: m-3, ipv4: 10.0.0.13 }
+  tasks:
+    - name: Import mongodb role variables
+      ansible.builtin.import_role:
+        name: mongodb
+        tasks_from: export_vars
+
+    - name: Verify the defaults
+      ansible.builtin.assert:
+        that:
+          - not (mongodb_exporter_enabled | bool)
+          - mongodb_exporter_port | int == 9216
+          - mongodb_exporter_path == '/metrics'
+          - _mongodb_exporter_containers == []
+          - _mongodb_exporter_all_containers == _all
+
+    # Which exporters a node keeps, and which the deploy removes.
+    - name: Verify which exporters each setting keeps
+      ansible.builtin.assert:
+        that:
+          - _mongodb_exporter_containers == item.keep
+          - (_mongodb_exporter_all_containers | difference(_mongodb_exporter_containers) | sort) == (item.remove | sort)
+        fail_msg: >-
+          {{ item.name }}: keep {{ _mongodb_exporter_containers }}, remove
+          {{ _mongodb_exporter_all_containers | difference(_mongodb_exporter_containers) }}
+      loop:
+        - name: all off
+          exporter: false
+          members: false
+          keep: []
+          remove: [mongodb-exporter, mongodb-exporter-shard, mongodb-exporter-configsvr]
+        - name: members switched on but the exporter off
+          exporter: false
+          members: true
+          keep: []
+          remove: [mongodb-exporter, mongodb-exporter-shard, mongodb-exporter-configsvr]
+        - name: exporter only
+          exporter: true
+          members: false
+          keep: [mongodb-exporter]
+          remove: [mongodb-exporter-shard, mongodb-exporter-configsvr]
+        - name: everything on
+          exporter: true
+          members: true
+          keep: [mongodb-exporter, mongodb-exporter-shard, mongodb-exporter-configsvr]
+          remove: []
+      loop_control:
+        label: "{{ item.name }}"
+      vars:
+        mongodb_cluster_type: sharded
+        mongodb_exporter_enabled: "{{ item.exporter }}"
+        mongodb_exporter_shard_enabled: "{{ item.members }}"
+        mongodb_exporter_configsvr_enabled: "{{ item.members }}"
+
+    - name: Verify both engines remove what isn't switched on
+      ansible.builtin.assert:
+        that:
+          - _docker | length == 1
+          - _docker[0]['community.docker.docker_container'].state == 'absent'
+          - _quadlet | length == 1
+          - _quadlet[0]['ansible.builtin.file'].state == 'absent'
+          - _quadlet[0]['ansible.builtin.file'].path == _quadlet_path
+        fail_msg: "docker {{ _docker }}, podman {{ _quadlet }}"
+      vars:
+        _loop: "{{ '{{' }} _mongodb_exporter_all_containers | difference(_mongodb_exporter_containers) {{ '}}' }}"
+        _quadlet_path: "/etc/containers/systemd/{{ '{{' }} item {{ '}}' }}.container"
+        _docker: >-
+          {{ lookup('ansible.builtin.file', _ex_tasks ~ '/docker_compose.yml') | from_yaml
+             | selectattr('loop', 'defined') | selectattr('loop', 'eq', _loop) | list }}
+        _quadlet: >-
+          {{ lookup('ansible.builtin.file', _ex_tasks ~ '/quadlet.yml') | from_yaml
+             | selectattr('loop', 'defined') | selectattr('loop', 'eq', _loop) | list }}
+
+    - name: Recreate render directory
+      ansible.builtin.file:
+        path: "{{ _ex_dir }}"
+        state: "{{ _ex_state }}"
+        mode: "0755"
+      loop: [absent, directory]
+      loop_control:
+        loop_var: _ex_state
+
+    - name: Render the compose file with the exporter off
+      ansible.builtin.template:
+        src: "{{ _ex_templates }}/docker-compose.yml.j2"
+        dest: "{{ _ex_dir }}/off-{{ item }}-docker-compose.yml"
+        mode: "0644"
+      loop: [sharded, replicaset]
+      vars:
+        mongodb_cluster_type: "{{ item }}"
+
+    - name: Verify nothing of the exporter renders or is listed when off
+      ansible.builtin.assert:
+        that:
+          - _compose.services | select('match', '^mongodb-exporter') | list == []
+          - _compose.services[_peer].ports | select('search', '9216') | list == []
+          - "'mongodb-exporter' not in (mongodb_services | map(attribute='name'))"
+        fail_msg: "{{ item }}: {{ _compose.services[_peer].ports }}, services {{ mongodb_services | map(attribute='name') }}"
+      loop: [sharded, replicaset]
+      vars:
+        mongodb_cluster_type: "{{ item }}"
+        _peer: "{{ 'mongos' if item == 'sharded' else 'mongod' }}"
+        _compose: "{{ lookup('file', _ex_dir ~ '/off-' ~ item ~ '-docker-compose.yml') | from_yaml }}"
+
+    - name: Render every exporter, on, with a non-default port and path
+      ansible.builtin.template:
+        src: "{{ _ex_templates }}/{{ item.src }}"
+        dest: "{{ _ex_dir }}/{{ item.dest }}"
+        mode: "0644"
+      loop:
+        - { src: docker-compose.yml.j2, dest: docker-compose.yml }
+        - { src: quadlets/mongodb-exporter.container.j2, dest: mongodb-exporter.container }
+      vars: &on
+        mongodb_cluster_type: sharded
+        mongodb_exporter_enabled: true
+        mongodb_exporter_shard_enabled: true
+        mongodb_exporter_configsvr_enabled: true
+        mongodb_exporter_port: 9300
+        mongodb_exporter_path: /probe/metrics
+
+    - name: Render each member exporter Quadlet
+      ansible.builtin.template:
+        src: "{{ _ex_templates }}/quadlets/mongodb-exporter-member.container.j2"
+        dest: "{{ _ex_dir }}/mongodb-exporter-{{ _member.name }}.container"
+        mode: "0644"
+      loop: "{{ mongodb_exporter_members }}"
+      loop_control:
+        loop_var: _member
+        label: "{{ _member.name }}"
+      vars: *on
+
+    - name: Verify the docker exporters listen where they say, on the path
+      ansible.builtin.assert:
+        that:
+          - "'--web.listen-address=:9300' in _compose.services['mongodb-exporter'].command"
+          - "'9300:9300' in _compose.services.mongos.ports"
+          - _paths | length == 3
+          - _paths | unique == ['--web.telemetry-path=/probe/metrics']
+          - mongodb_services | selectattr('name', 'eq', 'mongodb-exporter') | map(attribute='port') | map('int') | list == [9300]
+        fail_msg: "{{ _compose.services | dict2items | selectattr('key', 'match', '^mongodb-exporter') | items2dict | to_json }} ports {{ _compose.services.mongos.ports | to_json }}"
+      vars:
+        <<: *on
+        _compose: "{{ lookup('file', _ex_dir ~ '/docker-compose.yml') | from_yaml }}"
+        _paths: >-
+          {{ _compose.services | dict2items | selectattr('key', 'match', '^mongodb-exporter')
+             | map(attribute='value.command') | flatten
+             | select('match', '--web.telemetry-path=') | list }}
+
+    - name: Verify the Quadlet exporters serve the path
+      ansible.builtin.assert:
+        that:
+          - "'--web.telemetry-path=/probe/metrics' in _argv"
+          - "'--web.listen-address=:' ~ item.port in _argv"
+          # The continuation ends exactly at the last flag.
+          - _argv[-1] == '--compatible-mode'
+        fail_msg: "{{ item.unit }} Exec argv: {{ _argv }}"
+      loop:
+        - { unit: mongodb-exporter, port: 9300 }
+        - { unit: mongodb-exporter-shard, port: 9217 }
+        - { unit: mongodb-exporter-configsvr, port: 9218 }
+      loop_control:
+        label: "{{ item.unit }}"
+      vars:
+        _unit: "{{ lookup('file', _ex_dir ~ '/' ~ item.unit ~ '.container') }}"
+        _argv: "{{ (_unit | regex_replace('\\\\\\n\\s*', ' ') | regex_search('^Exec=(.*)$', '\\1', multiline=True) | first).split() }}"

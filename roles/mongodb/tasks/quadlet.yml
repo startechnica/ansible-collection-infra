@@ -96,20 +96,20 @@
 
 # Switching one off removes its Quadlet and stops the service, which the
 # daemon-reload below then unloads. A no-op on nodes that never had one.
-- name: Remove per-member exporter Quadlets that are switched off
+- name: Remove exporter Quadlets that are switched off
   ansible.builtin.file:
-    path: "/etc/containers/systemd/mongodb-exporter-{{ item }}.container"
+    path: "/etc/containers/systemd/{{ item }}.container"
     state: absent
-  loop: "{{ _mongodb_exporter_member_names | difference(mongodb_exporter_members | map(attribute='name')) }}"
-  register: _q_exporter_members_removed
+  loop: "{{ _mongodb_exporter_all_containers | difference(_mongodb_exporter_containers) }}"
+  register: _q_exporters_removed
 
-- name: Stop per-member exporters whose Quadlet was removed
+- name: Stop exporters whose Quadlet was removed
   ansible.builtin.systemd:
-    name: "mongodb-exporter-{{ item.item }}.service"
+    name: "{{ item.item }}.service"
     state: stopped
-  loop: "{{ _q_exporter_members_removed.results | selectattr('changed') | list }}"
+  loop: "{{ _q_exporters_removed.results | selectattr('changed') | list }}"
   loop_control:
-    label: "mongodb-exporter-{{ item.item }}"
+    label: "{{ item.item }}"
   failed_when: false
 
 # systemd-generators only convert .container files at daemon-reload (or boot).
@@ -123,7 +123,7 @@
     or (_q_mongos.changed | default(false))
     or (_q_exporter.changed | default(false))
     or (_q_exporter_members.changed | default(false))
-    or (_q_exporter_members_removed.changed | default(false))
+    or (_q_exporters_removed.changed | default(false))
 
 
 # Build the service list to enable + start. Order matters for cold-start

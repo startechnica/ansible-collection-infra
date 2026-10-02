@@ -9,9 +9,8 @@
 #   compose_svc   docker compose service of that process
 #   node_port     host port of that process (the exporter runs on the host
 #                 network on both engines and connects to localhost:<node_port>)
-#   port          port the exporter serves /metrics on
-# Every per-member exporter the role knows. tasks/quadlet.yml removes the Quadlets
-# of the ones not switched on (not in mongodb_exporter_members).
+#   port          port the exporter serves mongodb_exporter_path on
+# Every per-member exporter the role knows.
 _mongodb_exporter_member_names: [shard, configsvr]
 
 mongodb_exporter_members: >-
@@ -25,3 +24,15 @@ mongodb_exporter_members: >-
          if mongodb_exporter_configsvr_enabled | bool else []))
      if (mongodb_exporter_enabled | bool) and mongodb_cluster_type == 'sharded'
      else [] }}
+
+# Exporter containers (= compose services, = Quadlet units without .service):
+# the ones switched on for this node, and every one the role can run. The
+# deploy removes the difference (docker_compose.yml, quadlet.yml), so switching
+# an exporter off takes it off the node.
+_mongodb_exporter_containers: >-
+  {{ (['mongodb-exporter'] if mongodb_exporter_enabled | bool else [])
+     + (mongodb_exporter_members | map(attribute='name')
+        | map('regex_replace', '^', 'mongodb-exporter-') | list) }}
+_mongodb_exporter_all_containers: >-
+  {{ ['mongodb-exporter']
+     + (_mongodb_exporter_member_names | map('regex_replace', '^', 'mongodb-exporter-') | list) }}
